@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <TieredCompilation>false</TieredCompilation>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>ElasticMem</AssemblyName>
+    <RootNamespace>ElasticMem.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Version>0.9.0</Version>
+    <Product>ElasticMem — эластичное сжатие памяти</Product>
+    <SatelliteResourceLanguages>ru;en</SatelliteResourceLanguages>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../ElasticMem.Core/ElasticMem.Core.csproj" /></ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Vortice.Direct3D12" Version="3.8.3" />
+  </ItemGroup>
+  <ItemGroup><AssemblyMetadata Include="CodeCommit" Value="$(SourceRevisionId)" /><AssemblyMetadata Include="SourceDirty" Value="$(SourceDirty)" /><AssemblyMetadata Include="BuildLayout" Value="single-file=$(PublishSingleFile);self-contained=$(SelfContained);rid=$(RuntimeIdentifier)" /></ItemGroup>
+</Project>

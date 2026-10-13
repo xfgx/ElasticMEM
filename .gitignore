@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+__pycache__/
+*.pyc
+research/ceiling/runs/
+research/ceiling/inputs/
+*.user
+research/ceiling/windows/*.exe
+research/ceiling/windows/*.obj
+research/ceiling/windows/build.log
+research/ceiling/windows/build-info.json
+*.bundle

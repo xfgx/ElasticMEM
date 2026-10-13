@@ -1,0 +1,8 @@
+{
+  "recovered_from": "ElasticMem-0.9.0-source.zip previously delivered in this session",
+  "archive_sha256": "588873af4f32546fecb4b9fea1bd61dda517a2c25d64822fd61894bf458fecda",
+  "historical_git_history": "not contained in archive; not reconstructed or claimed",
+  "previously_deployed_version": "0.13.0",
+  "previously_deployed_commit_recorded_in_windows_logs": "40b3da347ead80695fe5ab5e20a07bb83d38585d",
+  "note": "Restored implementation archive; 0.13 release numbering/update endpoint will be reapplied. New git history starts from this verified archive, not historical commits."
+}
