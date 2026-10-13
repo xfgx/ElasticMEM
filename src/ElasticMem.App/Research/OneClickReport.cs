@@ -4,12 +4,13 @@ namespace ElasticMem.App.Research;
 internal static class OneClickReport
 {
     static string N(double n)=>n.ToString("F2",CultureInfo.InvariantCulture);
-    public static string Read(string root,List<string>? errors=null)
+    public static string Read(string root,List<string>? errors=null,string? openSummary=null)
     {
         var lines=new List<string>{"\r\nЧИСЛА ПРОГОНА (не экономия RAM):"};
         JsonElement? disk=null,dma=null;
         foreach(string folder in Directory.GetDirectories(root).Order())
         {
+            if(openSummary!=null&&Path.GetFullPath(folder).Equals(Path.GetFullPath(openSummary),StringComparison.OrdinalIgnoreCase))continue;
             int beforeLines=lines.Count;
             try
             {

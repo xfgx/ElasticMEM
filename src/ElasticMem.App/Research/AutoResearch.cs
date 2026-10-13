@@ -149,7 +149,7 @@ internal static class AutoResearch
         string report="ElasticMem "+Updater.Current+" — автоматическая проверка\r\n\r\nСтатус: "+conclusion+"\r\n\r\n"+string.Join("\r\n",steps.Select(s=>$"{s.Check}: {s.Status}\r\n  {s.Note}"))+"\r\n\r\nГ0 PID: "+string.Join(", ",selection.Select(x=>$"{x.Family} ({x.Pid})"))+"\r\nГ1 PID: "+string.Join(", ",g1Selection.Select(x=>$"{x.Family} ({x.Pid})"))+"\r\n\r\nФайлы: "+batch+"\r\nПланируемый ZIP без дампов, контейнеров, трасс и screenshots: "+archive+"\r\nНичего не отправлено по сети. Перед отправкой просмотрите архив.\r\nГ0-модель/VM-стенд, kernel pager, семантическая нормализация, CPython/V8 патч и CPU/AVX-путь Г3 не реализованы.\r\n";
         report=report.Replace("Г0 PID: "+string.Join(", ",selection.Select(x=>$"{x.Family} ({x.Pid})")),"Г0 счётчики PID: "+string.Join(", ",counterPids));
         var numericErrors=new List<string>();
-        try{report+=OneClickReport.Read(root,numericErrors);}catch(Exception ex){summary.Log("Numeric report error: "+ex);numericErrors.Add(ex.GetType().Name);}
+        try{report+=OneClickReport.Read(root,numericErrors,summary.DirectoryPath);}catch(Exception ex){summary.Log("Numeric report error: "+ex);numericErrors.Add(ex.GetType().Name);}
         if(numericErrors.Count>0)
         {
             steps.Add(new("numeric-report","failed_numeric_summary","",string.Join("; ",numericErrors)));

@@ -85,6 +85,21 @@ try
 }
 catch(Exception ex){Check(false,"report guard fixtures: "+ex);}
 finally{if(Directory.Exists(reportRoot))Directory.Delete(reportRoot,true);}
+reportRoot=Path.Combine(Path.GetTempPath(),"ElasticMem_open_summary_"+Guid.NewGuid().ToString("N"));
+try
+{
+    using var summary=new ElasticMem.Core.Research.ResearchRun(reportRoot,"auto-summary","test","fixture",new{});
+    using var good=new ElasticMem.Core.Research.ResearchRun(reportRoot,"g4","test","fixture",new{});
+    good.WriteJson("result.json",new{schema="elasticmem.g4.codecs.v1",codecs=new[]{new{codec="VALID_NUMBER_SENTINEL",total_with_reserve_bytes=1048576}}});
+    good.Seal("offline_codec_comparison_not_live_reclaim","fixture");
+    var errors=new List<string>();string report=ElasticMem.App.Research.OneClickReport.Read(reportRoot,errors,summary.DirectoryPath);
+    Check(errors.Count==0&&report.Contains("VALID_NUMBER_SENTINEL"),"exact open summary excluded; successful numeric report retained");
+    using var unfinished=new ElasticMem.Core.Research.ResearchRun(reportRoot,"g4","test","fixture",new{});
+    errors.Clear();ElasticMem.App.Research.OneClickReport.Read(reportRoot,errors,summary.DirectoryPath);
+    Check(errors.Count==1,"other unfinished run never silently excluded");
+}
+catch(Exception ex){Check(false,"open-summary fixtures: "+ex);}
+finally{if(Directory.Exists(reportRoot))Directory.Delete(reportRoot,true);}
 Console.WriteLine(fails == 0 ? "ALL TESTS PASSED" : $"{fails} FAILURES");
 
 bench:
