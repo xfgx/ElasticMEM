@@ -15,7 +15,7 @@ internal static class EpochResearch
         foreach(var source in input.Take(2))
         {
             ct.ThrowIfCancellationRequested();if(source.Pid<=4||source.Pid==Environment.ProcessId)throw new ArgumentException("Foreign ordinary application only");
-            using var p=Process.GetProcessById(source.Pid);if(p.ProcessName is not("chrome" or "msedge" or "steamwebhelper")||p.SessionId!=Process.GetCurrentProcess().SessionId||p.StartTime.ToUniversalTime().Ticks!=source.StartTicks)throw new InvalidOperationException("Target identity/session changed");
+            using var p=Process.GetProcessById(source.Pid);if(!new[]{"chrome","msedge","steamwebhelper"}.Contains(p.ProcessName,StringComparer.OrdinalIgnoreCase)||p.SessionId!=Process.GetCurrentProcess().SessionId||p.StartTime.ToUniversalTime().Ticks!=source.StartTicks)throw new InvalidOperationException("Target identity/session changed");
             IntPtr h=Native.OpenProcess(Native.PROCESS_QUERY_INFORMATION|Native.PROCESS_VM_READ|0x100,false,source.Pid);if(h==IntPtr.Zero)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             try
             {

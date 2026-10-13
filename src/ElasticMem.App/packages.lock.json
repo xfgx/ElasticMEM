@@ -96,13 +96,6 @@
         }
       }
     },
-    "net8.0-windows7.0/linux-x64": {
-      "System.Text.Encodings.Web": {
-        "type": "Transitive",
-        "resolved": "9.0.1",
-        "contentHash": "XkspqduP2t1e1x2vBUAD/xZ5ZDvmywuUwsmB93MvyQLospJfqtX0GsR/kU0vUL2h4kmvf777z3txV2W4NrQ9Qg=="
-      }
-    },
     "net8.0-windows7.0/win-x64": {
       "System.Text.Encodings.Web": {
         "type": "Transitive",
