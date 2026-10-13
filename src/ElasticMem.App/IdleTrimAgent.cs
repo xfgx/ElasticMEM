@@ -101,6 +101,13 @@ public sealed class IdleTrimAgent : IDisposable
         Log?.Invoke("Агент остановлен (пределы и приоритеты памяти восстановлены)");
     }
 
+    public async Task StopAndWaitAsync()
+    {
+        var timer=Interlocked.Exchange(ref _timer,null);if(timer!=null)await timer.DisposeAsync();
+        lock(_lock){foreach(var s in _st.Values){Restore(s);Native.CloseHandle(s.H);}_st.Clear();}
+        Log?.Invoke("Агент остановлен; callback таймера завершён, пределы и приоритеты восстановлены");
+    }
+
     public void Dispose() => Stop();
 
     public List<ProcRow> Snapshot()
@@ -233,6 +240,7 @@ public sealed class IdleTrimAgent : IDisposable
 
         lock (_lock)
         {
+            if(_timer==null)return;
             if ((now - _lastScan).TotalSeconds >= 5) { Rescan(); _lastScan = now; }
             int cores = Environment.ProcessorCount;
             var pulses = new List<St>();

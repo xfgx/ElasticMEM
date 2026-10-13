@@ -1,0 +1,11 @@
+# Automatic test1 release workflow (developer, not app user)
+
+For every requested ElasticMem update: commit source/version/guide; preserve source lineage; annotate release tag; run staging-only `stage-test1.sh` with DOTNET and an EXTERNAL mode-600 CURL_CONFIG. No publishing credentials in source, app, BUILD, QA, logs or ZIPs. Agent obtains the existing publish credential only through the authorized test1 connection; use encrypted transfer, never print secrets. Delete temporary private config/key after upload.
+
+Pipeline: clean locked win-x64 single-file publish → isolated test harness against exact packaged Core DLL → publisher negative tests → PE/payload/guide-resource/BUILD validation → source git.bundle + test run tag → four allowlisted release files uploaded to incoming. No user logs, dumps or arbitrary private files accepted by uploader.
+
+The agent automatically continues (no user action) with `publish-test1-server.py publication-request.json` through the authorized test1 MCP shell. This is not a standalone shell autopublisher: stage-test1.sh must never be reported as publication success. Script requires unchanged previous latest hash, increasing version, exact incoming hashes, ZIP CRC/paths/all artifacts, QA/commit, restored source-bundle release tag, identical guide and checksum index. It backs up latest, preserves earlier packages, atomically replaces latest. Do not run the old publisher that broadly deletes incoming/old releases. Never overwrite a concurrent update or downgrade automatically.
+
+Finally the agent automatically runs `verify-public.py --request ... --output ...`: independently fetch PUBLIC latest, verify version/commit/URLs, download the FULL public binary ZIP and compare SHA256. Also verify public source/guide/checksum bytes. Only then report published. If any stage fails, do not call it published or tested on Windows. Keep failure details and previous release working.
+
+Public release includes full Russian guide, source with bundle and SHA index; latest has instructionsUrl/sourceUrl/checksumsUrl. Announce direct download + in-app one-click instructions and actual QA limits. Record publication and user preference in research journal. This is a developer deployment workflow, NOT an autonomous background publisher on the user's PC and NOT permission to upload their RAM/logs.

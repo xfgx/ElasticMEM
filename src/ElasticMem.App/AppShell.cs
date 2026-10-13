@@ -2,8 +2,9 @@ namespace ElasticMem.App;
 internal sealed class AppShell:UserControl
 {
     readonly TableLayoutPanel _grid;readonly FlowLayoutPanel _nav;
+    readonly Button _automatic=new(){Text="Проверить всё (читает память)",AutoSize=true,Margin=new Padding(12,12,16,12)};
     readonly TabControl _tabs;readonly List<Button> _buttons=new();readonly Label _heading=new(){AutoSize=true,Font=new Font("Segoe UI",18,FontStyle.Bold),Padding=new Padding(20,16,0,0)};
-    public AppShell(TabControl tabs,CheckBox theme)
+    public AppShell(TabControl tabs,CheckBox theme,Action? automatic=null)
     {
         Dock=DockStyle.Fill;_tabs=tabs;
         _grid=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Padding=Padding.Empty,Margin=Padding.Empty};_grid.ColumnStyles.Add(new(SizeType.Absolute,192));_grid.ColumnStyles.Add(new(SizeType.Percent,100));
@@ -13,7 +14,7 @@ internal sealed class AppShell:UserControl
         foreach(TabPage page in tabs.TabPages){var p=page;var button=new Button{Text=p.Text,Width=160,Height=42,FlatStyle=FlatStyle.Flat,TextAlign=ContentAlignment.MiddleLeft,Padding=new Padding(8,0,0,0),Margin=new Padding(0,2,0,2),AccessibleName=p.Text,AutoEllipsis=true};button.Click+=(_,_)=>tabs.SelectedTab=p;_buttons.Add(button);_nav.Controls.Add(button);}rail.Controls.Add(_nav,0,1);
         theme.Text="Тёмная тема";theme.AutoSize=true;rail.Controls.Add(theme,0,2);
         tabs.Appearance=TabAppearance.FlatButtons;tabs.ItemSize=new Size(0,1);tabs.SizeMode=TabSizeMode.Fixed;tabs.Margin=Padding.Empty;
-        var body=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=1,RowCount=3,Padding=Padding.Empty,Margin=Padding.Empty};body.RowStyles.Add(new(SizeType.Absolute,66));body.RowStyles.Add(new(SizeType.Percent,100));body.RowStyles.Add(new(SizeType.Absolute,32));body.Controls.Add(_heading,0,0);tabs.Dock=DockStyle.Fill;body.Controls.Add(tabs,0,1);
+        var body=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=1,RowCount=3,Padding=Padding.Empty,Margin=Padding.Empty};body.RowStyles.Add(new(SizeType.Absolute,66));body.RowStyles.Add(new(SizeType.Percent,100));body.RowStyles.Add(new(SizeType.Absolute,32));var header=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=Padding.Empty};header.ColumnStyles.Add(new(SizeType.Percent,100));header.ColumnStyles.Add(new(SizeType.AutoSize));header.Controls.Add(_heading,0,0);header.Controls.Add(_automatic,1,0);_automatic.Click+=(_,_)=>automatic?.Invoke();body.Controls.Add(header,0,0);tabs.Dock=DockStyle.Fill;body.Controls.Add(tabs,0,1);
         body.Controls.Add(new Label{Text="  Локальные проверки · отчёты не доказывают универсальную экономию RAM",Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleLeft,AccessibleDescription="hint"},0,2);
         _grid.Controls.Add(rail,0,0);_grid.Controls.Add(body,1,0);Controls.Add(_grid);tabs.SelectedIndexChanged+=(_,_)=>SelectPage();SelectPage();
     }
@@ -25,6 +26,7 @@ internal sealed class AppShell:UserControl
         int width=Math.Max(160,_nav.ClientSize.Width-_nav.Padding.Horizontal-SystemInformation.VerticalScrollBarWidth-4);
         foreach(var b in _buttons)if(b.Width!=width)b.Width=width;
     }
+    public void SetResearchBusy(bool busy)=>_automatic.Enabled=!busy;
     public void RefreshPalette()=>SelectPage();
     void SelectPage(){_heading.Text=_tabs.SelectedTab?.Text??"ElasticMem";for(int i=0;i<_buttons.Count;i++){_buttons[i].AccessibleDescription=i==_tabs.SelectedIndex?"accent":"nav";Theme.Paint(_buttons[i]);}}
 }

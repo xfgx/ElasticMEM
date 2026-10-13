@@ -57,7 +57,7 @@ public sealed class MainForm : Form
     private UpdateTab _updateTab = null!;
     private AppProfile? _agentProfile;
     private ResearchTab _researchTab=null!;
-    private bool _accessBusy;
+    private bool _accessBusy,_benchBusy;
 
     private void StartAgentForProfile(AppProfile p)
     {
@@ -92,7 +92,7 @@ public sealed class MainForm : Form
         tabs.TabPages.Add(BuildAnalyzeTab());
         tabs.TabPages.Add(BuildBenchTab());
         tabs.TabPages.Add(BuildAccessTab());
-        _researchTab = new ResearchTab(() => _agent.Running || _anCts!=null || !_btnBench.Enabled || _appsTab.HasActiveWork || _accessBusy);
+        _researchTab = new ResearchTab(() => _agent.Running || _anCts!=null || _benchBusy || _appsTab.HasActiveWork || _accessBusy,async()=>{if(_agent.Running){await _agent.StopAndWaitAsync();_btnStart.Text="▶ Запустить агент";}});
         tabs.TabPages.Add(_researchTab);
         _researchTab.BusyChanged += busy => { foreach(TabPage page in tabs.TabPages)if(page!=_researchTab)page.Enabled=!busy; };
         FormClosing += async (_, e) => { if(_researchTab.IsRunning){e.Cancel=true;await _researchTab.CancelAndWait();if(!IsDisposed)BeginInvoke(Close);} };
@@ -108,8 +108,9 @@ public sealed class MainForm : Form
             var st = AppSettings.Load(); st.Theme = chkDark.Checked ? "dark" : "light"; try { st.Save(); } catch { }
             Theme.Apply(this, chkDark.Checked);
         };
-        var shell = new AppShell(tabs, chkDark);
+        var shell = new AppShell(tabs, chkDark,()=>{tabs.SelectedTab=_researchTab;_=_researchTab.StartAutomatic();});
         Controls.Add(shell);
+        _researchTab.BusyChanged+=busy=>shell.SetResearchBusy(busy);
         chkDark.CheckedChanged += (_, _) => shell.RefreshPalette();
         Shown += (_, _) => { var area=Screen.FromControl(this).WorkingArea; MinimumSize=new Size(Math.Min(MinimumSize.Width,area.Width),Math.Min(MinimumSize.Height,area.Height)); if(Width>area.Width)Width=area.Width; if(Height>area.Height)Height=area.Height; };
         Theme.Apply(this, chkDark.Checked);
@@ -231,14 +232,14 @@ public sealed class MainForm : Form
         });
         bMicro.Click += async (_, _) =>
         {
-            bMicro.Enabled = false; _accessBusy=true; _txtAccess.Text = "Выполняется (≈30 с)…";
+            if(_accessBusy)return;bMicro.Enabled = false; _accessBusy=true; _txtAccess.Text = "Выполняется (≈30 с)…";
             try { _txtAccess.Text = (await Task.Run(() => AccessBench.Micro())).ReplaceLineEndings(Environment.NewLine); }
             catch (Exception ex) { _txtAccess.Text = ex.ToString(); }
             finally { bMicro.Enabled = true; _accessBusy=false; }
         };
         bFull.Click += async (_, _) =>
         {
-            bFull.Enabled = false; _accessBusy=true; _txtAccess.Text = "Калибровка и прогон (несколько минут)…" + Environment.NewLine;
+            if(_accessBusy)return;bFull.Enabled = false; _accessBusy=true; _txtAccess.Text = "Калибровка и прогон (несколько минут)…" + Environment.NewLine;
             long zone = (long)nZone.Value << 17; // МБ → слова
             try
             {
@@ -253,14 +254,14 @@ public sealed class MainForm : Form
         var bLinked = new Button { Text = "Связанные буферы B = F(A) ⊕ R", AutoSize = true };
         bSelf.Click += async (_, _) =>
         {
-            bSelf.Enabled = false; _accessBusy=true; _txtAccess.Text = "Самопроверка…";
+            if(_accessBusy)return;bSelf.Enabled = false; _accessBusy=true; _txtAccess.Text = "Самопроверка…";
             try { _txtAccess.Text = (await Task.Run(() => ElasticMem.Core.SelfTest.Run())).ReplaceLineEndings(Environment.NewLine); }
             catch (Exception ex) { _txtAccess.Text = ex.ToString(); }
             finally { bSelf.Enabled = true; _accessBusy=false; }
         };
         bLinked.Click += async (_, _) =>
         {
-            bLinked.Enabled = false; _accessBusy=true; _txtAccess.Text = "Эксперимент со связанными буферами (≈1–2 мин)…" + Environment.NewLine;
+            if(_accessBusy)return;bLinked.Enabled = false; _accessBusy=true; _txtAccess.Text = "Эксперимент со связанными буферами (≈1–2 мин)…" + Environment.NewLine;
             try
             {
                 var log = new Action<string>(s => BeginInvoke(() => _txtAccess.AppendText(s + Environment.NewLine)));
@@ -476,7 +477,7 @@ public sealed class MainForm : Form
 
     private async Task RunBench()
     {
-        _btnBench.Enabled = false;
+        if(_benchBusy)return;_benchBusy=true;_btnBench.Enabled = false;
         var cfg = new BenchmarkConfig { BlockSize = (int)_cbBenchBlock.SelectedItem!, DurationSec = (double)_nDur.Value };
         _txtBench.Text = "Выполняется..." + Environment.NewLine;
         try
@@ -485,6 +486,6 @@ public sealed class MainForm : Form
             _txtBench.Text = Benchmark.Format(res).ReplaceLineEndings(Environment.NewLine);
         }
         catch (Exception ex) { _txtBench.AppendText("Ошибка: " + ex); }
-        finally { _btnBench.Enabled = true; }
+        finally { _btnBench.Enabled = true;_benchBusy=false; }
     }
 }

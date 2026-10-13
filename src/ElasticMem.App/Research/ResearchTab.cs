@@ -19,7 +19,9 @@ internal sealed class ResearchTab:TabPage
     readonly Label _hint=Ui.Hint(""),_status=Ui.Hint("Готов к проверкам. Ничего не включается автоматически.");
     readonly TextBox _output=new(){Multiline=true,ReadOnly=true,WordWrap=true,ScrollBars=ScrollBars.Vertical,Dock=DockStyle.Fill,Font=new Font("Consolas",10)};
     readonly Dictionary<string,Control> _options=new();readonly List<Control> _config=new();
-    readonly Func<bool> _agentRunning;
+    readonly Func<bool> _agentRunning;readonly Func<Task>? _prepareAuto;
+    readonly Button _auto=new(){Text="Проверить всё — автоматически",AutoSize=true};
+    AutoOutcome? _batch;
     CancellationTokenSource? _cts;string? _last;
     TaskCompletionSource? _completion;Task? _auditTask;
     public bool IsRunning=>_cts!=null||_auditTask!=null;
@@ -37,15 +39,18 @@ internal sealed class ResearchTab:TabPage
         ("gpu-probe","Г3 · проверить GPU_UPLOAD","Проверяет адаптеры D3D12, дискретность, GPU_UPLOAD и бюджет VRAM. Не запускает нагрузку и не измеряет скорость."),
         ("g3","Г3 · VRAM / диск: микротест","Запись своих данных в GPU_UPLOAD, DMA READBACK и восстановление в RAM; сравнение с unbuffered file I/O. Нужна поддержка GPU_UPLOAD. Это НЕ перенос pagefile в VRAM. Выберите папку на SSD: временный файл создаётся с новым именем и удаляется."),
     };
-    public ResearchTab(Func<bool> agentRunning):base("Лаборатория")
+    public ResearchTab(Func<bool> agentRunning,Func<Task>? prepareAuto=null):base("Лаборатория")
     {
-        _agentRunning=agentRunning;
+        _agentRunning=agentRunning;_prepareAuto=prepareAuto;
         _pids.Text="";_scratch.Text=Path.GetTempPath();_mode.Items.AddRange(Modes.Select(x=>x.Title).Cast<object>().ToArray());
         var refresh=new Button{Text="Выбрать процессы",AutoSize=true};refresh.Click+=(_,_)=>ChoosePids();
         var chooseTrace=new Button{Text="CSV…",AutoSize=true};chooseTrace.Click+=(_,_)=>Pick(_trace,"CSV|*.csv");
         var chooseMeta=new Button{Text="JSON…",AutoSize=true};chooseMeta.Click+=(_,_)=>Pick(_metadata,"JSON|*.json");
         var chooseDisk=new Button{Text="Папка SSD…",AutoSize=true};chooseDisk.Click+=(_,_)=>{using var d=new FolderBrowserDialog();if(d.ShowDialog(this)==DialogResult.OK)_scratch.Text=d.SelectedPath;};
         var stack=new VStack{Padding=new Padding(16)};
+        var help=new Button{Text="Полная инструкция",AutoSize=true};help.Click+=(_,_)=>ResearchHelp.Show(FindForm()!);
+        _auto.Click+=async(_,_)=>await StartAutomatic();
+        stack.Add(Ui.Row(_auto,help)).Add(Ui.Hint("Нажатие «Проверить всё» — согласие на локальное чтение до 64 МиБ памяти выбранных рендереров Chrome/Edge/Steam. Агент остановится; ZIP без дампов создаётся автоматически. Отправки по сети нет."));
         stack.Add(Ui.Row(Ui.L("Проверка"),_mode,_run,_cancel)).Add(_hint);
         AddOption("pids",Ui.Row(Ui.L("Процессы"),_pids,refresh),stack);AddOption("seconds",Ui.Row(Ui.L("Длительность, с"),_seconds),stack);
         AddOption("limit",Ui.Row(Ui.L("Максимум на процесс, МиБ"),_limit,Ui.L("Всего ≤128 МиБ; античит/защищённые процессы не трогать")),stack);
@@ -56,7 +61,7 @@ internal sealed class ResearchTab:TabPage
         AddOption("disk",Ui.Row(_scratch,chooseDisk),stack);
         var open=new Button{Text="Последний прогон",AutoSize=true};open.Click+=(_,_)=>Open(_last??ResearchJobs.Root);
         var export=new Button{Text="Экспорт логов ZIP",AutoSize=true};export.Click+=(_,_)=>Export();
-        var uiAudit=new Button{Text="Проверка интерфейса",AutoSize=true};uiAudit.Click+=async(_,_)=>{if(_cts!=null)return;_run.Enabled=false;try{_auditTask=UiDiagnostics.Capture(FindForm()!);await _auditTask;}finally{_auditTask=null;_run.Enabled=true;}_output.Text="Снимки двух тем и layout-audit сохранены. Включите чувствительные файлы при экспорте, чтобы приложить screenshots.";};
+        var uiAudit=new Button{Text="Проверка интерфейса",AutoSize=true};uiAudit.Click+=async(_,_)=>{if(IsRunning)return;_run.Enabled=false;_auto.Enabled=false;try{_auditTask=UiDiagnostics.Capture(FindForm()!);await _auditTask;}finally{_auditTask=null;_run.Enabled=true;_auto.Enabled=true;}_output.Text="Снимки двух тем и layout-audit сохранены. Включите чувствительные файлы при экспорте, чтобы приложить screenshots.";};
         var verify=new Button{Text="Проверить хеши",AutoSize=true};verify.Click+=(_,_)=>{try{if(_last==null)throw new InvalidOperationException("Сначала выполните прогон");ResearchRun.Verify(_last);_status.Text="Хеши совпали. Это целостность, не доказательство эффективности.";}catch(Exception ex){_status.Text=ex.Message;}};
         stack.Add(Ui.Row(open,verify,export,uiAudit)).Add(_status).Add(_output,true);Controls.Add(stack);
         _mode.SelectedIndexChanged+=(_,_)=>UpdateMode();_mode.SelectedIndex=0;
@@ -82,18 +87,37 @@ internal sealed class ResearchTab:TabPage
         if(mode=="g1"&&(options.Pids.Length is <1 or >4||options.Pids.Length*options.SnapshotMiB>128)){_status.Text="Г1: выберите только 1–4 процесса; всего не более 128 МиБ. Тест не начат.";MessageBox.Show(this,_status.Text,"Параметры Г1",MessageBoxButtons.OK,MessageBoxIcon.Information);return;}
         if(options.Pids.Any(pid=>pid<=4)&&mode is "g1" or "g0-sample"){_status.Text="Выберите обычные приложения, не Idle/System (PID 0/4).";return;}
         if(mode=="g1"&&MessageBox.Show(this,"Снимки могут содержать пароли, переписку и другие личные данные. Они остаются локально; по умолчанию не попадают в ZIP логов. Не выбирайте игры с античитом. В Г1 — максимум 4 процесса.\n\nПродолжить чтение памяти выбранных PID?","Г1: явное согласие",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
-        _cts=new();_completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);BusyChanged?.Invoke(true);_run.Enabled=false;_cancel.Enabled=true;_mode.Enabled=false;foreach(var c in _config)c.Enabled=false;
+        _batch=null;_cts=new();_completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);BusyChanged?.Invoke(true);_run.Enabled=false;_auto.Enabled=false;_cancel.Enabled=true;_mode.Enabled=false;foreach(var c in _config)c.Enabled=false;
         try{var progress=new Progress<string>(s=>{if(!IsDisposed)_status.Text=s;});
             _last=await Task.Run(()=>ResearchJobs.Execute(mode,options,progress,_cts.Token));_output.Text=File.ReadAllText(Path.Combine(_last,File.Exists(Path.Combine(_last,"result.json"))?"result.json":"report.md"));_status.Text="Сохранено: "+Path.GetFileName(_last);}
         catch(Exception ex){_output.Text=ex.ToString();}
-        finally{_cts.Dispose();_cts=null;BusyChanged?.Invoke(false);_completion?.TrySetResult();_run.Enabled=true;_cancel.Enabled=false;_mode.Enabled=true;foreach(var c in _config)c.Enabled=true;}
+        finally{_cts.Dispose();_cts=null;BusyChanged?.Invoke(false);_completion?.TrySetResult();_run.Enabled=true;_auto.Enabled=true;_cancel.Enabled=false;_mode.Enabled=true;foreach(var c in _config)c.Enabled=true;}
+    }
+    public async Task StartAutomatic()
+    {
+        if(IsRunning)return;
+        _cts=new();_completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);BusyChanged?.Invoke(true);_auto.Enabled=false;_run.Enabled=false;_cancel.Enabled=true;_mode.Enabled=false;foreach(var c in _config)c.Enabled=false;
+        try
+        {
+            _output.Text="Подготовка автопроверки. Агент будет остановлен; данные остаются локально.";
+            if(_prepareAuto!=null)await _prepareAuto();
+            if(_agentRunning())throw new InvalidOperationException("Другой бенчмарк ещё работает. Дождитесь его завершения и повторите автопроверку.");
+            _cts.Token.ThrowIfCancellationRequested();
+            var progress=new Progress<string>(s=>{if(!IsDisposed)_status.Text=s;});
+            _batch=await AutoResearch.RunAsync(true,120,progress,_cts.Token,(root,ct)=>UiDiagnostics.Capture(FindForm()!,root,false,ct));
+            _last=_batch.LastRun;_output.Text=_batch.Report;_status.Text=string.IsNullOrEmpty(_batch.Archive)?"Автопрогон завершён, ZIP не создан — смотрите причину.":"Готово: "+_batch.Status+" · ZIP собран автоматически";
+            if(!string.IsNullOrEmpty(_batch.Archive))Open(Path.GetDirectoryName(_batch.Archive)!);
+        }
+        catch(OperationCanceledException){_status.Text="Отменено до запуска проверок.";}
+        catch(Exception ex){_output.Text=ex.ToString();_status.Text="Автопроверка не завершена.";}
+        finally{_cts.Dispose();_cts=null;BusyChanged?.Invoke(false);_completion?.TrySetResult();_auto.Enabled=true;_run.Enabled=true;_cancel.Enabled=false;_mode.Enabled=true;foreach(var c in _config)c.Enabled=true;}
     }
     void Export()
     {
         if(_cts!=null){MessageBox.Show(this,"Дождитесь завершения или отмените прогон.");return;}
         using var d=new SaveFileDialog{Filter="ZIP архив|*.zip",FileName="ElasticMem-logs-"+DateTime.Now.ToString("yyyyMMdd-HHmmss")+".zip",OverwritePrompt=true};if(d.ShowDialog(this)!=DialogResult.OK)return;
         var choice=MessageBox.Show(this,"Добавить дампы, входные трассы и screenshots? Они могут содержать личные данные.\n\nДа — полный пакет. Нет — только отчёты/логи/счётчики.\nПеред отправкой просмотрите архив.","Приватность экспорта",MessageBoxButtons.YesNoCancel,MessageBoxIcon.Warning);if(choice==DialogResult.Cancel)return;
-        try{ResearchRun.ExportLogs(ResearchJobs.Root,d.FileName,choice==DialogResult.Yes);_status.Text="ZIP сохранён локально. Отправьте его вручную; автоматической загрузки нет.";Open(Path.GetDirectoryName(d.FileName)!);}catch(Exception ex){_status.Text=ex.Message;}
+        try{ResearchRun.ExportLogs(_batch?.RunsRoot??ResearchJobs.Root,d.FileName,choice==DialogResult.Yes);_status.Text="ZIP сохранён локально. Отправьте его вручную; автоматической загрузки нет.";Open(Path.GetDirectoryName(d.FileName)!);}catch(Exception ex){_status.Text=ex.Message;}
     }
     void ChoosePids(){using var dialog=new Form{Text="Выберите PID (не выбирайте игры с античитом)",Width=640,Height=520,StartPosition=FormStartPosition.CenterParent};var list=new ListView{Dock=DockStyle.Fill,View=View.Details,CheckBoxes=true,FullRowSelect=true};list.Columns.Add("Процесс",280);list.Columns.Add("PID",90);list.Columns.Add("Рабочий набор, МиБ",170);foreach(var p in Process.GetProcesses()){using(p){try{list.Items.Add(new ListViewItem(new[]{p.ProcessName,p.Id.ToString(),(p.WorkingSet64>>20).ToString()}){Tag=p.Id});}catch{}}}var ok=new Button{Text="Выбрать",Dock=DockStyle.Bottom,Height=44,DialogResult=DialogResult.OK};dialog.Controls.Add(list);dialog.Controls.Add(ok);Theme.Apply(dialog,Theme.Dark);if(dialog.ShowDialog(this)==DialogResult.OK){var selected=list.CheckedItems.Cast<ListViewItem>().Select(i=>(int)i.Tag!).ToArray();if(Modes[_mode.SelectedIndex].Key=="g1"&&(selected.Length is <1 or >4)){MessageBox.Show(this,"Для Г1 отметьте 1–4 процесса одного приложения. Старый список не изменён.");return;}_pids.Text=string.Join(",",selected);}}
     void Pick(TextBox box,string filter){using var d=new OpenFileDialog{Filter=filter};if(d.ShowDialog(this)==DialogResult.OK)box.Text=d.FileName;}

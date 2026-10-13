@@ -81,7 +81,7 @@ public sealed class ResearchRun : IDisposable
             if(File.Exists(Path.Combine(folder,"manifest.json"))){Verify(folder);sourceVerification.Add(new{run=Path.GetFileName(folder),source_integrity="verified_before_export"});}
             else if(Path.GetFileName(folder)!="diagnostics")throw new InvalidDataException("Incomplete run: "+Path.GetFileName(folder));
         }
-        var allowedNames=new HashSet<string>(StringComparer.OrdinalIgnoreCase){"manifest.json","report.md","result.json","events.log","error.txt","process-samples.csv","gpu-samples.csv","gpu-device.json","mma-query.json","layout-audit.json","crash.log","invalidated-manifest.json"};
+        var allowedNames=new HashSet<string>(StringComparer.OrdinalIgnoreCase){"manifest.json","report.md","result.json","events.log","error.txt","process-samples.csv","gpu-samples.csv","gpu-device.json","mma-query.json","layout-audit.json","crash.log","invalidated-manifest.json","auto-report.txt"};
         using (var zip = ZipFile.Open(target, ZipArchiveMode.Create))
         {
             foreach (var f in files)

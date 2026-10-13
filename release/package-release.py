@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+import argparse,datetime,hashlib,json,pathlib,re,shutil,struct,subprocess,zipfile,xml.etree.ElementTree as ET
+from release_inventory import BASE,FINAL,verify_build,inventory,validate_paths
+p=argparse.ArgumentParser();p.add_argument('--output',required=True);p.add_argument('--core-log',required=True);p.add_argument('--publish-dir',required=True);p.add_argument('--previous-manifest-sha256',required=True);a=p.parse_args();root=pathlib.Path(__file__).resolve().parents[1];out=pathlib.Path(a.publish_dir);dest=pathlib.Path(a.output);dest.mkdir(parents=True,exist_ok=True);log=pathlib.Path(a.core_log).read_text();sha=lambda b:hashlib.sha256(b).hexdigest();version=ET.parse(root/'src/ElasticMem.App/ElasticMem.App.csproj').getroot().find('.//Version').text;commit=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip()
+assert not subprocess.check_output(['git','-C',str(root),'status','--porcelain'],text=True),'Dirty sources';assert 'ALL TESTS PASSED' in log;matches=re.findall(r'\{"status":"selftests_passed","checks":(\d+)',log);assert matches;checks=int(matches[-1])
+build=json.loads((out/'BUILD.json').read_text());assert build['code_commit']==commit and build['version']==version;verify_build(out,build)
+exe=(out/'ElasticMem.exe').read_bytes();off=struct.unpack_from('<I',exe,0x3c)[0];assert exe[off:off+4]==b'PE\0\0' and struct.unpack_from('<H',exe,off+4)[0]==0x8664
+proof={}
+for name,path in {'App':root/'src/ElasticMem.App/bin/Release/net8.0-windows/win-x64/ElasticMem.dll','Core':root/'src/ElasticMem.Core/bin/Release/net8.0/ElasticMem.Core.dll'}.items():
+ data=path.read_bytes();offset=exe.find(data);assert offset>=0,name;proof[name]={'bytes':len(data),'sha256':sha(data),'embedded_offset':offset}
+guide=(root/'windows-check/ПОЛНАЯ-ИНСТРУКЦИЯ.md').read_bytes();assert guide in (root/'src/ElasticMem.App/bin/Release/net8.0-windows/win-x64/ElasticMem.dll').read_bytes(),'Guide resource not embedded'
+tag='run-core-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ');subprocess.run(['git','-C',str(root),'tag','-a',tag,'-m',f'Exact candidate Core: {checks} checks and legacy suite on Linux; native Windows not executed'],check=True)
+qa={'schema':'elasticmem.release.qa.v1','version':version,'code_commit':commit,'source_tag':'elasticmem-app-v'+version,'core_test_run_tag':tag,'core_suite':'passed','core_checks':checks,'tested_core_sha256':proof['Core']['sha256'],'host':'Linux','dotnet_sdk':'8.0.425','one_click_native_windows_execution':'not_tested_here','gui_dpi_execution':'not_tested_here','gpu_execution':'not_tested_here','publication_at_package_time':'not_yet_published','assembly_payloads':proof,'source_history':'Restored archive + documented new git; no fabricated old history'}
+(out/'QA.json').write_text(json.dumps(qa,indent=2)+'\n');(out/'core-tests-linux.log').write_text(log)
+build['files']=inventory(out,FINAL-{'BUILD.json'},{'BUILD.json'});(out/'BUILD.json').write_text(json.dumps(build,indent=2)+'\n')
+binary=dest/f'ElasticMem-v{version}-win-x64.zip'
+with zipfile.ZipFile(binary,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as z:
+ for n in sorted(FINAL):z.write(out/n,n)
+with zipfile.ZipFile(binary) as z:
+ assert z.testzip() is None
+ for f in build['files']:
+  b=z.read(f['path']);assert len(b)==f['bytes'] and sha(b)==f['sha256']
+bundle=dest/'temp.git.bundle';subprocess.run(['git','-C',str(root),'bundle','create',str(bundle),'--all'],check=True,stdout=subprocess.DEVNULL);source=dest/f'ElasticMem-v{version}-source.zip'
+with zipfile.ZipFile(source,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as z:
+ for n in subprocess.check_output(['git','-C',str(root),'ls-files','-z'],text=True).split('\0')[:-1]:
+  assert not (root/n).is_symlink(),'Symlink source';z.write(root/n,'ElasticMem/'+n)
+ z.write(bundle,'ElasticMem/ElasticMem.git.bundle');z.writestr('ElasticMem/RESTORE.txt',f'git clone ElasticMem.git.bundle recovered\ngit -C recovered checkout elasticmem-app-v{version}\n');z.writestr('ElasticMem/QA.json',json.dumps(qa,indent=2));z.writestr('ElasticMem/core-tests-linux.log',log)
+bundle.unlink();public_guide=dest/f'ElasticMem-v{version}-guide.md';public_guide.write_bytes(guide);checksums=dest/f'ElasticMem-v{version}-SHA256.txt';checksums.write_text(''.join(sha(f.read_bytes())+'  '+f.name+'\n' for f in [binary,source,public_guide]));files=[{'name':f.name,'bytes':f.stat().st_size,'sha256':sha(f.read_bytes())} for f in [binary,source,public_guide,checksums]]
+request={'version':version,'code_commit':commit,'expected_latest_sha256':a.previous_manifest_sha256,'files':files,'notes':'Одна кнопка: остановка своего агента, автоотбор рендереров, Г0/Г1/Г2/GPU и честные пропуски, аудит интерфейса, ZIP логов автоматически; полная инструкция. Дампы и логи по сети не отправляются. Native Windows/GUI/GPU runtime в Linux-среде сборки не проверены. Нет kernel VRAM pager, точной трассы Г0, VM-стенда или патча Python/V8.'};(dest/'publication-request.json').write_text(json.dumps(request,ensure_ascii=False,indent=2)+'\n');print(json.dumps({'version':version,'commit':commit,'checks':checks,'release_files':len(build['files']),'artifacts':files},ensure_ascii=False,indent=2))

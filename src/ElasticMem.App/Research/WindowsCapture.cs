@@ -46,12 +46,13 @@ internal static class WindowsCapture
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"QueryWorkingSetEx failed; no residency guessed");
         return info.Select(x=>PageResidency.Decode(x.Flags.ToUInt64())).ToArray();
     }
-    public static ProcessSnapshot Capture(int pid,int maxMiB,ResearchRun run,CancellationToken ct)
+    public static ProcessSnapshot Capture(int pid,int maxMiB,ResearchRun run,CancellationToken ct,long? expectedStartTicks=null)
     {
         if(pid==Environment.ProcessId)throw new ArgumentException("G1 observer self-capture is excluded: capture buffers contaminate page contents. Select external application PIDs.");
         if(pid<=4)throw new ArgumentException("Select a normal application PID, not Idle/System");
         if(maxMiB<1||maxMiB>64)throw new ArgumentException("Snapshot cap 1..64 MiB per process");
         using var p=Process.GetProcessById(pid);long startTicks=p.StartTime.ToUniversalTime().Ticks;string processName=p.ProcessName;
+        if(expectedStartTicks.HasValue&&startTicks!=expectedStartTicks.Value)throw new InvalidOperationException("Selected process instance changed; PID reuse rejected before reading");
         IntPtr h=Native.OpenProcess(Native.PROCESS_QUERY_INFORMATION|Native.PROCESS_VM_READ,false,pid);
         if(h==IntPtr.Zero)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
         try

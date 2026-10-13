@@ -11,6 +11,12 @@ internal static class ResearchCli
         string transcript=Get("--out")??Path.Combine(AppSettings.Dir,"research-cli-"+DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")+".txt");
         try
         {
+            if(mode=="auto")
+            {
+                var auto=AutoResearch.RunAsync(args.Contains("--allow-memory-read"),Int("--seconds",120),null,CancellationToken.None).GetAwaiter().GetResult();
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(transcript))!);File.WriteAllText(transcript,auto.Report);
+                Environment.ExitCode=BatchPolicy.Failure(auto.Status)||string.IsNullOrEmpty(auto.Archive)?1:0;return true;
+            }
             if(mode=="export") {if(Get("--out")==null)throw new ArgumentException("--out ZIP required");ResearchRun.ExportLogs(ResearchJobs.Root,transcript,args.Contains("--include-sensitive"));Environment.ExitCode=0;return true;}
             if(mode=="verify"){ResearchRun.Verify(Get("--folder")??throw new ArgumentException("--folder required"));return true;}
             if(mode=="g1"&&!args.Contains("--allow-memory-read"))throw new ArgumentException("G1 requires explicit --allow-memory-read; dumps may contain private data");

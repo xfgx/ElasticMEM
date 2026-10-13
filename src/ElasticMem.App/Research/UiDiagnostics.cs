@@ -3,9 +3,9 @@ using ElasticMem.Core.Research;
 namespace ElasticMem.App.Research;
 internal static class UiDiagnostics
 {
-    public static async Task<string> Capture(Form form)
+    public static async Task<string> Capture(Form form,string? root=null,bool screenshots=true,CancellationToken ct=default)
     {
-        using var run=new ResearchRun(ResearchJobs.Root,"ui-audit",Updater.Current.ToString(),ResearchJobs.Commit,new{capture="all tabs, dark/light at CURRENT DPI; no desktop capture"});
+        using var run=new ResearchRun(root??ResearchJobs.Root,"ui-audit",Updater.Current.ToString(),ResearchJobs.Commit,new{capture="all tabs, dark/light at CURRENT DPI; no desktop capture",screenshots});
         bool original=Theme.Dark;var tabs=Find<TabControl>(form);int selected=tabs?.SelectedIndex??0;var results=new List<object>();
         try
         {
@@ -14,16 +14,17 @@ internal static class UiDiagnostics
                 Theme.Apply(form,dark);
                 for(int i=0;i<(tabs?.TabCount??1);i++)
                 {
-                    if(tabs!=null)tabs.SelectedIndex=i;form.PerformLayout();await Task.Delay(100);
+                    ct.ThrowIfCancellationRequested();if(tabs!=null)tabs.SelectedIndex=i;form.PerformLayout();await Task.Delay(100,ct);
                     var warnings=new List<string>();Audit(form,warnings);
-                    using var bitmap=new Bitmap(form.ClientSize.Width,form.ClientSize.Height);
-                    form.DrawToBitmap(bitmap,new Rectangle(Point.Empty,form.ClientSize));bitmap.Save(run.FilePath($"screenshots/{(dark?"dark":"light")}-{i}.png"),ImageFormat.Png);
+                    if(screenshots){using var bitmap=new Bitmap(form.ClientSize.Width,form.ClientSize.Height);
+                    form.DrawToBitmap(bitmap,new Rectangle(Point.Empty,form.ClientSize));bitmap.Save(run.FilePath($"screenshots/{(dark?"dark":"light")}-{i}.png"),ImageFormat.Png);}
                     results.Add(new{theme=dark?"dark":"light",tab=tabs?.SelectedTab?.Text??"form",dpi=form.DeviceDpi,width=form.ClientSize.Width,height=form.ClientSize.Height,warnings});
                 }
             }
-            run.WriteJson("layout-audit.json",new{status="captured_not_visual_signoff",states=results,limitations=new[]{"Mechanical bounds audit cannot establish visual quality; inspect PNGs","Current DPI only; repeat on 100/125/150/200% scaling","DrawToBitmap may omit some native rendering; provide manual screenshot if needed"}});
-            run.Seal("ui_capture_requires_human_review","Inspect screenshots and layout-audit. No automatic claim of visual QA pass.");
+            run.WriteJson("layout-audit.json",new{status=screenshots?"captured_not_visual_signoff":"bounds_only_not_visual_signoff",states=results,limitations=new[]{"Mechanical bounds audit cannot establish visual quality; inspect PNGs","Current DPI only; repeat on 100/125/150/200% scaling","DrawToBitmap may omit some native rendering; provide manual screenshot if needed"}});
+            run.Seal("ui_capture_requires_human_review","Inspect layout-audit. Screenshots optional; no automatic claim of visual QA pass.");
         }
+        catch(OperationCanceledException ex){run.Seal("cancelled_partial_not_result","UI audit cancelled",ex);throw;}
         catch(Exception ex){run.Seal("ui_capture_failed",ex.Message,ex);throw;}
         finally{if(tabs!=null)tabs.SelectedIndex=selected;Theme.Apply(form,original);}
         return run.DirectoryPath;
