@@ -7,7 +7,7 @@ if [[ -n $(git status --porcelain --untracked-files=all) ]]; then echo 'Commit s
 commit=$(git rev-parse HEAD)
 out=${1:-/data/ElasticMem-0.14.0-win-x64}
 mkdir -p "$out"
-"$dotnet" publish src/ElasticMem.App/ElasticMem.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false -p:SourceRevisionId="$commit" -p:SourceDirty=false -o "$out" > "$out/publish.log" 2>&1
+"$dotnet" publish src/ElasticMem.App/ElasticMem.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false -p:RestoreLockedMode=true -p:SourceRevisionId="$commit" -p:SourceDirty=false -o "$out" > "$out/publish.log" 2>&1
 cp windows-check/* "$out/"
 mkdir -p "$out/examples"
 cp research/ceiling/examples/* "$out/examples/"
