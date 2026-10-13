@@ -103,3 +103,7 @@ ElasticMem.exe --scan telegram,chrome,steam,yandex [--trim] [--limit 512] [--out
 - Активное приложение в «Сжимать всегда» по умолчанию не трогается (галочка «…и активное (эксперимент)»).
 - «Карусель»: отрастание рабочего набора после импульса теперь тоже считается в бюджет (в v0.7 за 10 мин вытеснено 36 ГБ при ~2 ГБ рабочего набора).
 - Защита от застрявшего жёсткого предела: при обнаружении процесса с включённым HARDWS_MAX агент его снимает; при выходе программы пределы и приоритеты восстанавливаются.
+
+
+## 0.19.0
+Fresh identity-bound per-target renderer capture immediately before epochs; exclusive observation-health aggregates; explicit codec size gates, scenario bursts and FILE/GPU median-only ratios. Strict G5 unknown handling unchanged. See full Russian guide. No Windows runtime signoff from Linux.

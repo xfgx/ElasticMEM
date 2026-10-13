@@ -7,6 +7,13 @@ public static class ResearchSelfTest
     {
         int checks=0;var errors=new List<string>();void Check(bool ok,string name){checks++;if(!ok)errors.Add(name);}
         var rnd=new Random(19);var store=new PackedAgentStore(1000,new[]{"a","b"});var shadow=Enumerable.Repeat(new AgentRecord(0,0,-1,0),1000).ToArray();
+        Check(EpochEligibility.Classify(0,0,true)==EpochExclusion.OriginalMappingUnavailable,"epoch reason original takes precedence");
+        Check(EpochEligibility.Classify(1,0,true)==EpochExclusion.CurrentMappingUnavailable,"epoch unavailable mapping not death");
+        Check(EpochEligibility.Classify(1,2,true)==EpochExclusion.AllocationChanged,"epoch changed allocation before retained");
+        Check(EpochEligibility.Classify(1,1,true)==EpochExclusion.RetainedAfterTrim,"epoch retained not an observed miss");
+        Check(EpochEligibility.Classify(1,1,false)==EpochExclusion.Known,"epoch valid known state");
+        for(int original=0;original<3;original++)for(int current=0;current<3;current++)foreach(bool retained in new[]{true,false})
+            Check((EpochEligibility.Classify((ulong)original,(ulong)current,retained)==EpochExclusion.Known)==(original!=0&&original==current&&!retained),"epoch known semantics unchanged");
         for(int step=0;step<20000;step++){int i=rnd.Next(1000);if(step%3!=0){var r=new AgentRecord((ushort)(i%2),step%7==0?uint.MaxValue:(uint)rnd.Next(65537),rnd.Next(-1,1000),rnd.NextInt64());store.Set(i,r);shadow[i]=r;}else Check(store.Get(i)==shadow[i],"typed random read "+step);}
         var invalidState=PageResidency.Decode((1UL<<15)|(7UL<<1));Check(!invalidState.Valid&&invalidState.Shareable==null&&invalidState.ShareCount==null,"invalid residency fields not interpreted");
         Check(PageEligibility.Eligible(PageEligibility.Private,PageResidency.Decode(3)),"resident exclusive eligible");
@@ -64,6 +71,15 @@ public static class ResearchSelfTest
             var invalidRef=(byte[])container.Clone();BinaryPrimitives.WriteInt32LittleEndian(invalidRef.AsSpan(invalidRef.Length-80,4),9);File.WriteAllBytes(Path.Combine(temp,"broken.emd"),invalidRef);
             try{NormalizedColdStore.Restore(Path.Combine(temp,"broken.emd"));Check(false,"invalid ref rejected");}catch(InvalidDataException){Check(true,"invalid ref rejected");}
             string exportRoot=Path.Combine(temp,"export-runs");
+            using(var failedHealth=new ResearchRun(exportRoot,"g0-epochs","unit","fixture",new{}))
+            {
+                File.WriteAllText(failedHealth.FilePath("epoch-health.csv"),"pid,epoch,known\n12,0,4\n");
+                failedHealth.WriteJson("epoch-health-12.json",new{pages=4});
+                File.WriteAllText(failedHealth.FilePath("inputs/epoch-health.csv"),"private-raw");
+                File.WriteAllText(failedHealth.FilePath("other/epoch-health.csv"),"private-raw");
+                File.WriteAllText(failedHealth.FilePath("epoch-health-secret.json"),"private-raw");
+                failedHealth.Seal("failed_no_valid_result","synthetic failed source diagnostic");
+            }
             using(var exportRun=new ResearchRun(exportRoot,"test","unit","fixture",new{}))
             {
                 File.WriteAllText(exportRun.FilePath("inputs/trace.csv"),"private-data");File.WriteAllText(exportRun.FilePath("misplaced-trace.csv"),"private-data");File.WriteAllText(exportRun.FilePath("other/result.json"),"private-data");exportRun.WriteJson("residency-summary-12.json",new{captured_zero_pages=1});File.WriteAllText(exportRun.FilePath("snapshots/12/page-status.csv"),"private-addresses");File.WriteAllText(exportRun.FilePath("brotli-only.erb"),"private-data");exportRun.WriteJson("result.json",new{status="fixture"});exportRun.Seal("passed","unit");
@@ -71,6 +87,9 @@ public static class ResearchSelfTest
                 using(var z=System.IO.Compression.ZipFile.OpenRead(zip))
                 {
                     Check(z.Entries.All(e=>!e.FullName.Contains("inputs/")&&!e.FullName.Contains("snapshots/")&&!e.FullName.Contains("other/")&&!e.FullName.EndsWith(".erb")&&!e.FullName.EndsWith("misplaced-trace.csv")),"export privacy allowlist");Check(z.Entries.Any(e=>e.FullName.EndsWith("residency-summary-12.json")),"safe residency aggregate exported");
+                    Check(z.Entries.Any(e=>e.FullName.EndsWith("/epoch-health.csv")),"failed run health CSV exported");
+                    Check(z.Entries.Any(e=>e.FullName.EndsWith("/epoch-health-12.json")),"numeric health aggregate exported");
+                    Check(z.Entries.All(e=>!e.FullName.EndsWith("epoch-health-secret.json")),"arbitrary health suffix excluded");
                     using var index=JsonDocument.Parse(new StreamReader(z.GetEntry("EXPORT.json")!.Open()).ReadToEnd());
                     foreach(var item in index.RootElement.GetProperty("files").EnumerateArray()){using var data=z.GetEntry(item.GetProperty("path").GetString()!)!.Open();string hash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(data)).ToLowerInvariant();Check(hash==item.GetProperty("sha256").GetString(),"export exact-byte hash");}
                 }

@@ -23,6 +23,21 @@ internal static class AutoResearch
         string? command=Native.CommandLine(h);if(command==null||!Regex.IsMatch(command,@"(?:^|\s)--type=renderer(?:\s|$)"))throw new NotSupportedException("Renderer role not confirmed; no trim performed");
         using var self=Process.GetCurrentProcess();if(!Native.ProcessIdToSessionId(pid,out int session)||session!=self.SessionId||!Native.GetProcessTimes(h,out var final,out var stopped,out _,out _)||final!=creation||stopped!=0)throw new InvalidOperationException("Renderer session/lifetime changed");
     }
+    internal static ProcessSnapshot CaptureEpochSnapshot(int pid,long expected,int mib,ResearchRun run,CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        // Gone/reused identities are never replaced with a newly discovered PID.
+        using var p=Process.GetProcessById(pid);
+        IntPtr h=Native.OpenProcess(Native.PROCESS_QUERY_INFORMATION|Native.PROCESS_VM_READ,false,pid);
+        if(h==IntPtr.Zero)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"Fresh epoch target handle unavailable");
+        try
+        {
+            string name=p.ProcessName;ConfirmRenderer(h,pid,name,expected);
+            var snapshot=WindowsCapture.Capture(pid,mib,run,ct,expected);
+            ConfirmRenderer(h,pid,name,expected);return snapshot;
+        }
+        finally{Native.CloseHandle(h);}
+    }
     static int[] CounterPids()
     {
         var list=new List<(int Pid,string Name,long Bytes)>();using var self=Process.GetCurrentProcess();
@@ -109,9 +124,11 @@ internal static class AutoResearch
                         await Step("g4",safe with{SourceRun=g1},"Held-out-process codec comparison; train PID excluded from test; counted dictionary/page mappings/reserve. No live reclaim.");
                         if(allowTrim)
                         {
-                            foreach(var target in g1Selection.Take(extended?4:2))
+                            foreach(var target in g1Selection.OrderBy(p=>p.StartTicks).ThenBy(p=>p.Pid).Take(extended?4:2))
                             {
-                                string epochFolder=await Step("g0-epochs",safe with{SourceRun=g1,AllowTrim=true,Epochs=extended?600:12,Extended=extended,EpochPid=target.Pid},"PID "+target.Pid+": independent full planned trace; permission/exit failure does not stop attempts on other confirmed renderers. No settings change.");
+                                string fresh=await Step("epoch-snapshot",safe with{Pids=new[]{target.Pid},SnapshotMiB=16,ExpectedStarts=new Dictionary<int,long>{{target.Pid,target.StartTicks}}},"PID "+target.Pid+": recheck exact original lifetime/renderer and recapture immediately before epochs; no substitution; older selected instances first,not a stability guarantee.");
+                                if(steps[^1].Status!="fresh_renderer_snapshot_checked"){Skip("g0-epochs","skipped_fresh_target_unavailable","PID "+target.Pid+": no valid fresh identity-bound snapshot; no trim or replacement attempted.");Skip("g5","skipped_epoch_source_unavailable","PID "+target.Pid+": fresh target unavailable.");continue;}
+                                string epochFolder=await Step("g0-epochs",safe with{SourceRun=fresh,AllowTrim=true,Epochs=extended?600:12,Extended=extended,EpochPid=target.Pid},"PID "+target.Pid+": fresh same-lifetime snapshot,independent full planned trace; permission/exit failure does not stop other original targets. No settings change.");
                                 if(!BatchPolicy.Failure(steps[^1].Status)&&steps[^1].Status=="perturbing_epoch_proxy_not_exact_trace")
                                     {
                                     await Step("g5",safe with{SourceRun=epochFolder},"PID "+target.Pid+": only completed independently sealed epoch source; train prefix/held-out suffix,never partial trace.");

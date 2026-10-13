@@ -6,8 +6,11 @@ internal static class SnapshotInputs
     public static CodecInput[] Load(string source,ResearchRun run,CancellationToken ct,int epochPid=0)
     {
         if(epochPid<0)throw new ArgumentOutOfRangeException(nameof(epochPid));
-        ResearchRun.Verify(source);using var m=JsonDocument.Parse(File.ReadAllText(Path.Combine(source,"manifest.json")));if(m.RootElement.GetProperty("mode").GetString()!="g1"||m.RootElement.GetProperty("status").GetString()!="resident_private_offline_roundtrip_checked")throw new ArgumentException("Successful resident G1 source required");
-        var snapshots=Directory.GetDirectories(Path.Combine(source,"snapshots")).Order().ToArray();if(snapshots.Length is <2 or >4)throw new ArgumentException("Need2..4 source processes");var result=new List<CodecInput>();long total=0;string? family=null;
+        ResearchRun.Verify(source);using var m=JsonDocument.Parse(File.ReadAllText(Path.Combine(source,"manifest.json")));
+        bool single=m.RootElement.GetProperty("mode").GetString()=="epoch-snapshot"&&m.RootElement.GetProperty("status").GetString()=="fresh_renderer_snapshot_checked";
+        if(single&&epochPid<=0)throw new ArgumentException("Single snapshot is only an explicit epoch PID source,not cross-process codec evidence");
+        if(!single&&(m.RootElement.GetProperty("mode").GetString()!="g1"||m.RootElement.GetProperty("status").GetString()!="resident_private_offline_roundtrip_checked"))throw new ArgumentException("Successful resident snapshot source required");
+        var snapshots=Directory.GetDirectories(Path.Combine(source,"snapshots")).Order().ToArray();if(single?snapshots.Length!=1:snapshots.Length is <2 or >4)throw new ArgumentException("Invalid source process count");var result=new List<CodecInput>();long total=0;string? family=null;
         foreach(var dir in snapshots)
         {
             ct.ThrowIfCancellationRequested();using var inv=JsonDocument.Parse(File.ReadAllText(Path.Combine(dir,"inventory.json")));var root=inv.RootElement;string name=root.GetProperty("process_name").GetString()!;if(!new[]{"chrome","msedge","steamwebhelper"}.Contains(name,StringComparer.OrdinalIgnoreCase)||family!=null&&!name.Equals(family,StringComparison.OrdinalIgnoreCase))throw new ArgumentException("Same-family renderer G1 source required");family=name;

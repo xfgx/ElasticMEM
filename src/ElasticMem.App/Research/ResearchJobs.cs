@@ -39,6 +39,11 @@ internal static class ResearchJobs
                     if(new FileInfo(baseline).Length!=dedup.BrotliOnlyBytes||new FileInfo(rawDedup).Length!=dedup.RawBrotliBytes)throw new InvalidDataException("Raw footprint mismatch");
                     result=new{schema="elasticmem.g1.resident.v2",capture_policy="pre_and_post_resident_MEM_PRIVATE_not_shareable",normalization="ordinal_region_closed_reference_only",metrics=dedup,raw_page_analysis=RawPageAnalysis.Run(snapshots),residency=snapshots.Select(s=>System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(File.ReadAllText(run.FilePath($"residency-summary-{s.Pid}.json")))).ToArray(),actual_cold_store_bytes=new FileInfo(cold).Length,actual_brotli_only_bytes=new FileInfo(baseline).Length,actual_raw_dedup_brotli_bytes=new FileInfo(rawDedup).Length,serialized_restore_verified=true,all_three_serialized_formats_restore_verified=true};status="resident_private_offline_roundtrip_checked";break;
                 case "g0-calibration":result=EpochCalibration.Run(run,ct);status="controlled_own_child_workload_only";break;
+                case "epoch-snapshot":
+                    if(options.Pids.Length!=1||options.ExpectedStarts==null||!options.ExpectedStarts.TryGetValue(options.Pids[0],out long expected))throw new ArgumentException("One identity-bound target required");
+                    var fresh=AutoResearch.CaptureEpochSnapshot(options.Pids[0],expected,options.SnapshotMiB,run,ct);
+                    result=new{pid=fresh.Pid,start_ticks=fresh.StartTicks,pages=fresh.Pages.Length,role="confirmed_renderer",new_processes_substituted=false,limitations="Fresh bounded non-atomic resident snapshot,not future stability guarantee"};
+                    status="fresh_renderer_snapshot_checked";break;
                 case "g4":
                     var codecInput=SnapshotInputs.Load(options.SourceRun,run,ct);result=CodecBench.Run(codecInput,run.DirectoryPath,s=>progress?.Report("Г4: "+s),ct);status="offline_codec_comparison_not_live_reclaim";break;
                 case "g0-epochs":

@@ -90,7 +90,7 @@ try
 {
     using var summary=new ElasticMem.Core.Research.ResearchRun(reportRoot,"auto-summary","test","fixture",new{});
     using var good=new ElasticMem.Core.Research.ResearchRun(reportRoot,"g4","test","fixture",new{});
-    good.WriteJson("result.json",new{schema="elasticmem.g4.codecs.v1",codecs=new[]{new{codec="VALID_NUMBER_SENTINEL",total_with_reserve_bytes=1048576}}});
+    good.WriteJson("result.json",new{schema="elasticmem.g4.codecs.v1",codecs=new[]{new{codec="VALID_NUMBER_SENTINEL",total_with_reserve_bytes=1048576,stored_payload_restore_p50_us_per_block=1.0,block_bytes=4096}}});
     good.Seal("offline_codec_comparison_not_live_reclaim","fixture");
     var errors=new List<string>();string report=ElasticMem.App.Research.OneClickReport.Read(reportRoot,errors,summary.DirectoryPath);
     Check(errors.Count==0&&report.Contains("VALID_NUMBER_SENTINEL"),"exact open summary excluded; successful numeric report retained");
@@ -99,6 +99,64 @@ try
     Check(errors.Count==1,"other unfinished run never silently excluded");
 }
 catch(Exception ex){Check(false,"open-summary fixtures: "+ex);}
+finally{if(Directory.Exists(reportRoot))Directory.Delete(reportRoot,true);}
+reportRoot=Path.Combine(Path.GetTempPath(),"ElasticMem_new_report_"+Guid.NewGuid().ToString("N"));
+try
+{
+    using var codec=new ElasticMem.Core.Research.ResearchRun(reportRoot,"g4","test","fixture",new{});
+    codec.WriteJson("result.json",new{schema="elasticmem.g4.codecs.v1",codecs=new[]{
+        new{codec="xpress-4096",total_with_reserve_bytes=1000,stored_payload_restore_p50_us_per_block=2.0,block_bytes=4096},
+        new{codec="zstd1-4096",total_with_reserve_bytes=800,stored_payload_restore_p50_us_per_block=6.0,block_bytes=4096},
+        new{codec="zstd1-16384",total_with_reserve_bytes=700,stored_payload_restore_p50_us_per_block=17.0,block_bytes=16384},
+        new{codec="zstd1-dictionary-4096",total_with_reserve_bytes=840,stored_payload_restore_p50_us_per_block=5.0,block_bytes=4096}}});
+    codec.Seal("offline_codec_comparison_not_live_reclaim","fixture");
+    using var epochs=new ElasticMem.Core.Research.ResearchRun(reportRoot,"epochs-replay","test","fixture",new{});
+    epochs.WriteJson("result.json",new{schema="elasticmem.epochs.replay.v1",processes=new[]{new{
+        pid=123,baseline_residency_available=true,causal_cohort_pages=16,trace_health_available=false,
+        diagnostic=new{primary_cohort="initially_resident_all_known",model=new{
+            budget_us_per_second=10000,scenario_best=new[]{new{miss_cost_us=100,maximum_among_tested_thresholds_bytes=1048576}},
+            curves=new[]{new{idle_epochs=64,average_end_epoch_offloaded_bytes=1048576,modeled_reacquisitions_per_second=10,misses_per_epoch_p99=20,misses_per_epoch_max=8000}}}},
+        causal=new{rows=new[]{new{excluded_common_unknown_epochs=4,test_epochs=300,gate_same_epoch_only=(bool?)null}}}}}});
+    epochs.Seal("offline_epoch_replay_not_physical_ram","fixture");
+    using var disk=new ElasticMem.Core.Research.ResearchRun(reportRoot,"disk-qd1","test","fixture",new{});
+    disk.WriteJson("result.json",new{schema="elasticmem.disk.qd1.v1",groups=new[]{new{bytes=65536,n=100,p50_us=400.0,p95_us=500.0}}});
+    disk.Seal("unbuffered_file_qd1_not_pagefile_fault","fixture");
+    using var gpu=new ElasticMem.Core.Research.ResearchRun(reportRoot,"g3-dma","test","fixture",new{});
+    gpu.WriteJson("result.json",new{schema="elasticmem.g3.dma.v1",groups=new[]{
+        new{mode="restore",bytes=65536,n=100,p50_us=80.0,p95_us=120.0},
+        new{mode="roundtrip",bytes=65536,n=100,p50_us=150.0,p95_us=200.0}}});
+    gpu.Seal("dma_microbenchmark_not_pager","fixture");
+    var errors=new List<string>();string report=ElasticMem.App.Research.OneClickReport.Read(reportRoot,errors);
+    Check(errors.Count==0,"new numeric report fixtures parse");
+    Check(report.Contains("20.00%; порог размера ≥25% НЕ взят"),"4K size gate fails below25");
+    Check(report.Contains("30.00%; порог размера ≥25% взят"),"16K only size gate passes");
+    Check(report.Contains("plain zstd4K=5.00%"),"dictionary penalty denominator");
+    Check(report.Contains("unknown TEST epochs=4/300; gate unavailable"),"unknown not negative gate");
+    Check(report.Contains("2.00/800.00 мс,НЕ измеренные задержки"),"scenario burst not latency");
+    Check(report.Contains("FILE/GPU медиан=5.00×"),"file restore ratio exact");
+    Check(report.Contains("НЕ взята только для roundtrip"),"roundtrip not restore median gate");
+}
+catch(Exception ex){Check(false,"new report fixtures: "+ex);}
+finally{if(Directory.Exists(reportRoot))Directory.Delete(reportRoot,true);}
+reportRoot=Path.Combine(Path.GetTempPath(),"ElasticMem_fresh_snapshot_"+Guid.NewGuid().ToString("N"));
+try
+{
+    using var source=new ElasticMem.Core.Research.ResearchRun(reportRoot,"epoch-snapshot","test","fixture",new{});
+    source.WriteJson("snapshots/123/inventory.json",new{pid=123,process_name="chrome",start_ticks=111L,pages=new[]{new{address=4096UL,file_offset=0}}});
+    File.WriteAllBytes(source.FilePath("snapshots/123/pages.bin"),new byte[4096]);
+    source.Seal("fresh_renderer_snapshot_checked","synthetic fixture");
+    using var dest=new ElasticMem.Core.Research.ResearchRun(reportRoot,"load","test","fixture",new{});
+    var input=ElasticMem.App.Research.SnapshotInputs.Load(source.DirectoryPath,dest,CancellationToken.None,123);
+    Check(input.Length==1&&input[0].Pid==123&&input[0].StartTicks==111&&input[0].Addresses[0]==4096,"fresh snapshot binds source identity/address");
+    void Reject(int pid,string label){bool rejected=false;try{ElasticMem.App.Research.SnapshotInputs.Load(source.DirectoryPath,dest,CancellationToken.None,pid);}catch(ArgumentException){rejected=true;}Check(rejected,label);}
+    Reject(0,"single snapshot not a codec cross-process source");
+    Reject(124,"fresh source target cannot be substituted");
+    Reject(-1,"negative snapshot PID rejected");
+    File.WriteAllBytes(Path.Combine(source.DirectoryPath,"snapshots/123/pages.bin"),new byte[8192]);
+    bool tamper=false;try{ElasticMem.App.Research.SnapshotInputs.Load(source.DirectoryPath,dest,CancellationToken.None,123);}catch(InvalidDataException){tamper=true;}
+    Check(tamper,"fresh tampered snapshot refused before decode");
+}
+catch(Exception ex){Check(false,"fresh source fixtures: "+ex);}
 finally{if(Directory.Exists(reportRoot))Directory.Delete(reportRoot,true);}
 Console.WriteLine(fails == 0 ? "ALL TESTS PASSED" : $"{fails} FAILURES");
 

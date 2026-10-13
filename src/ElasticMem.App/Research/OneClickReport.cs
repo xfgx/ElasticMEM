@@ -29,7 +29,36 @@ internal static class OneClickReport
             switch(schema.GetString())
             {
                 case "elasticmem.epochs.replay.v1":
-                    foreach(var p in d.GetProperty("processes").EnumerateArray()){var diag=p.GetProperty("diagnostic");lines.Add("Офлайн PID "+p.GetProperty("pid")+": baseline="+p.GetProperty("baseline_residency_available")+"; burst max="+diag.GetProperty("burst_max_pages")+"; GC/Belady/дополнительная RAM unavailable. Полные T1..256 и causal1/4/8/16 — result.json.");}
+                    foreach(var p in d.GetProperty("processes").EnumerateArray())
+                    {
+                        var diag=p.GetProperty("diagnostic");
+                        lines.Add("Офлайн PID "+p.GetProperty("pid")+": baseline="+p.GetProperty("baseline_residency_available")+"; primary cohort="+diag.GetProperty("primary_cohort")+"; GC/Belady/дополнительная RAM unavailable.");
+                        var model=diag.GetProperty("model");
+                        if(model.TryGetProperty("scenario_best",out var best))
+                        {
+                            double budget=model.GetProperty("budget_us_per_second").GetDouble();
+                            lines.Add("  Г0 средний бюджет "+N(budget)+" мкс/с; НЕ предел всплеска. Конечное окно включает startup/censoring.");
+                            foreach(var scenario in best.EnumerateArray())
+                            {
+                                double cost=scenario.GetProperty("miss_cost_us").GetDouble(),bytes=scenario.GetProperty("maximum_among_tested_thresholds_bytes").GetDouble();
+                                lines.Add("  Сценарий "+N(cost)+" мкс: "+N(bytes/1048576)+" МиБ виртуальной модели среди проверенных T,НЕ физическая экономия RAM.");
+                                var eligible=model.GetProperty("curves").EnumerateArray().Where(c=>c.GetProperty("modeled_reacquisitions_per_second").GetDouble()*cost<=budget).OrderByDescending(c=>c.GetProperty("average_end_epoch_offloaded_bytes").GetDouble()).ToArray();
+                                if(eligible.Length>0){var c=eligible[0];lines.Add("    T="+c.GetProperty("idle_epochs")+"; модельная стоимость эпохи p99/max="+N(c.GetProperty("misses_per_epoch_p99").GetDouble()*cost/1000)+"/"+N(c.GetProperty("misses_per_epoch_max").GetDouble()*cost/1000)+" мс,НЕ измеренные задержки.");}
+                            }
+                        }
+                        var causal=p.GetProperty("causal");
+                        if(causal.TryGetProperty("rows",out var rows))
+                        {
+                            var rr=rows.EnumerateArray().ToArray();
+                            var unknown=rr.Select(x=>x.GetProperty("excluded_common_unknown_epochs").GetInt32()).Distinct().ToArray();
+                            if(unknown.Length!=1)throw new InvalidDataException("Causal common unknown epoch inconsistency");
+                            int accepted=rr.Count(x=>x.GetProperty("gate_same_epoch_only").ValueKind==JsonValueKind.True);
+                            lines.Add("  Г5 TRAIN cohort="+p.GetProperty("causal_cohort_pages")+"; unknown TEST epochs="+unknown[0]+"/"+rr[0].GetProperty("test_epochs")+"; "+(unknown[0]>0?"gate unavailable — НЕ отрицательный результат.":"положительных exploratory rows="+accepted+"; НЕ независимое подтверждение."));
+                            lines.Add("  CPU — первые ≤128 warmed decode/copy событий; НЕ total paging cost. Полные causal1/4/8/16 — result.json.");
+                        }
+                        else lines.Add("  Г5: "+causal.GetProperty("status"));
+                        lines.Add("  Причины unknown: "+(p.TryGetProperty("trace_health_available",out var available)&&available.GetBoolean()?"trace_health/result.json + исходный epoch-health.csv; census/snapshot intersection,НЕ selected G5.":"нет в старой трассе; replay их не восстанавливает."));
+                    }
                     break;
                 case "elasticmem.g0.calibration.v2":
                     foreach(string phase in new[]{"trim","trim_query"})
@@ -41,8 +70,26 @@ internal static class OneClickReport
                 case "elasticmem.disk.qd1.v1":ValidateGroups(d);disk=d.Clone();break;
                 case "elasticmem.g3.dma.v1":ValidateGroups(d);dma=d.Clone();break;
                 case "elasticmem.g4.codecs.v1":
-                    foreach(var c in d.GetProperty("codecs").EnumerateArray())if(c.TryGetProperty("total_with_reserve_bytes",out var size))
-                        lines.Add("Г4 "+c.GetProperty("codec").GetString()+": "+N(size.GetInt64()/1048576d)+" МиБ (с резервом).");
+                    var codecs=d.GetProperty("codecs").EnumerateArray().ToArray();
+                    var plain=codecs.Where(c=>c.GetProperty("codec").GetString()=="xpress-4096"&&c.TryGetProperty("total_with_reserve_bytes",out _)).ToArray();
+                    foreach(var c in codecs)if(c.TryGetProperty("total_with_reserve_bytes",out var size))
+                    {
+                        double bytes=size.GetInt64();
+                        if(bytes<=0)throw new InvalidDataException("Invalid codec store size");
+                        lines.Add("Г4 "+c.GetProperty("codec").GetString()+": "+N(bytes/1048576d)+" МиБ (с резервом).");
+                        if(plain.Length==1&&c.GetProperty("codec").GetString()!="xpress-4096")
+                        {
+                            double baseline=plain[0].GetProperty("total_with_reserve_bytes").GetInt64();
+                            if(baseline<=0)throw new InvalidDataException("Invalid plain Xpress baseline");
+                            double saving=100*(1-bytes/baseline);
+                            lines.Add("  Меньше plain Xpress: "+N(saving)+"%; порог размера ≥25% "+(saving>=25?"взят":"НЕ взят")+" в этой выборке; НЕ сравнение со штатным Windows store.");
+                        }
+                        lines.Add("  Восстановление stored payload p50/block="+N(c.GetProperty("stored_payload_restore_p50_us_per_block").GetDouble())+" мкс; блок="+c.GetProperty("block_bytes")+" байт,НЕ fault/stack latency.");
+                    }
+                    lines.Add("Г4: 16 КиБ восстанавливаются целиком для запроса одной страницы; меньший store не доказывает лучшую random-access latency.");
+                    var zstd=codecs.Where(c=>c.GetProperty("codec").GetString()=="zstd1-4096"&&c.TryGetProperty("total_with_reserve_bytes",out _)).ToArray();
+                    var dict=codecs.Where(c=>c.GetProperty("codec").GetString()=="zstd1-dictionary-4096"&&c.TryGetProperty("total_with_reserve_bytes",out _)).ToArray();
+                    if(zstd.Length==1&&dict.Length==1)lines.Add("Словарь: изменение размера относительно plain zstd4K="+N(100*(dict[0].GetProperty("total_with_reserve_bytes").GetDouble()/zstd[0].GetProperty("total_with_reserve_bytes").GetDouble()-1))+"% (положительное = хуже).");
                     break;
                 case "elasticmem.g0.windows_epochs.v2":
                     foreach(var p in d.GetProperty("processes").EnumerateArray())
@@ -74,7 +121,11 @@ internal static class OneClickReport
             int bytes=g.GetProperty("bytes").GetInt32();double median=g.GetProperty("p50_us").GetDouble();
             lines.Add($"Диск QD1 {bytes/1024} КиБ: p50={N(median)} мкс; НЕ pagefile-fault/NVMe подтверждение.");
             if(dma.HasValue)foreach(var v in dma.Value.GetProperty("groups").EnumerateArray().Where(v=>v.GetProperty("bytes").GetInt32()==bytes))
+            {
                 lines.Add("  GPU "+v.GetProperty("mode")+": p50="+N(v.GetProperty("p50_us").GetDouble())+" мкс, p95="+N(v.GetProperty("p95_us").GetDouble())+" мкс.");
+                double gpuMedian=v.GetProperty("p50_us").GetDouble();
+                lines.Add("  Отношение FILE/GPU медиан="+N(median/gpuMedian)+"×; четверть FILE median "+(gpuMedian<=median/4?"взята":"НЕ взята")+" только для "+v.GetProperty("mode")+"; НЕ pagefile/tail-latency/pager gate.");
+            }
         }
         lines.Add("Подтверждённые latency Xpress/pagefile, payload/ratio штатного хранилища и дополнительный ≥1 ГБ: unavailable. Не подменять их QD1, WS или моделью.");
         return string.Join("\r\n",lines)+"\r\n";

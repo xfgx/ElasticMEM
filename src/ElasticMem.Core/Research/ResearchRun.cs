@@ -81,7 +81,7 @@ public sealed class ResearchRun : IDisposable
             if(File.Exists(Path.Combine(folder,"manifest.json"))){Verify(folder);sourceVerification.Add(new{run=Path.GetFileName(folder),source_integrity="verified_before_export"});}
             else if(Path.GetFileName(folder)!="diagnostics")throw new InvalidDataException("Incomplete run: "+Path.GetFileName(folder));
         }
-        var allowedNames=new HashSet<string>(StringComparer.OrdinalIgnoreCase){"manifest.json","report.md","result.json","events.log","error.txt","process-samples.csv","gpu-samples.csv","gpu-device.json","dma-samples.csv","disk-samples.csv","codec-samples.csv","epoch-counters.csv","mma-query.json","layout-audit.json","crash.log","invalidated-manifest.json","auto-report.txt"};
+        var allowedNames=new HashSet<string>(StringComparer.OrdinalIgnoreCase){"manifest.json","report.md","result.json","events.log","error.txt","process-samples.csv","gpu-samples.csv","gpu-device.json","dma-samples.csv","disk-samples.csv","codec-samples.csv","epoch-counters.csv","epoch-health.csv","mma-query.json","layout-audit.json","crash.log","invalidated-manifest.json","auto-report.txt"};
         using (var zip = ZipFile.Open(target, ZipArchiveMode.Create))
         {
             foreach (var f in files)
@@ -92,7 +92,7 @@ public sealed class ResearchRun : IDisposable
                 bool sensitive = rel.Contains("/inputs/", StringComparison.OrdinalIgnoreCase) || rel.Contains("/snapshots/", StringComparison.OrdinalIgnoreCase) || rel.EndsWith(".bin", StringComparison.OrdinalIgnoreCase) || (rel.EndsWith(".emd", StringComparison.OrdinalIgnoreCase) || rel.EndsWith(".erb", StringComparison.OrdinalIgnoreCase) || rel.EndsWith(".ecb", StringComparison.OrdinalIgnoreCase)) || rel.Contains("screenshots/", StringComparison.OrdinalIgnoreCase);
                 if (sensitive && !includeSensitive) continue;
                 string extension=Path.GetExtension(rel).ToLowerInvariant();
-                if(!includeSensitive && (rel.Split('/').Length!=2 || !(allowedNames.Contains(Path.GetFileName(f)) || System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(f), @"^residency-summary-[0-9]+\.json$"))))continue;
+                if(!includeSensitive && (rel.Split('/').Length!=2 || !(allowedNames.Contains(Path.GetFileName(f)) || System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(f), @"^(?:residency-summary|epoch-health)-[0-9]+\.json$"))))continue;
                 if ((File.GetAttributes(f) & FileAttributes.ReparsePoint) != 0) continue;
                 var entry = zip.CreateEntry(rel, CompressionLevel.Fastest);
                 if(!includeSensitive && new FileInfo(f).Length<=16L*1024*1024)

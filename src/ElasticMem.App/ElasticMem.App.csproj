@@ -12,7 +12,7 @@
     <RootNamespace>ElasticMem.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>0.18.0</Version>
+    <Version>0.19.0</Version>
     <Product>ElasticMem — эластичное сжатие памяти</Product>
     <SatelliteResourceLanguages>ru;en</SatelliteResourceLanguages>
   </PropertyGroup>

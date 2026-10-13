@@ -64,7 +64,7 @@ internal sealed class ResearchTab:TabPage
         _auto.Click+=async(_,_)=>await StartAutomatic();
         var replay=new Button{Text="Пересчитать последнюю партию (без trim)",AutoSize=true};replay.Click+=async(_,_)=>{if(IsRunning)return;_source.Text="";_mode.SelectedIndex=Array.FindIndex(Modes,m=>m.Key=="epochs-replay");await Run();};_config.Add(replay);
         stack.Add(Ui.Row(replay));
-        stack.Add(Ui.Row(_auto,help)).Add(Ui.Hint("Нажатие «Проверить всё» — согласие на локальное чтение до 64 МиБ памяти выбранных рендереров Chrome/Edge/Steam. Агент остановится; ZIP без дампов создаётся автоматически. Отправки по сети нет."));
+        stack.Add(Ui.Row(_auto,help)).Add(Ui.Hint("Нажатие «Проверить всё» — согласие на локальное чтение до 128 МиБ суммарно: до 64 МиБ исходных и до 64 МиБ свежих снимков выбранных рендереров Chrome/Edge/Steam. Агент остановится; ZIP без дампов создаётся автоматически. Отправки по сети нет."));
         stack.Add(Ui.Row(_allowTrim)).Add(Ui.Row(_extended));_config.Add(_allowTrim);_config.Add(_extended);
         stack.Add(Ui.Hint("Расширенный режим: наблюдение 10 минут; с trim — ещё ≥10 минут на каждый из 2–4 рендереров. Cap ограничивает опрос, НЕ действие trim. Настройки pagefile/MemoryCompression не меняются."));
         AddOption("source",Ui.Row(_source),stack);

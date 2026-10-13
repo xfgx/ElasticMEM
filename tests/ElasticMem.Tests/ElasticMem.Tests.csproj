@@ -8,4 +8,5 @@
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../../src/ElasticMem.Core/ElasticMem.Core.csproj" /></ItemGroup>
   <ItemGroup><Compile Include="../../src/ElasticMem.App/Research/OneClickReport.cs" Link="OneClickReport.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../../src/ElasticMem.App/Research/SnapshotInputs.cs" Link="SnapshotInputs.cs" /></ItemGroup>
 </Project>
