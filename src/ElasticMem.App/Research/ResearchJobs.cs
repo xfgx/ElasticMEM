@@ -2,7 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using ElasticMem.Core.Research;
 namespace ElasticMem.App.Research;
-internal sealed record ResearchOptions(int[] Pids,int Seconds=30,int SnapshotMiB=16,int Records=100000,int Iterations=100,int PoolMiB=32,int Adapter=0,string Scratch="",bool Negative=false,string Trace="",string Metadata="",double EvictionUs=10,double RecoveryUs=100,double MaxFaultUs=100,IReadOnlyDictionary<int,long>? ExpectedStarts=null,string SourceRun="",bool AllowTrim=false,int Epochs=12);
+internal sealed record ResearchOptions(int[] Pids,int Seconds=30,int SnapshotMiB=16,int Records=100000,int Iterations=100,int PoolMiB=32,int Adapter=0,string Scratch="",bool Negative=false,string Trace="",string Metadata="",double EvictionUs=10,double RecoveryUs=100,double MaxFaultUs=100,IReadOnlyDictionary<int,long>? ExpectedStarts=null,string SourceRun="",bool AllowTrim=false,int Epochs=12,bool Extended=false);
 internal static class ResearchJobs
 {
     public static string Root=>Path.Combine(AppSettings.Dir,"research-runs");
@@ -42,8 +42,11 @@ internal static class ResearchJobs
                 case "g4":
                     var codecInput=SnapshotInputs.Load(options.SourceRun,run,ct);result=CodecBench.Run(codecInput,run.DirectoryPath,s=>progress?.Report("Г4: "+s),ct);status="offline_codec_comparison_not_live_reclaim";break;
                 case "g0-epochs":
-                    if(!options.AllowTrim)throw new ArgumentException("Explicit trim consent required");result=EpochResearch.Run(SnapshotInputs.Load(options.SourceRun,run,ct),true,options.Epochs,run,progress,ct);status="perturbing_epoch_proxy_not_exact_trace";break;
+                    if(!options.AllowTrim)throw new ArgumentException("Explicit trim consent required");result=EpochResearch.Run(SnapshotInputs.Load(options.SourceRun,run,ct),true,options.Epochs,run,progress,ct,options.Extended);status="perturbing_epoch_proxy_not_exact_trace";break;
                 case "g3-dma":result=GpuResearch.RunDma(run,options.Adapter,options.Iterations,options.PoolMiB,progress,ct);status="dma_microbenchmark_not_pager";break;
+                case "g5":result=GroupingResearch.Run(options.SourceRun,run,ct);status="offline_grouping_proxy_not_pager";break;
+                case "disk-qd1":result=GpuResearch.RunDisk(run,options.Scratch,options.Iterations,ct);status="unbuffered_file_qd1_not_pagefile_fault";break;
+                case "g4-churn":result=ChurnBench.Run(ct);status="own_synthetic_churn_not_renderer_evidence";break;
                 case "g2":result=PackedAgentStore.Benchmark(options.Records,ct);status="own_schema_roundtrip_checked";break;
                 case "gpu-probe":result=GpuResearch.Probe();status="capability_probe_only";break;
                 case "g3":result=GpuResearch.Run(run,options.Scratch,options.Iterations,options.PoolMiB,options.Adapter,options.Negative,progress,ct);status="measured_microbenchmark_only";break;

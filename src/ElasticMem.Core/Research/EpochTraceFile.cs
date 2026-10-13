@@ -1,0 +1,27 @@
+namespace ElasticMem.Core.Research;
+public static class EpochTraceFile
+{
+    public static void Write(string path,int pid,long start,ulong[] addresses,bool[] known,bool[][] activity,bool[][]? knownRows=null)
+    {
+        if(addresses.Length!=known.Length||activity.Any(a=>a.Length!=addresses.Length))throw new ArgumentException("Epoch trace shape");
+        using var stream=File.Create(path);using var w=new BinaryWriter(stream);
+        knownRows??=activity.Select(a=>(bool[])known.Clone()).ToArray();
+        if(knownRows.Length!=activity.Length||knownRows.Any(a=>a.Length!=addresses.Length))throw new ArgumentException("Epoch known shape");
+        w.Write(0x32545045);w.Write(pid);w.Write(start);w.Write(addresses.Length);w.Write(activity.Length);
+        foreach(ulong address in addresses)w.Write(address);
+        void Bits(bool[] row){var b=new byte[(row.Length+7)/8];for(int i=0;i<row.Length;i++)if(row[i])b[i/8]|=(byte)(1<<(i%8));w.Write(b);}
+        Bits(known);foreach(var row in activity)Bits(row);foreach(var row in knownRows)Bits(row);
+    }
+    public static (int Pid,long Start,ulong[] Addresses,bool[] Known,bool[][] Activity,bool[][] KnownRows) Read(string path)
+    {
+        using var stream=File.OpenRead(path);using var r=new BinaryReader(stream);
+        if(r.ReadInt32()!=0x32545045)throw new InvalidDataException("Epoch magic");
+        int pid=r.ReadInt32();long start=r.ReadInt64();int pages=r.ReadInt32(),epochs=r.ReadInt32();
+        if(pid<=4||start<=0||pages is <1 or >262144||epochs is <8 or >900||stream.Length!=24L+pages*8L+(long)((pages+7)/8)*(epochs*2+1))throw new InvalidDataException("Epoch trace bounds/length");
+        var addresses=Enumerable.Range(0,pages).Select(_=>r.ReadUInt64()).ToArray();
+        if(addresses.Distinct().Count()!=pages||addresses.Any(a=>a%4096!=0))throw new InvalidDataException("Epoch duplicate/unaligned address");
+        bool[] Bits(){byte[] b=r.ReadBytes((pages+7)/8);if(b.Length!=(pages+7)/8)throw new EndOfStreamException();return Enumerable.Range(0,pages).Select(i=>(b[i/8]&(1<<(i%8)))!=0).ToArray();}
+        var known=Bits();var activity=Enumerable.Range(0,epochs).Select(_=>Bits()).ToArray();var knownRows=Enumerable.Range(0,epochs).Select(_=>Bits()).ToArray();
+        return(pid,start,addresses,known,activity,knownRows);
+    }
+}

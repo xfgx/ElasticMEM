@@ -122,15 +122,15 @@ internal static unsafe class GpuResearch
         if(_gpuQuarantined)throw new NotSupportedException("Prior GPU timeout; restart required");if(iterations is <10 or >2000||poolMiB is <16 or >128)throw new ArgumentException("DMA configuration");
         using var life=new GpuLifetime();var factory=life.Add(DXGI.CreateDXGIFactory2<IDXGIFactory6>(false));var adapter=life.Add(factory.EnumAdapterByGpuPreference<IDXGIAdapter1>((uint)adapterIndex,GpuPreference.HighPerformance));if((adapter.Description1.Flags&AdapterFlags.Software)!=0)throw new NotSupportedException("Software excluded");var device=life.Add(D3D12.D3D12CreateDevice<ID3D12Device>(adapter,FeatureLevel.Level_11_0));var arch=device.CheckFeatureSupport<FeatureDataArchitecture>(Vortice.Direct3D12.Feature.Architecture);if(arch.Uma)throw new NotSupportedException("UMA not independent VRAM");var a3=life.Add(adapter.QueryInterface<IDXGIAdapter3>());var budget=a3.QueryVideoMemoryInfo(0,MemorySegmentGroup.Local);int pool=poolMiB<<20;if(budget.Budget<=budget.CurrentUsage||(ulong)pool>(budget.Budget-budget.CurrentUsage)/4)throw new NotSupportedException("Pool exceeds25% available budget");
         var queue=life.Add(device.CreateCommandQueue(CommandListType.Copy));var allocator=life.Add(device.CreateCommandAllocator(CommandListType.Copy));var list=life.Add(device.CreateCommandList<ID3D12GraphicsCommandList>(CommandListType.Copy,allocator));list.Close();var fence=life.Add(device.CreateFence());life.Fence=fence;var ev=life.Add(new AutoResetEvent(false));ulong seq=0;
-        var upload=life.Add(device.CreateCommittedResource(HeapType.Upload,ResourceDescription.Buffer((ulong)pool),ResourceStates.GenericRead));var gpu=life.Add(device.CreateCommittedResource(HeapType.Default,ResourceDescription.Buffer((ulong)pool),ResourceStates.CopyDest));var readback=life.Add(device.CreateCommittedResource(HeapType.Readback,ResourceDescription.Buffer(65536),ResourceStates.CopyDest));IntPtr up=IntPtr.Zero;upload.Map(0,new DRange(0,0),&up).CheckError();
+        var upload=life.Add(device.CreateCommittedResource(HeapType.Upload,ResourceDescription.Buffer((ulong)pool),ResourceStates.GenericRead));var gpu=life.Add(device.CreateCommittedResource(HeapType.Default,ResourceDescription.Buffer((ulong)pool),ResourceStates.CopyDest));var readback=life.Add(device.CreateCommittedResource(HeapType.Readback,ResourceDescription.Buffer(262144),ResourceStates.CopyDest));IntPtr up=IntPtr.Zero;upload.Map(0,new DRange(0,0),&up).CheckError();
         void Wait(){life.Target=seq+1;queue.ExecuteCommandList(list);queue.Signal(fence,++seq).CheckError();if(fence.CompletedValue==ulong.MaxValue)throw new IOException("Device removed");if(fence.CompletedValue<seq){fence.SetEventOnCompletion(seq,ev).CheckError();if(!ev.WaitOne(10000))throw new TimeoutException("DMA fence timeout");}if(fence.CompletedValue==ulong.MaxValue)throw new IOException("Device removed during wait");}
         void Begin(){allocator.Reset();list.Reset(allocator);}
-        byte[] expected=new byte[65536],actual=new byte[65536];int detected=0;var samples=new List<(string Mode,int Bytes,double Us)>();using var csv=new StreamWriter(run.FilePath("dma-samples.csv"));csv.WriteLine("mode,bytes,iteration,warmup,total_us,byte_match");
+        byte[] expected=new byte[262144],actual=new byte[262144];int detected=0;var samples=new List<(string Mode,int Bytes,double Us)>();using var csv=new StreamWriter(run.FilePath("dma-samples.csv"));csv.WriteLine("mode,bytes,iteration,warmup,total_us,byte_match");
         void Readback(int bytes){IntPtr ptr=IntPtr.Zero;readback.Map(0,new DRange(0,(nuint)bytes),&ptr).CheckError();try{new ReadOnlySpan<byte>((void*)ptr,bytes).CopyTo(actual);}finally{readback.Unmap(0,new DRange(0,0));}}
         try
         {
             new Span<byte>((void*)up,pool).Fill(0xA5);Begin();list.CopyBufferRegion(gpu,0,upload,0,(ulong)pool);list.ResourceBarrierTransition(gpu,ResourceStates.CopyDest,ResourceStates.CopySource);list.Close();Wait();
-            foreach(int bytes in new[]{4096,65536})for(int rep=0;rep<iterations+10;rep++)
+            foreach(int bytes in new[]{4096,65536,262144})for(int rep=0;rep<iterations+10;rep++)
             {
                 ct.ThrowIfCancellationRequested();if(rep%10==0)progress?.Report($"Г3 DMA {bytes/1024}КиБ {rep}/{iterations+10}");int offset=rep%(pool/bytes)*bytes;new Random(bytes+rep).NextBytes(expected.AsSpan(0,bytes));BitConverter.TryWriteBytes(expected,((ulong)bytes<<32)|(uint)rep);
                 long t=Stopwatch.GetTimestamp();expected.AsSpan(0,bytes).CopyTo(new Span<byte>((void*)(up+offset),bytes));if(System.Runtime.Intrinsics.X86.Sse.IsSupported)System.Runtime.Intrinsics.X86.Sse.StoreFence();Begin();list.ResourceBarrierTransition(gpu,ResourceStates.CopySource,ResourceStates.CopyDest);list.CopyBufferRegion(gpu,(ulong)offset,upload,(ulong)offset,(ulong)bytes);list.ResourceBarrierTransition(gpu,ResourceStates.CopyDest,ResourceStates.CopySource);list.CopyBufferRegion(readback,0,gpu,(ulong)offset,(ulong)bytes);list.Close();Wait();Readback(bytes);double round=Elapsed(t);if(!actual.AsSpan(0,bytes).SequenceEqual(expected.AsSpan(0,bytes)))throw new InvalidDataException("DMA roundtrip mismatch");
@@ -144,9 +144,49 @@ internal static unsafe class GpuResearch
                     Begin();list.CopyBufferRegion(readback,0,gpu,(ulong)offset,(ulong)bytes);list.Close();Wait();Readback(bytes);if(!actual.AsSpan(0,bytes).SequenceEqual(expected.AsSpan(0,bytes)))throw new InvalidDataException("Corrected restore mismatch");
                 }
             }
-            return new{schema="elasticmem.g3.dma.v1",status="dma_microbenchmark_not_pager",adapter=adapter.Description1.Description,software=false,uma=false,gpu_upload_required=false,pool_bytes=pool,negative_faults_detected=detected,groups=samples.GroupBy(x=>(x.Mode,x.Bytes)).Select(g=>new{mode=g.Key.Mode,bytes=g.Key.Bytes,n=g.Count(),p50_us=Percentile(g.Select(x=>x.Us),.5),p95_us=Percentile(g.Select(x=>x.Us),.95),p99_us=Percentile(g.Select(x=>x.Us),.99)}),roundtrip_4k_40us_screen=Percentile(samples.Where(x=>x.Mode=="roundtrip"&&x.Bytes==4096).Select(x=>x.Us),.5)<40,limitations=new[]{"Own32MiB DEFAULT buffer→READBACK; no GPU_UPLOAD/ReBAR required,no live paging","Restore includes recording+submit+fence+Map+CPU copy; roundtrip additionally CPU upload and GPU copy","DEFAULT allocation under WDDM is not proof of permanent physical VRAM residency; no TDR durability","Fixed roundtrip→restore order,warm caches;40us threshold chosen screening criterion,not NVMe comparison","No disk comparator in this DMA mode; older GPU_UPLOAD/disk test remains separate"}};
+            return new{schema="elasticmem.g3.dma.v1",status="dma_microbenchmark_not_pager",adapter=adapter.Description1.Description,software=false,uma=false,gpu_upload_required=false,pool_bytes=pool,negative_faults_detected=detected,groups=samples.GroupBy(x=>(x.Mode,x.Bytes)).Select(g=>new{mode=g.Key.Mode,bytes=g.Key.Bytes,n=g.Count(),p50_us=Percentile(g.Select(x=>x.Us),.5),p95_us=Percentile(g.Select(x=>x.Us),.95),p99_us=Percentile(g.Select(x=>x.Us),.99)}),roundtrip_4k_40us_screen=Percentile(samples.Where(x=>x.Mode=="roundtrip"&&x.Bytes==4096).Select(x=>x.Us),.5)<40,limitations=new[]{"Own32MiB DEFAULT buffer→READBACK; no GPU_UPLOAD/ReBAR required,no live paging","Restore includes recording+submit+fence+Map+CPU copy; roundtrip additionally CPU upload and GPU copy","DEFAULT allocation under WDDM is not proof of permanent physical VRAM residency; no TDR durability","Fixed roundtrip→restore order,warm caches;40us threshold chosen screening criterion,not NVMe comparison","Independent disk-qd1 runs in automatic batch without GPU_UPLOAD; file QD1 is NOT real pagefile latency"}};
         }
         finally{if(!life.Pending)upload.Unmap(0,new DRange(0,(nuint)pool));else run.Log("DMA timed out: submitted resources quarantined; restart required");}
+    }
+    public static object RunDisk(ResearchRun run,string directory,int iterations,CancellationToken ct)
+    {
+        if(iterations is <10 or >2000)throw new ArgumentException("Disk repetitions");
+        if(!Directory.Exists(directory))throw new ArgumentException("Scratch directory must exist");
+        const int pool=32<<20;using var source=new Ram(pool);using var io=new Ram(262144);
+        new Random(1701).NextBytes(source.Span);
+        for(int offset=0;offset<pool;offset+=4096)BitConverter.TryWriteBytes(source.Span.Slice(offset,8),(ulong)offset);
+        string file=Path.Combine(directory,"ElasticMem-QD1-"+Guid.NewGuid().ToString("N")+".tmp");
+        using var disk=CreateFile(file,0xC0000000,0,IntPtr.Zero,1,0x04000000|0x20000000|0x80000000|0x100,IntPtr.Zero);
+        if(disk.IsInvalid)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"Create own unbuffered scratch file");
+        if(!WriteFile(disk,source.Pointer,pool,out uint written,IntPtr.Zero)||written!=pool||!FlushFileBuffers(disk))throw new IOException("Scratch initialize/flush failed");
+        var random=new Random(1702);var samples=new List<(int Bytes,double Us)>();int negative=0;
+        using var csv=new StreamWriter(run.FilePath("disk-samples.csv"));csv.WriteLine("bytes,iteration,warmup,read_us,byte_match");
+        foreach(int bytes in new[]{4096,65536,262144})for(int rep=0;rep<iterations+10;rep++)
+        {
+            ct.ThrowIfCancellationRequested();int offset=random.Next(pool/bytes)*bytes;
+            if(!SetFilePointerEx(disk,offset,out _,0))throw new IOException("Scratch seek");
+            long t=Stopwatch.GetTimestamp();
+            if(!ReadFile(disk,io.Pointer,(uint)bytes,out uint read,IntPtr.Zero)||read!=bytes)throw new IOException("Unbuffered QD1 read");
+            double us=Elapsed(t);
+            if(!io.Span[..bytes].SequenceEqual(source.Span.Slice(offset,bytes)))throw new InvalidDataException("Disk read bytes mismatch");
+            csv.WriteLine(FormattableString.Invariant($"{bytes},{rep},{(rep<10?1:0)},{us:F6},1"));
+            if(rep>=10)samples.Add((bytes,us));
+            if(rep==10)
+            {
+                source.Span[offset]^=0x5A;
+                if(!SetFilePointerEx(disk,offset,out _,0)||!WriteFile(disk,source.Pointer+offset,(uint)bytes,out uint w,IntPtr.Zero)||w!=bytes||!FlushFileBuffers(disk))throw new IOException("Disk negative generation write");
+                if(io.Span[..bytes].SequenceEqual(source.Span.Slice(offset,bytes)))throw new InvalidDataException("Stale read not detected");negative++;
+                if(!SetFilePointerEx(disk,(offset+bytes)%pool,out _,0)||!ReadFile(disk,io.Pointer,(uint)bytes,out read,IntPtr.Zero)||read!=bytes)throw new IOException("Disk negative offset read");
+                if(io.Span[..bytes].SequenceEqual(source.Span.Slice(offset,bytes)))throw new InvalidDataException("Wrong offset not detected");negative++;
+                if(!SetFilePointerEx(disk,offset,out _,0)||!ReadFile(disk,io.Pointer,(uint)bytes,out read,IntPtr.Zero)||read!=bytes||!io.Span[..bytes].SequenceEqual(source.Span.Slice(offset,bytes)))throw new InvalidDataException("Disk corrected read mismatch");
+            }
+        }
+        return new{schema="elasticmem.disk.qd1.v1",status="unbuffered_file_qd1_not_pagefile_fault",pool_bytes=pool,negative_faults_detected=negative,device_bus_type="not_verified_nvme",
+            groups=samples.GroupBy(s=>s.Bytes).Select(g=>new{bytes=g.Key,n=g.Count(),p50_us=Percentile(g.Select(s=>s.Us),.5),p95_us=Percentile(g.Select(s=>s.Us),.95),p99_us=Percentile(g.Select(s=>s.Us),.99)}),
+            limitations=new[]{"Own32MiB random data,random aligned offsets,QD1,no buffering,new file delete-on-close; CPU completion excludes seek and equality",
+            "Not actual pagefile-fault latency; disk bus/media not identified; controller/drive cache remains",
+            "Warmup10,one fixed size order4/64/256KiB; not guaranteed storage tail latency",
+            "No existing files modified; no system memory/pagefile settings changed; timings do not establish a production GPU pager"}};
     }
     static double Elapsed(long t)=>(Stopwatch.GetTimestamp()-t)*1_000_000.0/Stopwatch.Frequency;
     static double Percentile(IEnumerable<double> values,double q){var a=values.Order().ToArray();double p=(a.Length-1)*q;int lo=(int)p,hi=(int)Math.Ceiling(p);return a[lo]+(a[hi]-a[lo])*(p-lo);}

@@ -7,4 +7,5 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../../src/ElasticMem.Core/ElasticMem.Core.csproj" /></ItemGroup>
+  <ItemGroup><Compile Include="../../src/ElasticMem.App/Research/OneClickReport.cs" Link="OneClickReport.cs" /></ItemGroup>
 </Project>

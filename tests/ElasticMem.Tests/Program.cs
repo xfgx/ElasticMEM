@@ -65,6 +65,26 @@ foreach (var mk in new Func<long, IMemoryStore>[] {
 }
 fails += ArrayTests.Run();
 try { Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(ElasticMem.Core.Research.ResearchSelfTest.Run())); } catch(Exception ex) { Check(false, "research selftest: " + ex); }
+string reportRoot=Path.Combine(Path.GetTempPath(),"ElasticMem_report_"+Guid.NewGuid().ToString("N"));
+try
+{
+    using(var invalid=new ElasticMem.Core.Research.ResearchRun(reportRoot,"g4","test","fixture",new{}))
+    {
+        invalid.WriteJson("result.json",new{schema="elasticmem.g4.codecs.v1",codecs=new[]{new{codec="INVALID_NUMBER_SENTINEL",total_with_reserve_bytes=123}}});
+        invalid.Seal("offline_codec_comparison_not_live_reclaim","fixture");invalid.Invalidate(new InvalidDataException("fixture"));
+        var errors=new List<string>();string report=ElasticMem.App.Research.OneClickReport.Read(reportRoot,errors);
+        Check(!report.Contains("INVALID_NUMBER_SENTINEL"),"invalid report numbers suppressed");Check(errors.Count==0,"invalid status reported without optional parse failure");
+    }
+    using(var broken=new ElasticMem.Core.Research.ResearchRun(reportRoot,"g4","test","fixture",new{}))
+    {
+        File.WriteAllText(broken.FilePath("result.json"),"{");
+        broken.Seal("offline_codec_comparison_not_live_reclaim","fixture");
+        var errors=new List<string>();string report=ElasticMem.App.Research.OneClickReport.Read(reportRoot,errors);
+        Check(errors.Count==1&&report.Contains("недоступна"),"malformed optional report isolated,diagnostics retained");
+    }
+}
+catch(Exception ex){Check(false,"report guard fixtures: "+ex);}
+finally{if(Directory.Exists(reportRoot))Directory.Delete(reportRoot,true);}
 Console.WriteLine(fails == 0 ? "ALL TESTS PASSED" : $"{fails} FAILURES");
 
 bench:
