@@ -4,9 +4,14 @@ using ElasticMem.Core.Research;
 namespace ElasticMem.App.Research;
 internal sealed class ResearchTab:TabPage
 {
-    readonly ComboBox _mode=new(){DropDownStyle=ComboBoxStyle.DropDownList,Width=420};
+    sealed class ModeComboBox:ComboBox
+    {
+        public ModeComboBox(){DropDownStyle=ComboBoxStyle.DropDownList;AutoSize=true;DropDownWidth=850;}
+        public override Size GetPreferredSize(Size proposedSize){int w=Math.Max(420,Items.Cast<object>().Select(x=>TextRenderer.MeasureText(x.ToString(),Font).Width+48).DefaultIfEmpty(420).Max());return new Size(Math.Min(w,MaximumSize.Width>0?MaximumSize.Width:w),base.GetPreferredSize(proposedSize).Height);}
+    }
+    readonly ComboBox _mode=new ModeComboBox();
     readonly TextBox _pids=new(){Width=200,PlaceholderText="PID через запятую"};
-    readonly NumericUpDown _seconds=N(1,3600,30),_limit=N(1,64,16),_records=N(1000,5000000,100000),_iterations=N(10,2000,100),_pool=N(16,128,32),_adapter=N(0,15,0);
+    readonly NumericUpDown _seconds=N(1,3600,120),_limit=N(1,64,16),_records=N(1000,5000000,100000),_iterations=N(10,2000,100),_pool=N(16,128,32),_adapter=N(0,15,0);
     readonly NumericUpDown _eviction=N(1,1000000,10),_recovery=N(1,1000000,100),_maxFault=N(0,1000000,100);
     readonly TextBox _trace=new(){Width=320,PlaceholderText="Полная event-трасса CSV"},_metadata=new(){Width=320,PlaceholderText="Metadata JSON"},_scratch=new(){Width=320};
     readonly CheckBox _negative=new(){Text="Проверить пропуск DMA и неверный offset",AutoSize=true};
@@ -27,7 +32,7 @@ internal sealed class ResearchTab:TabPage
         ("selftest","Самопроверка встроенных механизмов","Детерминированные проверки хранилища, нормализации, модели и хешей. GPU/Windows API проверяются отдельно."),
         ("g0-sample","Г0 · наблюдение процессов Windows","Счётчики рабочего набора, private bytes, CPU и page faults. Это выборочные наблюдения, НЕ полная трасса обращений и НЕ потолок экономии."),
         ("g0-model","Г0 · модель по полной трассе","Импорт exact/synthetic событий с map/read/write/unmap. Метрика — средние байты модели gap−e−r, не верхняя граница любого механизма. Полный сборщик трассы пока внешний."),
-        ("g1","Г1 · дедупликация с нормализацией","Читает ограниченные снимки выбранных PID, сравнивает raw и нормализованный холодный формат. Все карты указателей учтены; восстановление проверяется. Не изменяет память процессов. Дампы могут содержать личные данные; чтение может подгрузить холодные страницы."),
+        ("g1","Г1 · резидентные private-страницы","Выберите 1–4 процесса одного семейства. Основной вход — страницы, прошедшие проверки resident MEM_PRIVATE, not shareable/shared до и после чтения. Invalid/image/mapped/shareable страницы по предварительным проверкам пропускаются; гонка всё ещё может вызвать page fault. Есть Brotli без дедупликации. Порядковая нормализация — закрытый контрольный вариант."),
         ("g2","Г2 · типизированное хранилище","Рабочее компактное хранилище собственных записей со словарём типов, индексными ссылками и escape-счётчиками. Не патч CPython/V8 и не сжатие чужих куч."),
         ("gpu-probe","Г3 · проверить GPU_UPLOAD","Проверяет адаптеры D3D12, дискретность, GPU_UPLOAD и бюджет VRAM. Не запускает нагрузку и не измеряет скорость."),
         ("g3","Г3 · VRAM / диск: микротест","Запись своих данных в GPU_UPLOAD, DMA READBACK и восстановление в RAM; сравнение с unbuffered file I/O. Нужна поддержка GPU_UPLOAD. Это НЕ перенос pagefile в VRAM. Выберите папку на SSD: временный файл создаётся с новым именем и удаляется."),
@@ -35,7 +40,7 @@ internal sealed class ResearchTab:TabPage
     public ResearchTab(Func<bool> agentRunning):base("Лаборатория")
     {
         _agentRunning=agentRunning;
-        _pids.Text=Environment.ProcessId.ToString();_scratch.Text=Path.GetTempPath();_mode.Items.AddRange(Modes.Select(x=>x.Title).Cast<object>().ToArray());
+        _pids.Text="";_scratch.Text=Path.GetTempPath();_mode.Items.AddRange(Modes.Select(x=>x.Title).Cast<object>().ToArray());
         var refresh=new Button{Text="Выбрать процессы",AutoSize=true};refresh.Click+=(_,_)=>ChoosePids();
         var chooseTrace=new Button{Text="CSV…",AutoSize=true};chooseTrace.Click+=(_,_)=>Pick(_trace,"CSV|*.csv");
         var chooseMeta=new Button{Text="JSON…",AutoSize=true};chooseMeta.Click+=(_,_)=>Pick(_metadata,"JSON|*.json");
@@ -72,7 +77,11 @@ internal sealed class ResearchTab:TabPage
         ResearchOptions options;
         try{options=Options();}catch(Exception ex){_status.Text="Параметры: "+ex.Message;return;}
         string mode=Modes[_mode.SelectedIndex].Key;
-        if(mode=="g1"&&MessageBox.Show(this,"Снимки могут содержать пароли, переписку и другие личные данные. Они остаются локально; по умолчанию не попадают в ZIP логов. Не выбирайте игры с античитом.\n\nПродолжить чтение памяти выбранных PID?","Г1: явное согласие",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
+        if(mode=="g1"&&options.Pids.Contains(Environment.ProcessId)){_status.Text="Г1: нельзя снимать само приложение ElasticMem — это загрязняет измерение. Выберите внешние процессы.";return;}
+        if(mode=="g0-sample"&&options.Pids.Length==0){_status.Text="Выберите процессы для наблюдения.";return;}
+        if(mode=="g1"&&(options.Pids.Length is <1 or >4||options.Pids.Length*options.SnapshotMiB>128)){_status.Text="Г1: выберите только 1–4 процесса; всего не более 128 МиБ. Тест не начат.";MessageBox.Show(this,_status.Text,"Параметры Г1",MessageBoxButtons.OK,MessageBoxIcon.Information);return;}
+        if(options.Pids.Any(pid=>pid<=4)&&mode is "g1" or "g0-sample"){_status.Text="Выберите обычные приложения, не Idle/System (PID 0/4).";return;}
+        if(mode=="g1"&&MessageBox.Show(this,"Снимки могут содержать пароли, переписку и другие личные данные. Они остаются локально; по умолчанию не попадают в ZIP логов. Не выбирайте игры с античитом. В Г1 — максимум 4 процесса.\n\nПродолжить чтение памяти выбранных PID?","Г1: явное согласие",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
         _cts=new();_completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);BusyChanged?.Invoke(true);_run.Enabled=false;_cancel.Enabled=true;_mode.Enabled=false;foreach(var c in _config)c.Enabled=false;
         try{var progress=new Progress<string>(s=>{if(!IsDisposed)_status.Text=s;});
             _last=await Task.Run(()=>ResearchJobs.Execute(mode,options,progress,_cts.Token));_output.Text=File.ReadAllText(Path.Combine(_last,File.Exists(Path.Combine(_last,"result.json"))?"result.json":"report.md"));_status.Text="Сохранено: "+Path.GetFileName(_last);}
@@ -86,7 +95,7 @@ internal sealed class ResearchTab:TabPage
         var choice=MessageBox.Show(this,"Добавить дампы, входные трассы и screenshots? Они могут содержать личные данные.\n\nДа — полный пакет. Нет — только отчёты/логи/счётчики.\nПеред отправкой просмотрите архив.","Приватность экспорта",MessageBoxButtons.YesNoCancel,MessageBoxIcon.Warning);if(choice==DialogResult.Cancel)return;
         try{ResearchRun.ExportLogs(ResearchJobs.Root,d.FileName,choice==DialogResult.Yes);_status.Text="ZIP сохранён локально. Отправьте его вручную; автоматической загрузки нет.";Open(Path.GetDirectoryName(d.FileName)!);}catch(Exception ex){_status.Text=ex.Message;}
     }
-    void ChoosePids(){using var dialog=new Form{Text="Выберите PID (не выбирайте игры с античитом)",Width=640,Height=520,StartPosition=FormStartPosition.CenterParent};var list=new ListView{Dock=DockStyle.Fill,View=View.Details,CheckBoxes=true,FullRowSelect=true};list.Columns.Add("Процесс",280);list.Columns.Add("PID",90);list.Columns.Add("Рабочий набор, МиБ",170);foreach(var p in Process.GetProcesses()){using(p){try{list.Items.Add(new ListViewItem(new[]{p.ProcessName,p.Id.ToString(),(p.WorkingSet64>>20).ToString()}){Tag=p.Id});}catch{}}}var ok=new Button{Text="Выбрать",Dock=DockStyle.Bottom,Height=44,DialogResult=DialogResult.OK};dialog.Controls.Add(list);dialog.Controls.Add(ok);Theme.Apply(dialog,Theme.Dark);if(dialog.ShowDialog(this)==DialogResult.OK)_pids.Text=string.Join(",",list.CheckedItems.Cast<ListViewItem>().Select(i=>(int)i.Tag!));}
+    void ChoosePids(){using var dialog=new Form{Text="Выберите PID (не выбирайте игры с античитом)",Width=640,Height=520,StartPosition=FormStartPosition.CenterParent};var list=new ListView{Dock=DockStyle.Fill,View=View.Details,CheckBoxes=true,FullRowSelect=true};list.Columns.Add("Процесс",280);list.Columns.Add("PID",90);list.Columns.Add("Рабочий набор, МиБ",170);foreach(var p in Process.GetProcesses()){using(p){try{list.Items.Add(new ListViewItem(new[]{p.ProcessName,p.Id.ToString(),(p.WorkingSet64>>20).ToString()}){Tag=p.Id});}catch{}}}var ok=new Button{Text="Выбрать",Dock=DockStyle.Bottom,Height=44,DialogResult=DialogResult.OK};dialog.Controls.Add(list);dialog.Controls.Add(ok);Theme.Apply(dialog,Theme.Dark);if(dialog.ShowDialog(this)==DialogResult.OK){var selected=list.CheckedItems.Cast<ListViewItem>().Select(i=>(int)i.Tag!).ToArray();if(Modes[_mode.SelectedIndex].Key=="g1"&&(selected.Length is <1 or >4)){MessageBox.Show(this,"Для Г1 отметьте 1–4 процесса одного приложения. Старый список не изменён.");return;}_pids.Text=string.Join(",",selected);}}
     void Pick(TextBox box,string filter){using var d=new OpenFileDialog{Filter=filter};if(d.ShowDialog(this)==DialogResult.OK)box.Text=d.FileName;}
     static void Open(string folder){Directory.CreateDirectory(folder);Process.Start(new ProcessStartInfo("explorer.exe",folder){UseShellExecute=true});}
 }

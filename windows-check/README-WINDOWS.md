@@ -1,4 +1,4 @@
-# ElasticMem 0.9.0 — проверка на Windows
+# ElasticMem 0.14.0 — проверка на Windows
 
 Это готовый **win-x64 self-contained** исследовательский билд. Python, VS и установка .NET не нужны.
 D3D12 GPU_UPLOAD требует поддержки ОС/драйвера/дискретной GPU; ReBAR сам по себе не гарантия.

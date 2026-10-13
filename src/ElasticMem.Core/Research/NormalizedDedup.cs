@@ -6,14 +6,14 @@ namespace ElasticMem.Core.Research;
 public record SnapshotRegion(ulong Base, ulong Size);
 public record SnapshotPage(ulong Address, byte[] Bytes);
 public record ProcessSnapshot(int Pid, long StartTicks, SnapshotRegion[] Regions, SnapshotPage[] Pages);
-public record DedupResult(long InputBytes, long RawDedupBytes, long NormalizedDedupBytes, long RawBrotliBytes, long NormalizedBrotliBytes, int Pages, int RawUnique, int NormalizedUnique, long CandidatePointerWords, bool Roundtrip, string[] Limitations);
+public record DedupResult(long InputBytes, long RawDedupBytes, long NormalizedDedupBytes, long RawBrotliBytes, long NormalizedBrotliBytes, int Pages, int RawUnique, int NormalizedUnique, long CandidatePointerWords, bool Roundtrip, string[] Limitations, long BrotliOnlyBytes);
 public static class NormalizedDedup
 {
     public static DedupResult Run(IReadOnlyList<ProcessSnapshot> snapshots, Action<string>? log = null, CancellationToken ct = default)
     {
         var raw = new Dictionary<string, List<byte[]>>(); var norm = new Dictionary<string, List<byte[]>>();
         long total=0, pointerWords=0, regionBytes=0, masks=0; int pages=0;
-        long rawBytes=0, normBytes=0, rawCompressed=0, normCompressed=0;
+        long rawBytes=0, normBytes=0, rawCompressed=0, normCompressed=0, brotliOnly=0;
         foreach (var snap in snapshots)
         {
             if (snap.Regions.Length > 65535) throw new InvalidDataException("Region catalog exceeds 16-bit index");
@@ -43,6 +43,7 @@ public static class NormalizedDedup
                     BinaryPrimitives.WriteUInt64LittleEndian(restored.AsSpan(w*8,8),snap.Regions[id].Base+offset);
                 }
                 if(!restored.AsSpan().SequenceEqual(page.Bytes))throw new InvalidDataException("Roundtrip mismatch");
+                brotliOnly+=CompressedSize(page.Bytes)+4;
                 if(AddUnique(raw,page.Bytes)){rawBytes+=4096;rawCompressed+=CompressedSize(page.Bytes)+4;}
                 if(AddUnique(norm,normalized)){normBytes+=4096;normCompressed+=CompressedSize(normalized)+4;}
                 masks+=64; // Store every bitmap; no free zero masks.
@@ -53,7 +54,7 @@ public static class NormalizedDedup
         long common=pages*16L+regionBytes+64; // unique-ID+PID+virtual page address, header
         long rawCommon=pages*16L+snapshots.Count*16L+64;
         return new(total,rawBytes+rawCommon,normBytes+common+masks,rawCompressed+rawCommon,normCompressed+common+masks,pages,raw.Sum(x=>x.Value.Count),norm.Sum(x=>x.Value.Count),pointerWords,true,
-            new[]{"Offline cold-store candidate only; no live page sharing or RAM reclaim", "Words in captured address ranges are candidates, not proven pointers; decoding is lossless either way", "Region IDs are address-order ordinals, not semantic cross-process type IDs", "All 64-byte masks, refs, region mappings and compressed length prefixes counted; allocator/runtime overhead not physical RSS", "Brotli byte counts are serialization sizes; latency and Windows page combining not measured", "Snapshots are bounded non-atomic samples; unreadable/not-captured pages excluded"});
+            new[]{"Offline cold-store candidate only; no live page sharing or RAM reclaim", "Words in captured address ranges are candidates, not proven pointers; decoding is lossless either way", "Region IDs are address-order ordinals, not semantic cross-process type IDs", "All 64-byte masks, refs, region mappings and compressed length prefixes counted; allocator/runtime overhead not physical RSS", "Brotli byte counts are serialization sizes; latency and Windows page combining not measured", "Snapshots are bounded non-atomic samples; unreadable/not-captured pages excluded", "Ordinal-region normalization is a closed historical comparator, not semantic normalization", "Brotli-only baseline uses the same per-page Fastest codec, page bindings and length prefixes, no dedup"},brotliOnly+rawCommon);
     }
     private static int FindRegion(SnapshotRegion[] r,ulong v){int lo=0,hi=r.Length-1;while(lo<=hi){int mid=(lo+hi)/2;if(v<r[mid].Base)hi=mid-1;else if(v-r[mid].Base>=r[mid].Size)lo=mid+1;else return mid;}return -1;}
     private static bool AddUnique(Dictionary<string,List<byte[]>> d,byte[] data)

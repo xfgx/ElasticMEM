@@ -89,10 +89,10 @@ public sealed class ResearchRun : IDisposable
                 string rel = Path.GetRelativePath(root, f).Replace('\\','/');
                 if (Path.GetFullPath(f) == Path.GetFullPath(target)) continue;
                 // Dumps and full traces may contain private data. Excluded unless explicitly requested.
-                bool sensitive = rel.Contains("/inputs/", StringComparison.OrdinalIgnoreCase) || rel.Contains("/snapshots/", StringComparison.OrdinalIgnoreCase) || rel.EndsWith(".bin", StringComparison.OrdinalIgnoreCase) || rel.EndsWith(".emd", StringComparison.OrdinalIgnoreCase) || rel.Contains("screenshots/", StringComparison.OrdinalIgnoreCase);
+                bool sensitive = rel.Contains("/inputs/", StringComparison.OrdinalIgnoreCase) || rel.Contains("/snapshots/", StringComparison.OrdinalIgnoreCase) || rel.EndsWith(".bin", StringComparison.OrdinalIgnoreCase) || (rel.EndsWith(".emd", StringComparison.OrdinalIgnoreCase) || rel.EndsWith(".erb", StringComparison.OrdinalIgnoreCase)) || rel.Contains("screenshots/", StringComparison.OrdinalIgnoreCase);
                 if (sensitive && !includeSensitive) continue;
                 string extension=Path.GetExtension(rel).ToLowerInvariant();
-                if(!includeSensitive && !allowedNames.Contains(Path.GetFileName(f)))continue;
+                if(!includeSensitive && (rel.Split('/').Length!=2 || !(allowedNames.Contains(Path.GetFileName(f)) || System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(f), @"^residency-summary-[0-9]+\.json$"))))continue;
                 if ((File.GetAttributes(f) & FileAttributes.ReparsePoint) != 0) continue;
                 var entry = zip.CreateEntry(rel, CompressionLevel.Fastest);
                 if(!includeSensitive && new FileInfo(f).Length<=16L*1024*1024)
