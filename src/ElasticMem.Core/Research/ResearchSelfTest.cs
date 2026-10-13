@@ -87,6 +87,7 @@ public static class ResearchSelfTest
             using(var run=new ResearchRun(temp,"test","unit","fixture",new{})){File.WriteAllText(run.FilePath("raw.txt"),"a");run.Seal("passed","unit");ResearchRun.Verify(run.DirectoryPath);Check(true,"sealed hash verify");File.WriteAllText(Path.Combine(run.DirectoryPath,"raw.txt"),"b");try{ResearchRun.Verify(run.DirectoryPath);Check(false,"tamper rejected");}catch(InvalidDataException){Check(true,"tamper rejected");}}
         }
         finally{Directory.Delete(temp,true);}
-        if(errors.Count!=0)throw new InvalidDataException(string.Join("\n",errors));return new{status="selftests_passed",checks,seed=19,limitations=new[]{"Core correctness only; no Windows API/GPU/UI execution"}};
+        checks+=NewResearchTests.Run();
+        if(errors.Count!=0)throw new InvalidDataException(string.Join("\n",errors));return new{status="selftests_passed",checks,seed=19,native_xpress_fixtures_executed=OperatingSystem.IsWindows(),limitations=new[]{"Core/codec correctness only; native Xpress fixtures only when Windows; no live paging/GPU/UI execution"}};
     }
 }

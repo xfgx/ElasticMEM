@@ -81,7 +81,7 @@ public sealed class ResearchRun : IDisposable
             if(File.Exists(Path.Combine(folder,"manifest.json"))){Verify(folder);sourceVerification.Add(new{run=Path.GetFileName(folder),source_integrity="verified_before_export"});}
             else if(Path.GetFileName(folder)!="diagnostics")throw new InvalidDataException("Incomplete run: "+Path.GetFileName(folder));
         }
-        var allowedNames=new HashSet<string>(StringComparer.OrdinalIgnoreCase){"manifest.json","report.md","result.json","events.log","error.txt","process-samples.csv","gpu-samples.csv","gpu-device.json","mma-query.json","layout-audit.json","crash.log","invalidated-manifest.json","auto-report.txt"};
+        var allowedNames=new HashSet<string>(StringComparer.OrdinalIgnoreCase){"manifest.json","report.md","result.json","events.log","error.txt","process-samples.csv","gpu-samples.csv","gpu-device.json","dma-samples.csv","codec-samples.csv","epoch-counters.csv","mma-query.json","layout-audit.json","crash.log","invalidated-manifest.json","auto-report.txt"};
         using (var zip = ZipFile.Open(target, ZipArchiveMode.Create))
         {
             foreach (var f in files)
@@ -89,7 +89,7 @@ public sealed class ResearchRun : IDisposable
                 string rel = Path.GetRelativePath(root, f).Replace('\\','/');
                 if (Path.GetFullPath(f) == Path.GetFullPath(target)) continue;
                 // Dumps and full traces may contain private data. Excluded unless explicitly requested.
-                bool sensitive = rel.Contains("/inputs/", StringComparison.OrdinalIgnoreCase) || rel.Contains("/snapshots/", StringComparison.OrdinalIgnoreCase) || rel.EndsWith(".bin", StringComparison.OrdinalIgnoreCase) || (rel.EndsWith(".emd", StringComparison.OrdinalIgnoreCase) || rel.EndsWith(".erb", StringComparison.OrdinalIgnoreCase)) || rel.Contains("screenshots/", StringComparison.OrdinalIgnoreCase);
+                bool sensitive = rel.Contains("/inputs/", StringComparison.OrdinalIgnoreCase) || rel.Contains("/snapshots/", StringComparison.OrdinalIgnoreCase) || rel.EndsWith(".bin", StringComparison.OrdinalIgnoreCase) || (rel.EndsWith(".emd", StringComparison.OrdinalIgnoreCase) || rel.EndsWith(".erb", StringComparison.OrdinalIgnoreCase) || rel.EndsWith(".ecb", StringComparison.OrdinalIgnoreCase)) || rel.Contains("screenshots/", StringComparison.OrdinalIgnoreCase);
                 if (sensitive && !includeSensitive) continue;
                 string extension=Path.GetExtension(rel).ToLowerInvariant();
                 if(!includeSensitive && (rel.Split('/').Length!=2 || !(allowedNames.Contains(Path.GetFileName(f)) || System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(f), @"^residency-summary-[0-9]+\.json$"))))continue;
@@ -101,7 +101,7 @@ public sealed class ResearchRun : IDisposable
                     if(!string.IsNullOrEmpty(profile))text=text.Replace(profile,"%USERPROFILE%",StringComparison.OrdinalIgnoreCase);
                     if(Path.GetFileName(f)=="manifest.json")
                     {
-                        try{var node=System.Text.Json.Nodes.JsonNode.Parse(text);if(node?["parameters"] is System.Text.Json.Nodes.JsonObject parameters)foreach(var key in new[]{"trace","metadata","scratch"})if(parameters.ContainsKey(key))parameters[key]="<redacted path>";text=node?.ToJsonString(Json)??text;}catch{}
+                        try{var node=System.Text.Json.Nodes.JsonNode.Parse(text);if(node?["parameters"] is System.Text.Json.Nodes.JsonObject parameters)foreach(var key in new[]{"trace","metadata","scratch","source_run"})if(parameters.ContainsKey(key))parameters[key]="<redacted path>";text=node?.ToJsonString(Json)??text;}catch{}
                     }
                     byte[] data=System.Text.Encoding.UTF8.GetBytes(text);using(var destination=entry.Open())destination.Write(data);
                     index.Add(new { path=rel,bytes=(long)data.Length,sha256=Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant() });continue;

@@ -14,6 +14,8 @@ internal sealed class ResearchTab:TabPage
     readonly NumericUpDown _seconds=N(1,3600,120),_limit=N(1,64,16),_records=N(1000,5000000,100000),_iterations=N(10,2000,100),_pool=N(16,128,32),_adapter=N(0,15,0);
     readonly NumericUpDown _eviction=N(1,1000000,10),_recovery=N(1,1000000,100),_maxFault=N(0,1000000,100);
     readonly TextBox _trace=new(){Width=320,PlaceholderText="Полная event-трасса CSV"},_metadata=new(){Width=320,PlaceholderText="Metadata JSON"},_scratch=new(){Width=320};
+    readonly CheckBox _allowTrim=new(){Text="Г0: разрешаю EmptyWorkingSet выбранных рендереров (возможны задержки)",AutoSize=true};
+    readonly TextBox _source=new(){Width=420,PlaceholderText="Папка успешного Г1 со snapshots"};
     readonly CheckBox _negative=new(){Text="Проверить пропуск DMA и неверный offset",AutoSize=true};
     readonly Button _run=new(){Text="Запустить проверку",AutoSize=true},_cancel=new(){Text="Отменить",AutoSize=true,Enabled=false};
     readonly Label _hint=Ui.Hint(""),_status=Ui.Hint("Готов к проверкам. Ничего не включается автоматически.");
@@ -34,6 +36,9 @@ internal sealed class ResearchTab:TabPage
         ("selftest","Самопроверка встроенных механизмов","Детерминированные проверки хранилища, нормализации, модели и хешей. GPU/Windows API проверяются отдельно."),
         ("g0-sample","Г0 · наблюдение процессов Windows","Счётчики рабочего набора, private bytes, CPU и page faults. Это выборочные наблюдения, НЕ полная трасса обращений и НЕ потолок экономии."),
         ("g0-model","Г0 · модель по полной трассе","Импорт exact/synthetic событий с map/read/write/unmap. Метрика — средние байты модели gap−e−r, не верхняя граница любого механизма. Полный сборщик трассы пока внешний."),
+        ("g0-epochs","Г0 · эпохи с вмешательством","Требует отдельного согласия EmptyWorkingSet. Базовые счётчики/trim/trim+опрос; приближённая модель повторного появления в WS, НЕ точная трасса/Belady. Не отключает системное сжатие или pagefile."),
+        ("g4","Г4 · Xpress / LZ4 / zstd","Вход — папка успешного Г1. Обучение словаря на одном PID, тест на других. Размеры с метаданными/резервом и проверка восстановления, не реальное освобождение RAM."),
+        ("g3-dma","Г3 · DMA без GPU_UPLOAD","DEFAULT→READBACK через copy queue. 4/64 КиБ, restore/roundtrip/fence, отрицательные проверки. Подходит для попытки на RX570; не pagefile и не постоянная VRAM-резидентность."),
         ("g1","Г1 · резидентные private-страницы","Выберите 1–4 процесса одного семейства. Основной вход — страницы, прошедшие проверки resident MEM_PRIVATE, not shareable/shared до и после чтения. Invalid/image/mapped/shareable страницы по предварительным проверкам пропускаются; гонка всё ещё может вызвать page fault. Есть Brotli без дедупликации. Порядковая нормализация — закрытый контрольный вариант."),
         ("g2","Г2 · типизированное хранилище","Рабочее компактное хранилище собственных записей со словарём типов, индексными ссылками и escape-счётчиками. Не патч CPython/V8 и не сжатие чужих куч."),
         ("gpu-probe","Г3 · проверить GPU_UPLOAD","Проверяет адаптеры D3D12, дискретность, GPU_UPLOAD и бюджет VRAM. Не запускает нагрузку и не измеряет скорость."),
@@ -51,6 +56,8 @@ internal sealed class ResearchTab:TabPage
         var help=new Button{Text="Полная инструкция",AutoSize=true};help.Click+=(_,_)=>ResearchHelp.Show(FindForm()!);
         _auto.Click+=async(_,_)=>await StartAutomatic();
         stack.Add(Ui.Row(_auto,help)).Add(Ui.Hint("Нажатие «Проверить всё» — согласие на локальное чтение до 64 МиБ памяти выбранных рендереров Chrome/Edge/Steam. Агент остановится; ZIP без дампов создаётся автоматически. Отправки по сети нет."));
+        stack.Add(Ui.Row(_allowTrim));_config.Add(_allowTrim);
+        AddOption("source",Ui.Row(_source),stack);
         stack.Add(Ui.Row(Ui.L("Проверка"),_mode,_run,_cancel)).Add(_hint);
         AddOption("pids",Ui.Row(Ui.L("Процессы"),_pids,refresh),stack);AddOption("seconds",Ui.Row(Ui.L("Длительность, с"),_seconds),stack);
         AddOption("limit",Ui.Row(Ui.L("Максимум на процесс, МиБ"),_limit,Ui.L("Всего ≤128 МиБ; античит/защищённые процессы не трогать")),stack);
@@ -71,10 +78,10 @@ internal sealed class ResearchTab:TabPage
     void UpdateMode()
     {
         string key=Modes[_mode.SelectedIndex].Key;_hint.Text=Modes[_mode.SelectedIndex].Hint;
-        foreach(var row in _options)row.Value.Visible=row.Key switch{"pids"=>key is "g0-sample" or "g1","seconds"=>key=="g0-sample","limit"=>key=="g1","trace" or "costs"=>key=="g0-model","records"=>key=="g2","gpu" or "disk"=>key=="g3",_=>false};
+        foreach(var row in _options)row.Value.Visible=row.Key switch{"pids"=>key is "g0-sample" or "g1","seconds"=>key=="g0-sample","limit"=>key=="g1","trace" or "costs"=>key=="g0-model","records"=>key=="g2","gpu"=>key is "g3" or "g3-dma","disk"=>key=="g3","source"=>key is "g4" or "g0-epochs",_=>false};
         Parent?.PerformLayout();Controls[0].PerformLayout();
     }
-    internal ResearchOptions Options()=>new(_pids.Text.Split(',',StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries).Select(int.Parse).Distinct().ToArray(),(int)_seconds.Value,(int)_limit.Value,(int)_records.Value,(int)_iterations.Value,(int)_pool.Value,(int)_adapter.Value,_scratch.Text,_negative.Checked,_trace.Text,_metadata.Text,(double)_eviction.Value,(double)_recovery.Value,(double)_maxFault.Value);
+    internal ResearchOptions Options()=>new(_pids.Text.Split(',',StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries).Select(int.Parse).Distinct().ToArray(),(int)_seconds.Value,(int)_limit.Value,(int)_records.Value,(int)_iterations.Value,(int)_pool.Value,(int)_adapter.Value,_scratch.Text,_negative.Checked,_trace.Text,_metadata.Text,(double)_eviction.Value,(double)_recovery.Value,(double)_maxFault.Value,SourceRun:_source.Text,AllowTrim:_allowTrim.Checked);
     async Task Run()
     {
         if(IsRunning)return;
@@ -82,6 +89,7 @@ internal sealed class ResearchTab:TabPage
         ResearchOptions options;
         try{options=Options();}catch(Exception ex){_status.Text="Параметры: "+ex.Message;return;}
         string mode=Modes[_mode.SelectedIndex].Key;
+        if(mode=="g0-epochs"&&!options.AllowTrim){_status.Text="Нужно отдельное согласие на EmptyWorkingSet.";return;}
         if(mode=="g1"&&options.Pids.Contains(Environment.ProcessId)){_status.Text="Г1: нельзя снимать само приложение ElasticMem — это загрязняет измерение. Выберите внешние процессы.";return;}
         if(mode=="g0-sample"&&options.Pids.Length==0){_status.Text="Выберите процессы для наблюдения.";return;}
         if(mode=="g1"&&(options.Pids.Length is <1 or >4||options.Pids.Length*options.SnapshotMiB>128)){_status.Text="Г1: выберите только 1–4 процесса; всего не более 128 МиБ. Тест не начат.";MessageBox.Show(this,_status.Text,"Параметры Г1",MessageBoxButtons.OK,MessageBoxIcon.Information);return;}
@@ -104,7 +112,7 @@ internal sealed class ResearchTab:TabPage
             if(_agentRunning())throw new InvalidOperationException("Другой бенчмарк ещё работает. Дождитесь его завершения и повторите автопроверку.");
             _cts.Token.ThrowIfCancellationRequested();
             var progress=new Progress<string>(s=>{if(!IsDisposed)_status.Text=s;});
-            _batch=await AutoResearch.RunAsync(true,120,progress,_cts.Token,(root,ct)=>UiDiagnostics.Capture(FindForm()!,root,false,ct));
+            _batch=await AutoResearch.RunAsync(true,120,progress,_cts.Token,(root,ct)=>UiDiagnostics.Capture(FindForm()!,root,false,ct),_allowTrim.Checked);
             _last=_batch.LastRun;_output.Text=_batch.Report;_status.Text=string.IsNullOrEmpty(_batch.Archive)?"Автопрогон завершён, ZIP не создан — смотрите причину.":"Готово: "+_batch.Status+" · ZIP собран автоматически";
             if(!string.IsNullOrEmpty(_batch.Archive))Open(Path.GetDirectoryName(_batch.Archive)!);
         }

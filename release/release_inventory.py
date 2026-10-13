@@ -1,7 +1,7 @@
 """Fail-closed inventory: no recursive approval of arbitrary output bytes."""
 import hashlib,pathlib,json
 PUBLISHED={'ElasticMem.exe','ElasticMem.pdb','ElasticMem.Core.pdb'}
-SUPPLEMENTS={'CHECK-ALL.cmd','CHECK-VRAM.cmd','CHECK-WINDOWS.cmd','README-RESIDENT-G1.md','README-WINDOWS.md','ПОЛНАЯ-ИНСТРУКЦИЯ.md','examples/metadata.json','examples/trace.csv','publish.log'}
+SUPPLEMENTS={'THIRD-PARTY-NOTICES.txt','CHECK-ALL.cmd','CHECK-VRAM.cmd','CHECK-WINDOWS.cmd','README-RESIDENT-G1.md','README-WINDOWS.md','ПОЛНАЯ-ИНСТРУКЦИЯ.md','examples/metadata.json','examples/trace.csv','publish.log'}
 BASE=PUBLISHED|SUPPLEMENTS
 FINAL=BASE|{'BUILD.json','QA.json','core-tests-linux.log'}
 def validate_paths(root,expected):

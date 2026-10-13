@@ -18,6 +18,11 @@
           "Vortice.DXGI": "3.8.3"
         }
       },
+      "K4os.Compression.LZ4": {
+        "type": "Transitive",
+        "resolved": "1.3.8",
+        "contentHash": "LhwlPa7c1zs1OV2XadMtAWdImjLIsqFJPoRcIWAadSRn0Ri1DepK65UbWLPmt4riLqx2d40xjXRk0ogpqNtK7g=="
+      },
       "SharpGen.Runtime": {
         "type": "Transitive",
         "resolved": "2.4.2-beta",
@@ -78,8 +83,24 @@
         "resolved": "2.1.0",
         "contentHash": "KK+SjNSuKdP+zbavekubi+vaeb1Jo4k87ZF6CMkVWjr6RjJwc8peVtmgzXXDIMy4ZC3ZISyk3llY3q65ISOkBQ=="
       },
+      "ZstdSharp.Port": {
+        "type": "Transitive",
+        "resolved": "0.8.6",
+        "contentHash": "iP4jVLQoQmUjMU88g1WObiNr6YKZGvh4aOXn3yOJsHqZsflwRsxZPcIBvNXgjXO3vQKSLctXGLTpcBPLnWPS8A=="
+      },
       "elasticmem.core": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "K4os.Compression.LZ4": "[1.3.8, )",
+          "ZstdSharp.Port": "[0.8.6, )"
+        }
+      }
+    },
+    "net8.0-windows7.0/linux-x64": {
+      "System.Text.Encodings.Web": {
+        "type": "Transitive",
+        "resolved": "9.0.1",
+        "contentHash": "XkspqduP2t1e1x2vBUAD/xZ5ZDvmywuUwsmB93MvyQLospJfqtX0GsR/kU0vUL2h4kmvf777z3txV2W4NrQ9Qg=="
       }
     },
     "net8.0-windows7.0/win-x64": {
