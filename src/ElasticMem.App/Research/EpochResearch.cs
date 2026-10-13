@@ -9,22 +9,31 @@ internal static class EpochResearch
     [DllImport("psapi.dll",SetLastError=true)]static extern bool EmptyWorkingSet(IntPtr h);
     [StructLayout(LayoutKind.Sequential)]struct SystemInfo{public uint Architecture,PageSize;public IntPtr Minimum,Maximum;public UIntPtr Mask;public uint Count,ProcessorType,Granularity;public ushort Level,Revision;}
     [DllImport("kernel32.dll")]static extern void GetNativeSystemInfo(out SystemInfo info);
-    static bool[] Valid(IntPtr h,ulong[] addresses)
+    static bool[] Valid(IntPtr h,ulong[] addresses,int pid,long startTicks,string phase,int epoch,string operation,ResearchRun run,CancellationToken ct)
     {
         var result=new bool[addresses.Length];
-        for(int at=0;at<addresses.Length;at+=4096)
+        for(int at=0;at<addresses.Length;at+=1024)
         {
-            var p=addresses.Skip(at).Take(4096).Select(a=>new WS{Address=(IntPtr)(long)a}).ToArray();
-            if(!QueryWorkingSet(h,p,checked((uint)(p.Length*Marshal.SizeOf<WS>()))))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            ct.ThrowIfCancellationRequested();
+            var p=addresses.Skip(at).Take(1024).Select(a=>new WS{Address=(IntPtr)(long)a}).ToArray();
+            if(!QueryWorkingSet(h,p,checked((uint)(p.Length*Marshal.SizeOf<WS>()))))
+            {
+                int error=Marshal.GetLastWin32Error();
+                bool times=Native.GetProcessTimes(h,out var creation,out var exited,out _,out _);
+                string lifetime=!times?"unavailable":exited!=0?"exited":DateTime.FromFileTimeUtc(creation).Ticks!=startTicks?"identity_mismatch":"alive_matching";
+                string detail=$"QueryWorkingSetEx: code={error}, pid={pid}, phase={phase}, epoch={epoch}, query={operation}, batch_index={at/1024}, batch_pages={p.Length}, lifetime={lifetime}";
+                run.Log(detail);throw new System.ComponentModel.Win32Exception(error,detail);
+            }
             for(int i=0;i<p.Length;i++)result[at+i]=(p[i].Flags.ToUInt64()&1)!=0;
         }
         return result;
     }
-    static ulong[] Allocations(IntPtr h,ulong[] addresses)
+    static ulong[] Allocations(IntPtr h,ulong[] addresses,CancellationToken ct)
     {
         var result=new ulong[addresses.Length];Native.MEMORY_BASIC_INFORMATION m=default;ulong lo=0,size=0;
         for(int i=0;i<addresses.Length;i++)
         {
+            if((i&1023)==0)ct.ThrowIfCancellationRequested();
             ulong a=addresses[i];
             if(!PageMapping.Contains(lo,size,a,4096))
             {
@@ -58,7 +67,7 @@ internal static class EpochResearch
     }
     public static object Run(CodecInput[] input,bool allowTrim,int epochs,ResearchRun run,IProgress<string>? progress,CancellationToken ct,bool extended=false)
     {
-        if(!allowTrim)throw new ArgumentException("Explicit --allow-working-set-trim required; never disable pagefile/compression");if(epochs is <8 or >900)throw new ArgumentException("Epoch count8..900");var result=new List<object>();var counters=new List<string>{"pid,phase,epoch,elapsed_ms,working_set_bytes,page_fault_count,retained_after_trim,valid_at_end,observed_reacquired,trim_call_us"};
+        if(!allowTrim)throw new ArgumentException("Explicit --allow-working-set-trim required; never disable pagefile/compression");if(epochs is <8 or >900)throw new ArgumentException("Epoch count8..900");var result=new List<object>();using var counters=new StreamWriter(run.FilePath("epoch-counters.csv")){AutoFlush=true};counters.WriteLine("pid,phase,epoch,elapsed_ms,working_set_bytes,page_fault_count,retained_after_trim,valid_at_end,observed_reacquired,trim_call_us");
         foreach(var source in input.Take(extended?4:2))
         {
             ct.ThrowIfCancellationRequested();if(source.Pid<=4||source.Pid==Environment.ProcessId)throw new ArgumentException("Foreign ordinary application only");
@@ -73,7 +82,7 @@ internal static class EpochResearch
                 var addresses=extended?census.Item1:Enumerable.Range(0,Math.Min(source.Addresses.Length,1024)).Select(i=>source.Addresses[i*source.Addresses.Length/Math.Min(source.Addresses.Length,1024)]).ToArray();
                 if(addresses.Length==0)throw new IOException("No committed readable private pages");
                 if((ulong)((long)addresses.Length*epochs*4+(512L<<20))>Native.MemoryStatus().ullAvailPhys/2)throw new NotSupportedException("Epoch history would exceed half available RAM; no pressure induced");
-                var original=Allocations(h,addresses);var allKnown=original.Select(x=>x!=0).ToArray();var activity=new List<bool[]>();var knownRows=new List<bool[]>();var durations=new List<double>();var phases=new List<object>();
+                var original=Allocations(h,addresses,ct);var allKnown=original.Select(x=>x!=0).ToArray();var activity=new List<bool[]>();var knownRows=new List<bool[]>();var durations=new List<double>();var phases=new List<object>();
                 foreach(string phase in new[]{"baseline_counters","trim_counters","trim_and_residency"})
                 {
                     if(!Native.TryGetMemInfo(h,out var before))throw new IOException("Missing pre-phase counters");if(!Native.GetProcessTimes(h,out _,out _,out var kernelBefore,out var userBefore))throw new IOException("Missing pre-phase CPU times");var sw=Stopwatch.StartNew();int actual=phase=="trim_and_residency"?epochs:4;long faultsBefore=before.PageFaultCount;double trimTotal=0;
@@ -81,10 +90,10 @@ internal static class EpochResearch
                     {
                         if(extended&&Native.MemoryStatus().ullAvailPhys<512UL<<20)throw new NotSupportedException("Low free memory guard; stop rather than induce paging pressure");
                         ct.ThrowIfCancellationRequested();progress?.Report($"Г0 эпохи: PID {source.Pid} {phase} {i+1}/{actual}");double trimUs=0;bool[]? after=null;var timer=Stopwatch.StartNew();if(phase!="baseline_counters"){AutoResearch.ConfirmRenderer(h,source.Pid,p.ProcessName,source.StartTicks);long t=Stopwatch.GetTimestamp();if(!EmptyWorkingSet(h))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"EmptyWorkingSet failed");trimUs=(Stopwatch.GetTimestamp()-t)*1e6/Stopwatch.Frequency;trimTotal+=trimUs;}
-                        if(phase=="trim_and_residency")after=Valid(h,addresses);
+                        if(phase=="trim_and_residency")after=Valid(h,addresses,source.Pid,source.StartTicks,phase,i,"post_trim",run,ct);
                         int wait=Math.Max(0,1000-(int)timer.ElapsedMilliseconds);if(ct.WaitHandle.WaitOne(wait))ct.ThrowIfCancellationRequested();
-                        int retained=0,endCount=0,reacquired=0;if(after!=null){var end=Valid(h,addresses);var allocation=Allocations(h,addresses);var observed=new bool[addresses.Length];var epochKnown=new bool[addresses.Length];for(int j=0;j<observed.Length;j++){bool known=original[j]!=0&&allocation[j]==original[j]&&!after[j];epochKnown[j]=known;allKnown[j]&=known;observed[j]=known&&end[j];if(after[j])retained++;if(end[j])endCount++;if(observed[j])reacquired++;}activity.Add(observed);knownRows.Add(epochKnown);durations.Add(timer.Elapsed.TotalSeconds);}
-                        if(!Native.TryGetMemInfo(h,out var c))throw new IOException("Missing epoch counters");counters.Add(FormattableString.Invariant($"{source.Pid},{phase},{i},{sw.Elapsed.TotalMilliseconds:F3},{c.WorkingSetSize.ToUInt64()},{c.PageFaultCount},{retained},{endCount},{reacquired},{trimUs:F3}"));
+                        int retained=0,endCount=0,reacquired=0;if(after!=null){var end=Valid(h,addresses,source.Pid,source.StartTicks,phase,i,"end_epoch",run,ct);var allocation=Allocations(h,addresses,ct);var observed=new bool[addresses.Length];var epochKnown=new bool[addresses.Length];for(int j=0;j<observed.Length;j++){bool known=original[j]!=0&&allocation[j]==original[j]&&!after[j];epochKnown[j]=known;allKnown[j]&=known;observed[j]=known&&end[j];if(after[j])retained++;if(end[j])endCount++;if(observed[j])reacquired++;}activity.Add(observed);knownRows.Add(epochKnown);durations.Add(timer.Elapsed.TotalSeconds);}
+                        if(!Native.TryGetMemInfo(h,out var c))throw new IOException("Missing epoch counters");counters.WriteLine(FormattableString.Invariant($"{source.Pid},{phase},{i},{sw.Elapsed.TotalMilliseconds:F3},{c.WorkingSetSize.ToUInt64()},{c.PageFaultCount},{retained},{endCount},{reacquired},{trimUs:F3}"));
                         if(!Native.GetProcessTimes(h,out var now,out var stopped,out _,out _)||now!=creation||stopped!=0)throw new InvalidOperationException("Process exited during epochs");
                     }
                     if(!Native.TryGetMemInfo(h,out var last))throw new IOException("Missing post-phase counters");if(!Native.GetProcessTimes(h,out _,out _,out var kernelAfter,out var userAfter))throw new IOException("Missing post-phase CPU times");phases.Add(new{phase,epochs=actual,elapsed_ms=sw.Elapsed.TotalMilliseconds,fault_delta=(long)last.PageFaultCount-faultsBefore,cpu_ms=((kernelAfter-kernelBefore)+(userAfter-userBefore))/10000d,working_set_before=before.WorkingSetSize.ToUInt64(),working_set_after=last.WorkingSetSize.ToUInt64(),trim_call_total_us=trimTotal,workload_throughput_measured=false});
@@ -99,7 +108,7 @@ internal static class EpochResearch
             }
             finally{Native.CloseHandle(h);}
         }
-        File.WriteAllLines(run.FilePath("epoch-counters.csv"),counters);
+        counters.Flush();
         return new{schema="elasticmem.g0.windows_epochs.v2",status="perturbing_epoch_proxy_not_exact_trace",extended,trim_consent=true,system_settings_changed=false,processes=result,incremental_one_gib_decision="unavailable_without_counterfactual_standby_and_compressed_store",limitations=new[]{"Explicitly trims only selected same-session Chromium renderers; may stall user workload; no pagefile or MemoryCompression changes","Valid at epoch end is residency,not all touches; retained-after-trim pages excluded from model,transient return/eviction missed","Extended mode inventories committed readable private addresses; cap262144pages/process,initial universe only; new mappings not added; coverage/exclusions reported","Short mode uses prior resident snapshot; neither mode gives unique physical frames or desktop ceiling,all renderer family not heterogeneous workloads","Fixed baseline→trim→trim+query phase order; uncontrolled workload,CPU/fault counters not task throughput or causal overhead","One-second nominal epochs; query/trim time and scheduling can lengthen actual intervals; model weights measured epoch durations","Virtual allocation reuse at same address not fully detectable; no exact access order or Belady; unknown future selection bias disclosed","Scenario costs10/20/40/100us are assumptions,not measured fault costs; unknown pages excluded,coverage reported","G5 is offline matched pre-trace snapshot intersection; groups frozen on prefix; no churn or measured pagefile faults; raw epochs/pages remain local"}};
     }
 }

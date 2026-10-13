@@ -109,10 +109,13 @@ internal static class AutoResearch
                         await Step("g4",safe with{SourceRun=g1},"Held-out-process codec comparison; train PID excluded from test; counted dictionary/page mappings/reserve. No live reclaim.");
                         if(allowTrim)
                         {
-                            string epochFolder=await Step("g0-epochs",safe with{SourceRun=g1,AllowTrim=true,Epochs=extended?600:12,Extended=extended},"Explicitly consented perturbation: baseline/trim/trim+residency. Approximate reacquisition proxy; NOT exact trace or throughput calibration. No system-setting changes.");
-                            if(!BatchPolicy.Failure(steps[^1].Status)&&steps[^1].Status=="perturbing_epoch_proxy_not_exact_trace")
-                                await Step("g5",safe with{SourceRun=epochFolder},"Offline local matched epoch/snapshot input; frozen grouping,held-out suffix; no live pager or future-trained grouping.");
-                            else Skip("g5","skipped_epoch_source_unavailable","Complete verified epochs required.");
+                            foreach(var target in g1Selection.Take(extended?4:2))
+                            {
+                                string epochFolder=await Step("g0-epochs",safe with{SourceRun=g1,AllowTrim=true,Epochs=extended?600:12,Extended=extended,EpochPid=target.Pid},"PID "+target.Pid+": independent full planned trace; permission/exit failure does not stop attempts on other confirmed renderers. No settings change.");
+                                if(!BatchPolicy.Failure(steps[^1].Status)&&steps[^1].Status=="perturbing_epoch_proxy_not_exact_trace")
+                                    await Step("g5",safe with{SourceRun=epochFolder},"PID "+target.Pid+": only completed independently sealed epoch source; train prefix/held-out suffix,never partial trace.");
+                                else Skip("g5","skipped_epoch_source_unavailable","PID "+target.Pid+": complete verified planned epochs required; failed target stays failed in batch.");
+                            }
                         }
                         else {Skip("g5","skipped_no_trim_consent","No epoch source; old logs-only ZIP does not contain private traces.");Skip("g0-epochs","skipped_no_trim_consent","Enable the explicit working-set-trim checkbox for this disruptive lab; ordinary button never trims target processes.");}
                     }

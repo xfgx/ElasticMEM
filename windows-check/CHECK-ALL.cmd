@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-echo ElasticMem 0.17.0 one-click automatic checks, read-only observation 10 minutes.
+echo ElasticMem 0.17.1 one-click automatic checks, read-only observation 10 minutes.
 echo Foreign trim stays OFF; use Laboratory consent checkbox for long G0/G5.
 echo Local memory capture of up to 4 same-family renderers, 16 MiB each.
 echo No memory dumps or screenshots in ZIP; no uploads. Close other ElasticMem windows first.

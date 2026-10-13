@@ -36,6 +36,7 @@ public static class NewResearchTests
             using(var churn=JsonDocument.Parse(JsonSerializer.Serialize(ChurnBench.Run(CancellationToken.None))))Check(churn.RootElement.GetProperty("policies").GetArrayLength()==2,"own churn both blocks restored");
             string eet=Path.Combine(root,"trace.eet");EpochTraceFile.Write(eet,12,1,groupAddresses,Enumerable.Repeat(true,8).ToArray(),activity);
             var readTrace=EpochTraceFile.Read(eet);Check(readTrace.Addresses.SequenceEqual(groupAddresses)&&JsonSerializer.Serialize(readTrace.Activity)==JsonSerializer.Serialize(activity),"bitpacked trace exact");
+            Reject(()=>EpochTraceFile.Read(eet,13),"short source never relabelled full planned held-out trace");
             byte[] traceBytes=File.ReadAllBytes(eet);File.WriteAllBytes(eet,traceBytes[..^1]);Reject(()=>EpochTraceFile.Read(eet),"EET truncation rejected");
             File.WriteAllBytes(eet,traceBytes.Concat(new byte[]{0}).ToArray());Reject(()=>EpochTraceFile.Read(eet),"EET trailing bytes rejected");
             File.WriteAllBytes(eet,traceBytes);File.WriteAllBytes(eet,new byte[24]);Reject(()=>EpochTraceFile.Read(eet),"EET magic/shape rejected");

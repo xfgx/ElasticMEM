@@ -12,11 +12,12 @@ public static class EpochTraceFile
         void Bits(bool[] row){var b=new byte[(row.Length+7)/8];for(int i=0;i<row.Length;i++)if(row[i])b[i/8]|=(byte)(1<<(i%8));w.Write(b);}
         Bits(known);foreach(var row in activity)Bits(row);foreach(var row in knownRows)Bits(row);
     }
-    public static (int Pid,long Start,ulong[] Addresses,bool[] Known,bool[][] Activity,bool[][] KnownRows) Read(string path)
+    public static (int Pid,long Start,ulong[] Addresses,bool[] Known,bool[][] Activity,bool[][] KnownRows) Read(string path,int? plannedEpochs=null)
     {
         using var stream=File.OpenRead(path);using var r=new BinaryReader(stream);
         if(r.ReadInt32()!=0x32545045)throw new InvalidDataException("Epoch magic");
         int pid=r.ReadInt32();long start=r.ReadInt64();int pages=r.ReadInt32(),epochs=r.ReadInt32();
+        if(plannedEpochs.HasValue&&epochs!=plannedEpochs.Value)throw new InvalidDataException("Trace does not match full planned epoch count");
         if(pid<=4||start<=0||pages is <1 or >262144||epochs is <8 or >900||stream.Length!=24L+pages*8L+(long)((pages+7)/8)*(epochs*2+1))throw new InvalidDataException("Epoch trace bounds/length");
         var addresses=Enumerable.Range(0,pages).Select(_=>r.ReadUInt64()).ToArray();
         if(addresses.Distinct().Count()!=pages||addresses.Any(a=>a%4096!=0))throw new InvalidDataException("Epoch duplicate/unaligned address");

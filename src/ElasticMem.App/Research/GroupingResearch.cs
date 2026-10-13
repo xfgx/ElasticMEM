@@ -9,10 +9,16 @@ internal static class GroupingResearch
         using var manifest=JsonDocument.Parse(File.ReadAllText(Path.Combine(source,"manifest.json")));
         if(manifest.RootElement.GetProperty("mode").GetString()!="g0-epochs"||manifest.RootElement.GetProperty("status").GetString()!="perturbing_epoch_proxy_not_exact_trace")
             throw new ArgumentException("Successful0.17+ G0 epochs folder required");
+        int planned=manifest.RootElement.GetProperty("parameters").GetProperty("epochs").GetInt32();
+        using var sourceResult=JsonDocument.Parse(File.ReadAllText(Path.Combine(source,"result.json")));
+        int[] roster=sourceResult.RootElement.GetProperty("processes").EnumerateArray().Select(p=>p.GetProperty("pid").GetInt32()).ToArray();
+        if(roster.Length==0||roster.Distinct().Count()!=roster.Length)throw new InvalidDataException("Completed epoch PID roster");
+        var seen=new HashSet<int>();
         var results=new List<object>();
         foreach(string file in Directory.GetFiles(Path.Combine(source,"inputs"),"epochs-*.eet").Order())
         {
-            ct.ThrowIfCancellationRequested();var trace=EpochTraceFile.Read(run.CopyInput(file,Path.GetFileName(file)));
+            ct.ThrowIfCancellationRequested();var trace=EpochTraceFile.Read(run.CopyInput(file,Path.GetFileName(file)),planned);
+            if(!roster.Contains(trace.Pid)||!seen.Add(trace.Pid))throw new InvalidDataException("Trace not in independently completed PID roster");
             string inventory=Path.Combine(source,"inputs","inventory-"+trace.Pid+".json");
             string bytes=Path.Combine(source,"inputs","pages-"+trace.Pid+".bin");
             if(new FileInfo(bytes).Length>64L<<20)throw new InvalidDataException("Snapshot cap");
@@ -27,7 +33,7 @@ internal static class GroupingResearch
             results.Add(GroupingBench.Run(new(trace.Pid,trace.Start,addresses,match.Select(i=>raw.AsSpan(i*4096,4096).ToArray()).ToArray()),
                 trace.Activity.Select(a=>addresses.Select(address=>a[index[address]]).ToArray()).ToArray(),run.FilePath("inputs/g5-"+trace.Pid),ct,trace.KnownRows.Select(a=>addresses.Select(address=>a[index[address]]).ToArray()).ToArray()));
         }
-        if(results.Count==0)throw new ArgumentException("No private EET traces found; logs-only ZIP is insufficient");
+        if(results.Count==0||seen.Count!=roster.Length)throw new ArgumentException("Missing complete private EET traces; logs-only ZIP is insufficient");
         return new{status="offline_grouping_proxy_not_pager",processes=results,limitations=new[]{"Local verified epoch/snapshot input only; no new foreign reads/trim","Cohort filtered by TRAIN-known states only; unknown test windows retained as unknown; no positive gate with unknown suffix","Original snapshot can change during subsequent epochs; no semantic/lifetime atomicity guarantee"}};
     }
 }
