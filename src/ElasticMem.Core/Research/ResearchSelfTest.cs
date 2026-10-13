@@ -16,6 +16,16 @@ public static class ResearchSelfTest
         Check(!PageEligibility.Eligible(PageEligibility.Private,PageResidency.Decode(3|(1UL<<15))),"shareable excluded even with count one");
         Check(!PageEligibility.Eligible(PageEligibility.Private,PageResidency.Decode(1|(2UL<<1))),"sharecount greater than one excluded");
         Check(PageResidency.Decode(1|(7UL<<1)).ShareCount==7,"sharecount saturated value");
+        Check(PageMapping.SameAllocationRange(0x2000,4096,0x1000,0x5000,0x1000,0x2000,0x4000,0x1000),"VirtualQueryEx interior tail accepted");
+        Check(PageMapping.SameAllocationRange(0x5000,4096,0x1000,0x5000,0x1000,0x5000,4096,0x1000),"last full interior page accepted");
+        Check(PageMapping.SameAllocationRange(0x1000,4096,0x1000,0x5000,0x1000,0x1000,0x5000,0x1000),"region beginning accepted");
+        Check(!PageMapping.SameAllocationRange(0x2000,4096,0x1000,0x5000,0x1000,0x2000,0x4000,0x2000),"changed allocation excluded");
+        Check(!PageMapping.SameAllocationRange(0x2000,4096,0x1000,0x5000,0x1000,0x3000,0x3000,0x1000),"queried range excludes page");
+        Check(!PageMapping.SameAllocationRange(0x6000,4096,0x1000,0x5000,0x1000,0x6000,4096,0x1000),"original range excludes page");
+        Check(!PageMapping.Contains(0x1000,0x1800,0x2000,4096),"partial page excluded");
+        Check(!PageMapping.Contains(0x1000,0x5000,0x0000,4096),"address below range excluded");
+        Check(!PageMapping.Contains(0x1000,0,0x1000,4096),"empty region excluded");
+        Check(!PageMapping.Contains(0x1000,0x5000,0x1000,0),"empty page excluded");
         var candidates=Enumerable.Range(10,6).Select(pid=>new ResearchCandidate(pid,"chrome",pid,pid*1024,true,true,true)).ToArray();
         Check(BatchPolicy.Select(candidates,99).Length==4,"auto process cap");
         Check(BatchPolicy.Select(candidates,15).All(c=>c.Pid!=15),"auto self excluded");

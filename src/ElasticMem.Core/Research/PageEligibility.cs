@@ -15,3 +15,17 @@ public static class PageEligibility
         : state.Shareable == true || state.ShareCount > 1 ? "resident_private_shareable_or_shared" : "resident_private_exclusive";
     public static bool Eligible(uint type, PageResidency state) => Classify(type, state) == "resident_private_exclusive";
 }
+
+/// <summary>VirtualQueryEx may return a tail beginning at the requested page, not the original region base.
+/// Match allocation base and containment, never equality of returned region bases.
+/// This does not detect free/reallocation at the same address between calls.</summary>
+public static class PageMapping
+{
+    public static bool Contains(ulong regionBase,ulong regionSize,ulong pageAddress,ulong bytes)
+        => bytes>0 && regionSize>0 && pageAddress>=regionBase && pageAddress-regionBase<regionSize
+           && bytes<=regionSize-(pageAddress-regionBase);
+    public static bool SameAllocationRange(ulong pageAddress,ulong bytes,ulong originalBase,ulong originalSize,
+        ulong originalAllocation,ulong queriedBase,ulong queriedSize,ulong queriedAllocation)
+        => originalAllocation==queriedAllocation && Contains(originalBase,originalSize,pageAddress,bytes)
+           && Contains(queriedBase,queriedSize,pageAddress,bytes);
+}
