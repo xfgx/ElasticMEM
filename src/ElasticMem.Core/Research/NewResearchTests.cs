@@ -50,6 +50,6 @@ public static class NewResearchTests
             using(var pending=new CancellationTokenSource()){pending.Cancel();bool stopped=false;try{CodecBench.Run(inputs,root,null,pending.Token);}catch(OperationCanceledException){stopped=true;}Check(stopped,"cancelled codec run rejected");}
         }
         finally{Directory.Delete(root,true);}
-        return checks;
+        checks+=EpochNewTests.Run();return checks;
     }
 }

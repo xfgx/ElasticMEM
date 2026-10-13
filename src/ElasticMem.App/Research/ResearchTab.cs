@@ -38,6 +38,7 @@ internal sealed class ResearchTab:TabPage
         ("g0-sample","Г0 · наблюдение процессов Windows","Счётчики рабочего набора, private bytes, CPU и page faults. Это выборочные наблюдения, НЕ полная трасса обращений и НЕ потолок экономии."),
         ("g0-model","Г0 · модель по полной трассе","Импорт exact/synthetic событий с map/read/write/unmap. Метрика — средние байты модели gap−e−r, не верхняя граница любого механизма. Полный сборщик трассы пока внешний."),
         ("g0-epochs","Г0 · эпохи с вмешательством","Требует отдельного согласия EmptyWorkingSet. Базовые счётчики/trim/trim+опрос; приближённая модель повторного появления в WS, НЕ точная трасса/Belady. Не отключает системное сжатие или pagefile."),
+        ("epochs-replay","Г0/Г5 · локальный пересчёт карт","Папка успешного Г0-epochs или auto-summary; пусто — последняя локальная партия. Без чтения процессов/trim. Длинные пороги, всплески и каузальные блоки1/4/8/16. Старый ZIP без EET недостаточен."),
         ("g5","Г5 · упаковка по совместному доступу","Вход — локальная папка успешного Г0-epochs 0.17+. Карты/снимки остаются локально. Train-prefix/test-suffix, соседство/coaccess/content; не live-пейджер."),
         ("g4-churn","Г4 · собственный churn-контроль","Синтетические alloc/free/write собственных 64 страниц. Восстановление живых данных, dead slots и перепаковка; не churn чужого процесса."),
         ("disk-qd1","Диск · QD1 без GPU","Свой временный файл 32 МиБ, unbuffered чтение 4/64/256 КиБ, проверки generation/offset. НЕ задержка pagefile и НЕ подтверждение NVMe."),
@@ -61,6 +62,8 @@ internal sealed class ResearchTab:TabPage
         var help=new Button{Text="Полная инструкция",AutoSize=true};help.Click+=(_,_)=>ResearchHelp.Show(FindForm()!);
         _source.PlaceholderText="Папка Г1 для Г0/Г4; папка Г0-epochs для Г5";
         _auto.Click+=async(_,_)=>await StartAutomatic();
+        var replay=new Button{Text="Пересчитать последнюю партию (без trim)",AutoSize=true};replay.Click+=async(_,_)=>{if(IsRunning)return;_source.Text="";_mode.SelectedIndex=Array.FindIndex(Modes,m=>m.Key=="epochs-replay");await Run();};_config.Add(replay);
+        stack.Add(Ui.Row(replay));
         stack.Add(Ui.Row(_auto,help)).Add(Ui.Hint("Нажатие «Проверить всё» — согласие на локальное чтение до 64 МиБ памяти выбранных рендереров Chrome/Edge/Steam. Агент остановится; ZIP без дампов создаётся автоматически. Отправки по сети нет."));
         stack.Add(Ui.Row(_allowTrim)).Add(Ui.Row(_extended));_config.Add(_allowTrim);_config.Add(_extended);
         stack.Add(Ui.Hint("Расширенный режим: наблюдение 10 минут; с trim — ещё ≥10 минут на каждый из 2–4 рендереров. Cap ограничивает опрос, НЕ действие trim. Настройки pagefile/MemoryCompression не меняются."));
@@ -85,7 +88,7 @@ internal sealed class ResearchTab:TabPage
     void UpdateMode()
     {
         string key=Modes[_mode.SelectedIndex].Key;_hint.Text=Modes[_mode.SelectedIndex].Hint;
-        foreach(var row in _options)row.Value.Visible=row.Key switch{"pids"=>key is "g0-sample" or "g1","seconds"=>key=="g0-sample","limit"=>key=="g1","trace" or "costs"=>key=="g0-model","records"=>key=="g2","gpu"=>key is "g3" or "g3-dma","disk"=>key is "g3" or "disk-qd1","source"=>key is "g4" or "g0-epochs" or "g5",_=>false};
+        foreach(var row in _options)row.Value.Visible=row.Key switch{"pids"=>key is "g0-sample" or "g1","seconds"=>key=="g0-sample","limit"=>key=="g1","trace" or "costs"=>key=="g0-model","records"=>key=="g2","gpu"=>key is "g3" or "g3-dma","disk"=>key is "g3" or "disk-qd1","source"=>key is "g4" or "g0-epochs" or "g5" or "epochs-replay",_=>false};
         Parent?.PerformLayout();Controls[0].PerformLayout();
     }
     internal ResearchOptions Options()=>new(_pids.Text.Split(',',StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries).Select(int.Parse).Distinct().ToArray(),(int)_seconds.Value,(int)_limit.Value,(int)_records.Value,(int)_iterations.Value,(int)_pool.Value,(int)_adapter.Value,_scratch.Text,_negative.Checked,_trace.Text,_metadata.Text,(double)_eviction.Value,(double)_recovery.Value,(double)_maxFault.Value,SourceRun:_source.Text,AllowTrim:_allowTrim.Checked,Epochs:_extended.Checked?600:12,Extended:_extended.Checked);
@@ -104,7 +107,10 @@ internal sealed class ResearchTab:TabPage
         if(mode=="g1"&&MessageBox.Show(this,"Снимки могут содержать пароли, переписку и другие личные данные. Они остаются локально; по умолчанию не попадают в ZIP логов. Не выбирайте игры с античитом. В Г1 — максимум 4 процесса.\n\nПродолжить чтение памяти выбранных PID?","Г1: явное согласие",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
         _batch=null;_cts=new();_completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);BusyChanged?.Invoke(true);_run.Enabled=false;_auto.Enabled=false;_cancel.Enabled=true;_mode.Enabled=false;foreach(var c in _config)c.Enabled=false;
         try{var progress=new Progress<string>(s=>{if(!IsDisposed)_status.Text=s;});
-            _last=await Task.Run(()=>ResearchJobs.Execute(mode,options,progress,_cts.Token));_output.Text=File.ReadAllText(Path.Combine(_last,File.Exists(Path.Combine(_last,"result.json"))?"result.json":"report.md"));_status.Text="Сохранено: "+Path.GetFileName(_last);}
+            string? replayBatch=mode=="epochs-replay"?Path.Combine(AppSettings.Dir,"research-batches",DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")+"-replay"):null;
+            _last=await Task.Run(()=>ResearchJobs.Execute(mode,options,progress,_cts.Token,replayBatch==null?null:Path.Combine(replayBatch,"runs")));
+            if(replayBatch!=null){string zip=Path.Combine(replayBatch,"ElasticMem-logs-"+Path.GetFileName(replayBatch)+".zip");ResearchRun.ExportLogs(Path.Combine(replayBatch,"runs"),zip,false);Open(replayBatch);}
+            _output.Text=File.ReadAllText(Path.Combine(_last,File.Exists(Path.Combine(_last,"result.json"))?"result.json":"report.md"));_status.Text="Сохранено: "+Path.GetFileName(_last);}
         catch(Exception ex){_output.Text=ex.ToString();}
         finally{_cts.Dispose();_cts=null;BusyChanged?.Invoke(false);_completion?.TrySetResult();_run.Enabled=true;_auto.Enabled=true;_cancel.Enabled=false;_mode.Enabled=true;foreach(var c in _config)c.Enabled=true;}
     }

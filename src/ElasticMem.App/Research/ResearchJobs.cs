@@ -44,6 +44,7 @@ internal static class ResearchJobs
                 case "g0-epochs":
                     if(!options.AllowTrim)throw new ArgumentException("Explicit trim consent required");result=EpochResearch.Run(SnapshotInputs.Load(options.SourceRun,run,ct,options.EpochPid),true,options.Epochs,run,progress,ct,options.Extended);status="perturbing_epoch_proxy_not_exact_trace";break;
                 case "g3-dma":result=GpuResearch.RunDma(run,options.Adapter,options.Iterations,options.PoolMiB,progress,ct);status="dma_microbenchmark_not_pager";break;
+                case "epochs-replay":result=EpochReplay.Run(options.SourceRun,run,progress,ct);status="offline_epoch_replay_not_physical_ram";break;
                 case "g5":result=GroupingResearch.Run(options.SourceRun,run,ct);status="offline_grouping_proxy_not_pager";break;
                 case "disk-qd1":result=GpuResearch.RunDisk(run,options.Scratch,options.Iterations,ct);status="unbuffered_file_qd1_not_pagefile_fault";break;
                 case "g4-churn":result=ChurnBench.Run(ct);status="own_synthetic_churn_not_renderer_evidence";break;

@@ -113,7 +113,10 @@ internal static class AutoResearch
                             {
                                 string epochFolder=await Step("g0-epochs",safe with{SourceRun=g1,AllowTrim=true,Epochs=extended?600:12,Extended=extended,EpochPid=target.Pid},"PID "+target.Pid+": independent full planned trace; permission/exit failure does not stop attempts on other confirmed renderers. No settings change.");
                                 if(!BatchPolicy.Failure(steps[^1].Status)&&steps[^1].Status=="perturbing_epoch_proxy_not_exact_trace")
+                                    {
                                     await Step("g5",safe with{SourceRun=epochFolder},"PID "+target.Pid+": only completed independently sealed epoch source; train prefix/held-out suffix,never partial trace.");
+                                    await Step("epochs-replay",safe with{SourceRun=epochFolder},"Long T1..256; causal cold partner blocks1/4/8/16; local input only,not RAM ceiling/GC attribution.");
+                                }
                                 else Skip("g5","skipped_epoch_source_unavailable","PID "+target.Pid+": complete verified planned epochs required; failed target stays failed in batch.");
                             }
                         }

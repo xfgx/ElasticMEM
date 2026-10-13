@@ -16,7 +16,7 @@ internal static class OneClickReport
             {
             using var manifest=JsonDocument.Parse(File.ReadAllText(Path.Combine(folder,"manifest.json")));
             string? mode=manifest.RootElement.GetProperty("mode").GetString();
-            string? expected=mode switch{"g0-calibration"=>"controlled_own_child_workload_only","g0-epochs"=>"perturbing_epoch_proxy_not_exact_trace","g4"=>"offline_codec_comparison_not_live_reclaim","g3-dma"=>"dma_microbenchmark_not_pager","disk-qd1"=>"unbuffered_file_qd1_not_pagefile_fault",_=>null};
+            string? expected=mode switch{"epochs-replay"=>"offline_epoch_replay_not_physical_ram","g0-calibration"=>"controlled_own_child_workload_only","g0-epochs"=>"perturbing_epoch_proxy_not_exact_trace","g4"=>"offline_codec_comparison_not_live_reclaim","g3-dma"=>"dma_microbenchmark_not_pager","disk-qd1"=>"unbuffered_file_qd1_not_pagefile_fault",_=>null};
             if(expected==null)continue;
             string? status=manifest.RootElement.GetProperty("status").GetString();
             if(status!=expected){lines.Add(mode+": "+status+"; числа не считаются валидными.");continue;}
@@ -24,10 +24,13 @@ internal static class OneClickReport
             string file=Path.Combine(folder,"result.json");if(!File.Exists(file))throw new InvalidDataException("Successful run has no result");
             using var doc=JsonDocument.Parse(File.ReadAllText(file));var d=doc.RootElement;
             if(!d.TryGetProperty("schema",out var schema))throw new InvalidDataException("Successful result schema missing");
-            string? expectedSchema=mode switch{"g0-calibration"=>"elasticmem.g0.calibration.v2","g0-epochs"=>"elasticmem.g0.windows_epochs.v2","g4"=>"elasticmem.g4.codecs.v1","g3-dma"=>"elasticmem.g3.dma.v1","disk-qd1"=>"elasticmem.disk.qd1.v1",_=>null};
+            string? expectedSchema=mode switch{"epochs-replay"=>"elasticmem.epochs.replay.v1","g0-calibration"=>"elasticmem.g0.calibration.v2","g0-epochs"=>"elasticmem.g0.windows_epochs.v2","g4"=>"elasticmem.g4.codecs.v1","g3-dma"=>"elasticmem.g3.dma.v1","disk-qd1"=>"elasticmem.disk.qd1.v1",_=>null};
             if(schema.GetString()!=expectedSchema)throw new InvalidDataException("Successful result schema mismatch");
             switch(schema.GetString())
             {
+                case "elasticmem.epochs.replay.v1":
+                    foreach(var p in d.GetProperty("processes").EnumerateArray()){var diag=p.GetProperty("diagnostic");lines.Add("Офлайн PID "+p.GetProperty("pid")+": baseline="+p.GetProperty("baseline_residency_available")+"; burst max="+diag.GetProperty("burst_max_pages")+"; GC/Belady/дополнительная RAM unavailable. Полные T1..256 и causal1/4/8/16 — result.json.");}
+                    break;
                 case "elasticmem.g0.calibration.v2":
                     foreach(string phase in new[]{"trim","trim_query"})
                     {
