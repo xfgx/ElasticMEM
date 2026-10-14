@@ -9,7 +9,8 @@ using ElasticMem.Core.Research;
 namespace ElasticMem.App.Backend;
 internal sealed class BackendController
 {
-    readonly SemaphoreSlim gate=new(1,1);
+    readonly SemaphoreSlim gate=new(1,1);string selectedProfileId="";
+    public void PinProfile(string id){if(Catalog().ActiveId!=id)throw new InvalidOperationException("Profile changed in another process; select again");selectedProfileId=id;}
     public string PrivateFolder {get;}=Path.Combine(AppSettings.Dir,"backend-private");
     public string ConfigPath=>Path.Combine(ProtectedFolder,WindowsIdentity.GetCurrent().User!.Value+".json");
     string CredentialFor(BackendProfile p)=>Path.Combine(PrivateFolder,VmCredentialScope.FileName(p.VmId));
@@ -35,18 +36,30 @@ internal sealed class BackendController
         if(!privateUser)acl.AddAccessRule(new FileSystemAccessRule(self,FileSystemRights.ReadAndExecute,InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Allow));
         acl.SetOwner(privateUser?self:admins);new DirectoryInfo(path).SetAccessControl(acl);
     }
-    public BackendProfile? Load()
+    string CatalogPath=>Path.Combine(ProtectedFolder,WindowsIdentity.GetCurrent().User!.Value+".catalog.json");
+    public VmProfileCatalog Catalog()
     {
-        NotReparse(ConfigPath);
-        if(!File.Exists(ConfigPath))return null;
-        var profile=JsonSerializer.Deserialize<BackendProfile>(File.ReadAllText(ConfigPath));profile?.Validate();return profile;
+        NotReparse(CatalogPath);
+        if(File.Exists(CatalogPath)){var c=JsonSerializer.Deserialize<VmProfileCatalog>(File.ReadAllText(CatalogPath))??throw new InvalidDataException("Empty catalog");c.Validate();return c;}
+        NotReparse(ConfigPath);if(!File.Exists(ConfigPath))return VmProfileCatalog.Empty;
+        var legacy=JsonSerializer.Deserialize<BackendProfile>(File.ReadAllText(ConfigPath))??throw new InvalidDataException("Legacy profile invalid");legacy.Validate();
+        // Deterministic import ID, without mutating files during read-only load.
+        string id=new Guid(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(ConfigPath)).AsSpan(0,16)).ToString("D");
+        return new(id,new[]{new VmProfileEntry(id,legacy)});
     }
-    public void Save(BackendProfile profile)
+    public BackendProfile? Load(){var c=Catalog();if(selectedProfileId!=""&&c.ActiveId!=selectedProfileId)throw new InvalidOperationException("Active profile changed elsewhere; no VM operation performed. Select a profile again.");return c.Active;}
+    VmProfileCatalog MutateCatalog(Func<VmProfileCatalog,VmProfileCatalog> mutate)
     {
-        if(!Admin)throw new InvalidOperationException("Run ElasticMem as Administrator for Hyper-V control. No automatic elevation performed.");
-        profile.Validate();ProtectDirectory(ProtectedFolder,false);ProtectDirectory(PrivateFolder,true);
-        NotReparse(ConfigPath);File.WriteAllText(ConfigPath,JsonSerializer.Serialize(profile));
+        if(!Admin)throw new InvalidOperationException("Run ElasticMem as Administrator to save protected backend profiles. No automatic elevation.");
+        ProtectDirectory(ProtectedFolder,false);ProtectDirectory(PrivateFolder,true);NotReparse(CatalogPath);
+        string lockPath=Path.Combine(ProtectedFolder,WindowsIdentity.GetCurrent().User!.Value+".lock");NotReparse(lockPath);using var lease=File.Open(lockPath,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
+        var catalog=mutate(Catalog());catalog.Validate();
+        string tmp=Path.Combine(ProtectedFolder,"catalog-"+Guid.NewGuid().ToString("N")+".tmp");
+        try{File.WriteAllText(tmp,JsonSerializer.Serialize(catalog));File.Move(tmp,CatalogPath,true);return catalog;}finally{if(File.Exists(tmp))File.Delete(tmp);}
     }
+    public void Save(BackendProfile profile){var updated=MutateCatalog(c=>{if(selectedProfileId!=""&&c.ActiveId!=selectedProfileId)throw new InvalidOperationException("Profile changed elsewhere; save rejected");return c.Update(profile);});selectedProfileId=updated.ActiveId;}
+    public void NewProfile(BackendProfile profile){selectedProfileId=MutateCatalog(c=>c.Add(profile)).ActiveId;}
+    public void SelectProfile(string id){selectedProfileId=MutateCatalog(c=>c.Select(id)).ActiveId;}
     string PrepareWorker()
     {
         if(!Admin)throw new InvalidOperationException("HOST_ADMIN_REQUIRED");
@@ -64,7 +77,12 @@ internal sealed class BackendController
         {
             using var operationLock=File.Open(Path.Combine(ProtectedFolder,WindowsIdentity.GetCurrent().User!.Value+".lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
             var profile=Load()??throw new InvalidOperationException("Save backend profile first");profile.Validate();
-            string script=PrepareWorker();
+            if(profile.BackendKind==VmBackendKind.Sys)
+            {
+                if(operation is not("Probe" or "Status"))VmBackendPolicy.RequireHyperV(profile.BackendKind);
+                var sys=await Task.Run(()=>SysBackend.Probe(profile));Append(new{schema="elasticmem.sys.backend.event.v1",utc=DateTime.UtcNow,operation,result=sys});return sys;
+            }
+            VmBackendPolicy.RequireHyperV(profile.BackendKind);string script=PrepareWorker();
             requestConfig=Path.Combine(ProtectedFolder,"request-"+Guid.NewGuid().ToString("N")+".json");
             File.WriteAllText(requestConfig,JsonSerializer.Serialize(profile),new UTF8Encoding(false));
             var start=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe")){UseShellExecute=false,CreateNoWindow=operation!="SaveCredential",RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
@@ -91,6 +109,7 @@ internal sealed class BackendController
     }
     public async Task<JsonElement> RunCreation(string operation,VmCreationPlan? plan=null)
     {
+        VmBackendPolicy.RequireHyperV((Load()??throw new InvalidOperationException("Create/select a backend profile first")).BackendKind);
         if(operation is not("HostInfo" or "CreateVm"))throw new ArgumentException("Creation operation outside allowlist");
         if(operation=="CreateVm")(plan??throw new ArgumentNullException(nameof(plan))).Validate();
         await gate.WaitAsync();string? request=null;
@@ -100,10 +119,11 @@ internal sealed class BackendController
             ProtectDirectory(ProtectedFolder,false);ProtectDirectory(PrivateFolder,true);
             string lockPath=Path.Combine(ProtectedFolder,WindowsIdentity.GetCurrent().User!.Value+".lock");NotReparse(lockPath);
             using var lease=File.Open(lockPath,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
+            VmBackendPolicy.RequireHyperV((Load()??throw new InvalidOperationException("Profile missing")).BackendKind);
             using var resource=Assembly.GetExecutingAssembly().GetManifestResourceStream("ElasticMem.Backend.CreateVm")??throw new IOException("Creation resource missing");
             using var reader=new StreamReader(resource);string script=reader.ReadToEnd();string worker=Path.Combine(ProtectedFolder,"CreateVm.ps1");NotReparse(worker);
             File.WriteAllText(worker,script,new UTF8Encoding(true));if(File.ReadAllText(worker)!=script)throw new IOException("Creator integrity check failed");
-            request=Path.Combine(ProtectedFolder,"create-"+Guid.NewGuid().ToString("N")+".json");File.WriteAllText(request,JsonSerializer.Serialize((object?)plan??new{}),new UTF8Encoding(false));
+            request=Path.Combine(ProtectedFolder,"create-"+Guid.NewGuid().ToString("N")+".json");File.WriteAllText(request,JsonSerializer.Serialize((object?)plan??new{BackendKind=VmBackendKind.HyperV}),new UTF8Encoding(false));
             var start=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe")){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
             foreach(var a in new[]{"-NoLogo","-NoProfile","-File",worker,"-Operation",operation,"-ConfigPath",request})start.ArgumentList.Add(a);
             using var child=Process.Start(start)??throw new IOException("Creator start failed");var stdout=ReadBounded(child.StandardOutput,256*1024);var stderr=ReadBounded(child.StandardError,64*1024);
@@ -129,7 +149,7 @@ internal sealed class BackendController
     }
     public void LaunchRemoteApp(string app,JsonElement verifiedStatus)
     {
-        var p=Load()??throw new InvalidOperationException("Pair a VM first");
+        var p=Load()??throw new InvalidOperationException("Pair a VM first");VmBackendPolicy.RequireHyperV(p.BackendKind);
         if(verifiedStatus.GetProperty("vm_id").GetString()!=p.VmId||verifiedStatus.GetProperty("vm_state").GetString()!="Running"||!verifiedStatus.GetProperty("rdp_target_matches_vm").GetBoolean())throw new InvalidOperationException("RDP endpoint not verified against this running guest. Fix DNS/network/profile, then refresh.");
         string data=p.RdpFile(app);string file=Path.Combine(PrivateFolder,BackendProfile.Alias(app)+".rdp");NotReparse(file);File.WriteAllText(file,data,Encoding.Unicode);
         var start=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"mstsc.exe")){UseShellExecute=false};start.ArgumentList.Add(file);Process.Start(start);
@@ -137,11 +157,11 @@ internal sealed class BackendController
     }
     public string Export(JsonElement? baseline,JsonElement? current)
     {
-        string root=Path.Combine(AppSettings.Dir,"backend-reports");using var run=new ResearchRun(root,"backend-monitor",Updater.Current.ToString(),ResearchJobsCommit(),new{scope="host orchestration / guest Windows compression / Hyper-V DM",custom_driver_used=false});
+        string root=Path.Combine(AppSettings.Dir,"backend-reports");using var run=new ResearchRun(root,"backend-monitor",Updater.Current.ToString(),ResearchJobsCommit(),new{scope="backend status only; active type is explicit",backend_type=(int?)Load()?.BackendKind,custom_vm_pager_complete=false});
         if(current.HasValue)run.WriteJson("result.json",current.Value);else run.WriteJson("result.json",new{status="no_backend_measurement",physical_ram_saved_bytes=(long?)null});
         if(baseline.HasValue&&current.HasValue)try{run.WriteJson("memory-comparison.json",BackendMeasurements.Compare(baseline.Value,current.Value));}catch{run.Log("Baseline identity/boot/state invalid; no comparison produced.");}
         if(File.Exists(LogPath)&&new FileInfo(LogPath).Length<=8L*1024*1024)File.Copy(LogPath,run.FilePath("backend-events.jsonl"));
-        run.Seal("backend_observation_not_compression_causal_proof","Guest processes live in the paired VM. No custom driver pager implemented; no per-process unique physical RAM savings claim.");
+        run.Seal("backend_observation_not_compression_causal_proof","Type1 status is a SYS store probe, NOT a running VM. Type2 guest observations are Hyper-V/Windows compression, NOT our SYS pager. No physical RAM savings claim.");
         ResearchRun.Verify(run.DirectoryPath);return ResearchRun.ExportLogs(root,Path.Combine(AppSettings.Dir,"ElasticMem-backend-logs-"+DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")+".zip"),false);
     }
     static string ResearchJobsCommit()=>Assembly.GetEntryAssembly()?.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(x=>x.Key=="CodeCommit")?.Value??"unknown";

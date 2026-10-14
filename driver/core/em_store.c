@@ -13,11 +13,24 @@ EM_RESULT em_init(EM_STORE *s, EM_OPS ops, uint64_t quota) {
     memset(s,0,sizeof(*s)); s->ops=ops; s->quota=quota; s->mode=EM_MODE_XPRESS;
     s->entries=(EM_NODE **)ops.alloc(ops.context,EM_TABLE_BYTES);
     if(!s->entries)return EM_NO_MEMORY;
-    memset(s->entries,0,EM_TABLE_BYTES);s->allocation=EM_TABLE_BYTES;return EM_OK;
+    memset(s->entries,0,EM_TABLE_BYTES);s->allocation=EM_TABLE_BYTES;s->capacity=EM_MAX_PAGES;return EM_OK;
+}
+EM_RESULT em_resize_empty(EM_STORE *s,uint32_t capacity,uint64_t quota) {
+    EM_NODE **table;size_t bytes,oldBytes;
+    if(!s || !s->entries || s->pages || !capacity || capacity>EM_MAX_STORE_PAGES || quota>EM_PAGER_MAX_SESSION_QUOTA)return EM_INVALID;
+    bytes=(size_t)capacity*sizeof(EM_NODE *);oldBytes=(size_t)s->capacity*sizeof(EM_NODE *);
+    if(quota<bytes)return EM_INVALID;
+    if(capacity==s->capacity){s->quota=quota;return EM_OK;}
+    /* Allocate before freeing; global allocator includes both tables transiently. */
+    table=(EM_NODE **)s->ops.alloc(s->ops.context,bytes);if(!table)return EM_NO_MEMORY;
+    memset(table,0,bytes);em_wipe(s->entries,oldBytes);s->ops.free(s->ops.context,s->entries,oldBytes);
+    s->entries=table;s->capacity=capacity;s->allocation=bytes;s->quota=quota;
+    /* Keep generation/counters, so reset+resize cannot resurrect an old receipt. */
+    return EM_OK;
 }
 static EM_RESULT em_put_internal(EM_STORE *s,uint32_t key,const uint8_t *page,size_t len,uint8_t *scratch,int compressed_only,EM_PAGER_RECEIPT *receipt) {
     EM_NODE *old,*node;uint32_t size=EM_PAGE_BYTES,raw=1;size_t bytes,oldBytes;
-    if(!s || !s->entries || key>=EM_MAX_PAGES || !page || !scratch || len!=EM_PAGE_BYTES || page==scratch)return EM_INVALID;
+    if(!s || !s->entries || key>=s->capacity || !page || !scratch || len!=EM_PAGE_BYTES || page==scratch)return EM_INVALID;
     if(s->next_generation==UINT64_MAX)return EM_QUOTA; /* never wrap / re-use stale tokens */
     old=s->entries[key];oldBytes=old?em_node_bytes(old):0;
     if(s->mode==EM_MODE_XPRESS && s->ops.encode(s->ops.context,page,scratch,&size) && size>0 && size<EM_PAGE_BYTES)raw=0;
@@ -47,7 +60,7 @@ EM_RESULT em_put_compressed(EM_STORE *s,uint32_t key,const uint8_t *page,size_t 
 }
 EM_RESULT em_get(EM_STORE *s,uint32_t key,uint8_t *page,size_t len) {
     EM_NODE *node;uint32_t restored=0;
-    if(!s || !s->entries || !page || len!=EM_PAGE_BYTES || key>=EM_MAX_PAGES)return EM_INVALID;
+    if(!s || !s->entries || !page || len!=EM_PAGE_BYTES || key>=s->capacity)return EM_INVALID;
     memset(page,0,EM_PAGE_BYTES);node=s->entries[key];if(!node)return EM_MISSING;
     if(node->raw){if(node->size!=EM_PAGE_BYTES)return EM_CORRUPT;memcpy(page,node->data,EM_PAGE_BYTES);}
     else if(node->size==0 || node->size>=EM_PAGE_BYTES || !s->ops.decode(s->ops.context,node->data,node->size,page,&restored) || restored!=EM_PAGE_BYTES){em_wipe(page,EM_PAGE_BYTES);return EM_CORRUPT;}
@@ -56,14 +69,14 @@ EM_RESULT em_get(EM_STORE *s,uint32_t key,uint8_t *page,size_t len) {
 }
 EM_RESULT em_delete(EM_STORE *s,uint32_t key) {
     EM_NODE *n;size_t bytes;
-    if(!s || !s->entries || key>=EM_MAX_PAGES)return EM_INVALID;
+    if(!s || !s->entries || key>=s->capacity)return EM_INVALID;
     n=s->entries[key];if(!n)return EM_MISSING;
     bytes=em_node_bytes(n);s->entries[key]=NULL;s->pages--;s->allocation-=bytes;s->payload-=n->size;s->deletes++;
     if(n->raw)s->raw_pages--;else s->compressed_pages--;
     em_wipe(n,bytes);s->ops.free(s->ops.context,n,bytes);return EM_OK;
 }
 static EM_RESULT em_version(EM_STORE *s,uint32_t key,uint64_t generation) {
-    if(!s || !s->entries || key>=EM_MAX_PAGES || !generation)return EM_INVALID;
+    if(!s || !s->entries || key>=s->capacity || !generation)return EM_INVALID;
     if(!s->entries[key])return EM_MISSING;
     return s->entries[key]->generation==generation?EM_OK:EM_STALE;
 }
@@ -77,9 +90,9 @@ EM_RESULT em_delete_versioned(EM_STORE *s,uint32_t key,uint64_t generation) {
     EM_RESULT result=em_version(s,key,generation);
     return result==EM_OK?em_delete(s,key):result;
 }
-void em_reset(EM_STORE *s) {uint32_t i;if(!s || !s->entries)return;for(i=0;i<EM_MAX_PAGES;i++)if(s->entries[i]) (void)em_delete(s,i);}
+void em_reset(EM_STORE *s) {uint32_t i;if(!s || !s->entries)return;for(i=0;i<s->capacity;i++)if(s->entries[i]) (void)em_delete(s,i);}
 void em_close(EM_STORE *s) {
     if(!s)return;
-    if(s->entries){em_reset(s);em_wipe(s->entries,EM_TABLE_BYTES);s->ops.free(s->ops.context,s->entries,EM_TABLE_BYTES);}
+    if(s->entries){em_reset(s);em_wipe(s->entries,(size_t)s->capacity*sizeof(EM_NODE *));s->ops.free(s->ops.context,s->entries,(size_t)s->capacity*sizeof(EM_NODE *));}
     em_wipe(s,sizeof(*s));
 }

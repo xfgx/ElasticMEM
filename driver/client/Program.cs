@@ -1,11 +1,11 @@
 using System.Text.Json;
 using ElasticMem.DriverClient;
 if(!OperatingSystem.IsWindows()){Console.Error.WriteLine("Windows 11 x64 signed KMDF driver and elevated client required.");return 2;}
-if(args.Length==0 || args[0] is not("info" or "smoke" or "pager-smoke")){Console.Error.WriteLine("Usage: ElasticMem.DriverClient info | smoke [output.json] | pager-smoke [output.json]");return 2;}
+if(args.Length==0 || args[0] is not("info" or "smoke" or "pager-smoke" or "capabilities")){Console.Error.WriteLine("Usage: ElasticMem.DriverClient info | capabilities | smoke [output.json] | pager-smoke [output.json]");return 2;}
 try
 {
     object result;
-    if(args[0]=="info"){using var store=new KernelPageStore();result=store.Stats();}
+    if(args[0] is "info" or "capabilities"){using var store=new KernelPageStore();result=args[0]=="info"?(object)store.Stats():store.Capabilities();}
     else result=args[0]=="pager-smoke"?PagerSmoke.Run():KernelSmoke.Run();
     string json=JsonSerializer.Serialize(result,new JsonSerializerOptions{WriteIndented=true,PropertyNamingPolicy=JsonNamingPolicy.SnakeCaseLower});
     if(args.Length>1)File.WriteAllText(args[1],json);else Console.WriteLine(json);return 0;

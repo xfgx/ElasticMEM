@@ -8,7 +8,8 @@ namespace ElasticMem.App.Backend;
 // It does not open vmwp, Hyper-V managed VM memory, another PID, or guest process addresses.
 internal sealed class SysVmStore:IVmCompressedStore,IDisposable
 {
-    readonly KernelPageStore store=new(KernelPageStore.StoreMode.Xpress);
+    readonly KernelPageStore store;
+    public SysVmStore(uint pages=4096,ulong quotaBytes=16UL*1024*1024){store=new(KernelPageStore.StoreMode.Xpress);try{store.ConfigurePager(pages,quotaBytes);}catch{store.Dispose();throw;}}
     public VmStoreReceipt Put(uint key,byte[] bytes){var r=store.PutCompressed(key,bytes);return new(r.Generation,r.PayloadBytes,r.AllocationBytes);}
     public byte[] Get(uint key,ulong generation)=>store.GetVersioned(key,generation);
     public bool Delete(uint key,ulong generation)=>store.DeleteVersioned(key,generation);

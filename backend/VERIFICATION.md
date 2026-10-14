@@ -1,3 +1,7 @@
+#0.30 update
+
+Driver source changed: capabilities/empty-store resize. New Windows SYS build/native execution NOT performed. Per-profile type1 SYS / type2 Hyper-V guards and catalog added; type1 is not yet a bootable Windows VM. Exact portable test logs in QA.json. Previous native reports are historical only.
+
 # 0.29 VM creation preview
 
 Added Hyper-V creation worker/wizard and38 portable creation contract checks. PowerShell5-script parser syntax only. Native Hyper-V creation, vTPM/SecureBoot, boot and Windows GUI NOT executed. No SYS/driver changes since0.28; previous driver reports remain historical. Read AUTO-VM-029.md and current QA.json.

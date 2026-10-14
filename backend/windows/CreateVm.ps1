@@ -23,6 +23,7 @@ function Journal([string]$state){
 try{
  $who=[Security.Principal.WindowsIdentity]::GetCurrent()
  if(-not([Security.Principal.WindowsPrincipal]::new($who)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){Fail 'HOST_ADMIN_REQUIRED'}
+ if($ConfigPath){$request=Get-Content -LiteralPath $ConfigPath -Encoding UTF8 -Raw|ConvertFrom-Json;if($null -ne $request.BackendKind -and [int]$request.BackendKind -ne 2){Fail 'NOT_HYPERV_BACKEND_NO_FALLBACK'}}
  if(-not(Get-Module -ListAvailable Hyper-V)){Fail 'HYPERV_MISSING_NO_HOST_FEATURES_CHANGED'}
  Import-Module Hyper-V
  $service=Get-Service vmms;if($service.Status -ne 'Running'){Fail 'VMMS_NOT_RUNNING_NO_SERVICE_SETTINGS_CHANGED'}

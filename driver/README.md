@@ -1,3 +1,7 @@
+# SYS0.30 source update — native binary NOT built/tested
+
+Capabilities negotiation, bounded empty-store resize (up to1,048,576 page keys,32MiB session max,64MiB global unchanged), generation retention and failure preservation. See backend/SYS-TYPES-030.md. Old reports below do not qualify this revision. No own Windows-VMM/transparent app paging.
+
 # 0.28 SYS paging foundation — UNQUALIFIED DRIVER SOURCE
 
 New source changes invalidate the old native smoke report as evidence for this revision. No new SYS is built or executed here. Existing `driver/verification` refers only to the previous revision.

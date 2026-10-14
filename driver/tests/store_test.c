@@ -41,6 +41,30 @@ static void pager_tests(void){
     s.mode=EM_MODE_XPRESS;s.next_generation=UINT64_MAX;CHECK(em_put_compressed(&s,0,in,4096,scratch,&rejected)==EM_QUOTA && s.pages==0);
     em_close(&s);em_close(&other);CHECK(a.used==0);
 }
+static void resize_tests(void){
+    ALLOCATOR a={0,2*1024*1024,0};EM_OPS ops={&a,alloc,release,encode,decode};EM_STORE s;
+    EM_PAGER_RECEIPT r,old;uint8_t page[4096],out[4096],scratch[4096];uint64_t allocation,quota,used;EM_NODE **table;
+    CHECK(sizeof(EM_STORE_CONFIG)==32 && sizeof(EM_PAGER_CAPABILITIES)==48);
+    CHECK(em_init(&s,ops,1024*1024)==EM_OK && s.capacity==4096);
+    CHECK(em_resize_empty(&s,8192,1024*1024)==EM_OK && s.capacity==8192 && s.allocation==8192*sizeof(void *));
+    memset(page,3,4096);CHECK(em_put_compressed(&s,8191,page,4096,scratch,&old)==EM_OK);
+    CHECK(em_get_versioned(&s,8191,old.generation,out,4096)==EM_OK && memcmp(page,out,4096)==0);
+    CHECK(em_resize_empty(&s,4096,1024*1024)==EM_INVALID);CHECK(em_get_versioned(&s,8191,old.generation,out,4096)==EM_OK);
+    CHECK(em_put_compressed(&s,8192,page,4096,scratch,&r)==EM_INVALID);
+    em_reset(&s);table=s.entries;allocation=s.allocation;quota=s.quota;used=a.used;a.fail=1;
+    CHECK(em_resize_empty(&s,16384,1024*1024)==EM_NO_MEMORY);a.fail=0;
+    CHECK(s.entries==table && s.capacity==8192 && s.allocation==allocation && s.quota==quota && a.used==used);
+    CHECK(em_resize_empty(&s,0,1024*1024)==EM_INVALID);CHECK(em_resize_empty(&s,EM_MAX_STORE_PAGES+1,1024*1024)==EM_INVALID);
+    CHECK(em_resize_empty(&s,8192,1)==EM_INVALID);CHECK(em_resize_empty(&s,8192,EM_PAGER_MAX_SESSION_QUOTA+1)==EM_INVALID);
+    CHECK(em_resize_empty(&s,16384,1024*1024)==EM_OK);CHECK(em_put_compressed(&s,8191,page,4096,scratch,&r)==EM_OK && r.generation>old.generation);
+    CHECK(em_get_versioned(&s,8191,old.generation,out,4096)==EM_STALE);
+    em_reset(&s);CHECK(em_resize_empty(&s,64,1024*1024)==EM_OK && s.allocation==64*sizeof(void *));
+    CHECK(em_get(&s,64,out,4096)==EM_INVALID);CHECK(em_resize_empty(&s,64,2048)==EM_OK && s.quota==2048);
+    /* Same-capacity quota change performs no unnecessary allocation. */
+    a.fail=1;CHECK(em_resize_empty(&s,64,4096)==EM_OK);a.fail=0;
+    CHECK(em_resize_empty(&s,EM_MAX_STORE_PAGES,EM_PAGER_MAX_SESSION_QUOTA)==EM_NO_MEMORY && s.capacity==64);
+    em_close(&s);CHECK(a.used==0);
+}
 int main(void){
     ALLOCATOR a={0,2*1024*1024,0};EM_OPS ops={&a,alloc,release,encode,decode};EM_STORE s,other;
     uint8_t in[4096],out[4096],scratch[4096],expected[32][4096];int present[32]={0};unsigned i,j,k;
@@ -73,6 +97,6 @@ int main(void){
     CHECK(em_get(&s,0,out,4096)==EM_OK && out[0]==8);
     em_close(&s);em_close(&other);CHECK(a.used==0);CHECK(em_get(&s,0,out,4096)==EM_INVALID);
     a.fail=1;CHECK(em_init(&s,ops,2*1024*1024)==EM_NO_MEMORY);em_close(&s);CHECK(a.used==0);
-    pager_tests();
+    pager_tests();resize_tests();
     printf("PASS %u checks; portable store only; XPRESS/KMDF/Windows NOT executed\n",checks);return 0;
 }

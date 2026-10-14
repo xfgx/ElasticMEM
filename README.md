@@ -121,3 +121,6 @@ Real driver/core + KMDF source changes: compressed-only beneficial storage recei
 
 ## 0.29 automatic Hyper-V VM creation preview
 Backend VM wizard: trusted local VHDX/ISO, SHA256/private copy, Gen2/SecureBoot/vTPM, CPU/DM/existing switch, start + GUID pairing. VHDX must be prepared; ISO needs interactive Windows Setup. No automatic RDS/domain/licenses/apps/new SYS. Windows native creation NOT executed here. Read backend/AUTO-VM-029.md.
+
+## 0.30 SYS + per-VM backend types
+Type1 is our direct SYS page-store profile (own Windows-VMM not implemented); Type2 is Hyper-V. No automatic fallback. New driver source capabilities/empty-store resize with quota guards. Native SYS not built/tested here; source/page-store tests do not prove guest paging. See backend/SYS-TYPES-030.md.

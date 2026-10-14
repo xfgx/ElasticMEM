@@ -14,12 +14,19 @@ public static class PagerSmoke
     [DllImport("kernel32.dll",SetLastError=true)]static extern nuint VirtualQuery(IntPtr address,out MemoryInfo info,nuint length);
     static void Win(bool ok){if(!ok)throw new Win32Exception(Marshal.GetLastWin32Error());}
     static uint State(IntPtr p){Win(VirtualQuery(p,out var m,(nuint)Marshal.SizeOf<MemoryInfo>())!=0);return m.State;}
-    public static object Run(int pages=64,CancellationToken ct=default)
+    public static object Run(int pages=64,CancellationToken ct=default,uint storeCapacity=8192,ulong quotaBytes=16UL*1024*1024)
     {
         if(!OperatingSystem.IsWindows()||!Environment.Is64BitProcess)throw new PlatformNotSupportedException("Windows x64 only");
-        if(pages is <1 or >1024)throw new ArgumentOutOfRangeException(nameof(pages));
+        if(pages is <1 or >1024||storeCapacity<(uint)pages)throw new ArgumentOutOfRangeException(nameof(pages));
         int checks=0;void Check(bool b,string what){checks++;if(!b)throw new InvalidDataException(what);}
         using var store=new KernelPageStore(KernelPageStore.StoreMode.Xpress);
+        var capabilities=store.Capabilities();store.ConfigurePager(storeCapacity,quotaBytes);
+        byte[] capabilityPage=Enumerable.Repeat((byte)9,4096).ToArray();KernelPagerReceipt high;
+        try{high=store.PutCompressed(storeCapacity-1,capabilityPage);}finally{Array.Clear(capabilityPage);}
+        bool busy=false;try{store.ConfigurePager(storeCapacity,quotaBytes);}catch(Win32Exception e)when(e.NativeErrorCode==170){busy=true;}
+        Check(busy,"nonempty store resize rejected");
+        byte[] highRead=store.GetVersioned(storeCapacity-1,high.Generation);try{Check(highRead.All(b=>b==9),"configured high key restored");}finally{Array.Clear(highRead);}
+        Check(store.DeleteVersioned(storeCapacity-1,high.Generation),"high key cleanup");
         var before=store.Stats();var receipts=new KernelPagerReceipt[pages];byte[] scratch=new byte[4096];
         IntPtr memory=VirtualAlloc(IntPtr.Zero,(nuint)pages*4096,0x2000,4);Win(memory!=IntPtr.Zero);
         try
@@ -56,7 +63,7 @@ public static class PagerSmoke
             }
             var after=store.Stats();Check(after.Pages==0&&after.SessionAllocationBytes==before.SessionAllocationBytes,"SYS page allocations returned to baseline");
             return new{schema="elasticmem.sys.owned_pager.smoke.v1",status="passed_owned_fixture_only",checks,pages,
-                backend="ElasticMemStore SYS XPRESS compressed-only generation protocol",source_virtualquery_decommit_verified=true,
+                backend="ElasticMemStore SYS XPRESS compressed-only generation protocol",capabilities,configured_capacity=before.MaxPages,source_virtualquery_decommit_verified=true,
                 released_owned_backing_commit_bytes=(long)pages*4096,retained_driver_session_allocation_bytes=evicted.SessionAllocationBytes,
                 accounted_owned_commit_minus_driver_allocation_bytes=(long)pages*4096-(long)evicted.SessionAllocationBytes,
                 physical_ram_saved_bytes=(long?)null,guest_vm_memory_paged=false,foreign_process_memory_supported=false,

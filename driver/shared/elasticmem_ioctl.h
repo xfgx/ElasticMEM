@@ -4,6 +4,8 @@
 #define EM_ABI_VERSION 1u
 #define EM_PAGE_BYTES 4096u
 #define EM_MAX_PAGES 4096u
+#define EM_MAX_STORE_PAGES 1048576u
+#define EM_PAGER_MAX_SESSION_QUOTA (32ull * 1024 * 1024)
 #define EM_MODE_RAW 0u
 #define EM_MODE_XPRESS 1u
 /* Private device type, METHOD_BUFFERED, READ|WRITE access. No user pointers. */
@@ -20,10 +22,18 @@
 #define IOCTL_EM_GET_VERSIONED EM_IOCTL(0x807u)
 #define IOCTL_EM_DELETE_VERSIONED EM_IOCTL(0x808u)
 #define EM_PAGER_VERSION 1u
+#define IOCTL_EM_PAGER_CAPABILITIES EM_IOCTL(0x809u)
+#define IOCTL_EM_CONFIG_STORE EM_IOCTL(0x80au)
+#define EM_PAGER_FEATURES 7u /* compressed-only, generation, empty-store resize */
 
 /* Natural 8-byte alignment on x64. Headers contain only uint32_t. */
 typedef struct EM_HEADER { uint32_t version, key, flags, reserved; } EM_HEADER;
 typedef struct EM_VERSIONED_REQUEST { EM_HEADER header; uint64_t generation; } EM_VERSIONED_REQUEST;
+typedef struct EM_STORE_CONFIG { EM_HEADER header; uint32_t capacity, reserved; uint64_t quota_bytes; } EM_STORE_CONFIG;
+typedef struct EM_PAGER_CAPABILITIES {
+    uint32_t version, features, page_bytes, default_capacity, max_capacity, max_sessions, reserved0, reserved1;
+    uint64_t max_session_quota_bytes, global_limit_bytes;
+} EM_PAGER_CAPABILITIES;
 typedef struct EM_PAGER_RECEIPT {
     uint32_t version, key; uint64_t generation;
     uint32_t payload_bytes, allocation_bytes, crc32, reserved;

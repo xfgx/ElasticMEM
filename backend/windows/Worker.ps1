@@ -12,9 +12,10 @@ function Emit($value){[Console]::Out.WriteLine(($value|ConvertTo-Json -Depth 12 
 try {
  $principal=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
  if(-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){Fail 'HOST_ADMIN_REQUIRED'}
+ $c=Get-Content -LiteralPath $ConfigPath -Encoding UTF8 -Raw|ConvertFrom-Json
+ if($null -ne $c.BackendKind -and [int]$c.BackendKind -ne 2){Fail 'NOT_HYPERV_BACKEND_NO_FALLBACK'}
  if(-not(Get-Module -ListAvailable Hyper-V)){Fail 'HYPERV_MODULE_MISSING_NO_SECURITY_SETTINGS_CHANGED'}
  Import-Module Hyper-V
- $c=Get-Content -LiteralPath $ConfigPath -Encoding UTF8 -Raw|ConvertFrom-Json
  if(-not $c.VmName -or $c.VmName.Length -gt 80 -or $c.VmName -match '[\x00-\x1f"'';`$\\/*?\[\]]'){Fail 'INVALID_VM_NAME'}
  if($c.RdpHost -notmatch '\A[a-zA-Z0-9](?:[a-zA-Z0-9.-]{0,251}[a-zA-Z0-9])?\z' -or $c.RdpHost.Contains('..')){Fail 'INVALID_RDP_HOST'}
  if(-not $c.CollectionName -or $c.CollectionName.Length -gt 80 -or $c.CollectionName -match '[\x00-\x1f]'){Fail 'INVALID_COLLECTION'}

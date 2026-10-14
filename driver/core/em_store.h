@@ -14,10 +14,11 @@ typedef struct EM_STORE {
     EM_NODE **entries;
     EM_OPS ops;
     uint64_t allocation, quota, payload, puts, gets, deletes, next_generation;
-    uint32_t mode, pages, compressed_pages, raw_pages;
+    uint32_t mode, pages, compressed_pages, raw_pages, capacity;
 } EM_STORE;
 /* Caller serializes ALL access, including cleanup. scratch must be a distinct 4096-byte buffer. */
 EM_RESULT em_init(EM_STORE *, EM_OPS, uint64_t quota);
+EM_RESULT em_resize_empty(EM_STORE *, uint32_t capacity, uint64_t quota);
 EM_RESULT em_put(EM_STORE *, uint32_t key, const uint8_t *, size_t, uint8_t *scratch);
 EM_RESULT em_get(EM_STORE *, uint32_t key, uint8_t *, size_t);
 EM_RESULT em_delete(EM_STORE *, uint32_t key);
