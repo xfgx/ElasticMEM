@@ -24,7 +24,7 @@ metadata={'schema':'elasticmem.recovery.candidate.v1','version':version,'code_co
 (out/'QA.json').write_text(json.dumps(metadata,indent=2)+'\n')
 # Preserve recovered and new committed history. Archive contains committed source only, no obj/bin/cache/private keys.
 bundle=out/'ElasticMem.git.bundle';subprocess.run(['git','-C',str(root),'bundle','create',str(bundle),'--all'],check=True)
-files=run('ls-files').splitlines()
+files=subprocess.check_output(['git','-C',str(root),'ls-files','-z']).decode('utf-8').rstrip('\0').split('\0')
 with zipfile.ZipFile(out/f'ElasticMem-v{version}-source.zip','w',zipfile.ZIP_DEFLATED) as z:
     for name in files:z.write(root/name,'ElasticMem/'+name)
     z.write(bundle,'ElasticMem/ElasticMem.git.bundle');z.write(out/'QA.json','ElasticMem/QA.json')
