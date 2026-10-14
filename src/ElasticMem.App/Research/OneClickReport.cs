@@ -16,7 +16,7 @@ internal static class OneClickReport
             {
             using var manifest=JsonDocument.Parse(File.ReadAllText(Path.Combine(folder,"manifest.json")));
             string? mode=manifest.RootElement.GetProperty("mode").GetString();
-            string? expected=mode switch{"epochs-replay"=>"offline_epoch_replay_not_physical_ram","g0-calibration"=>"controlled_own_child_workload_only","g0-epochs"=>"perturbing_epoch_proxy_not_exact_trace","g4"=>"offline_codec_comparison_not_live_reclaim","g3-dma"=>"dma_microbenchmark_not_pager","disk-qd1"=>"unbuffered_file_qd1_not_pagefile_fault",_=>null};
+            string? expected=mode switch{"controlled"=>"controlled_synthetic_validation_not_browser_evidence","epochs-replay"=>"offline_epoch_replay_not_physical_ram","g0-calibration"=>"controlled_own_child_workload_only","g0-epochs"=>"perturbing_epoch_proxy_not_exact_trace","g4"=>"offline_codec_comparison_not_live_reclaim","g3-dma"=>"dma_microbenchmark_not_pager","disk-qd1"=>"unbuffered_file_qd1_not_pagefile_fault",_=>null};
             if(expected==null)continue;
             string? status=manifest.RootElement.GetProperty("status").GetString();
             if(status!=expected){lines.Add(mode+": "+status+"; числа не считаются валидными.");continue;}
@@ -24,10 +24,25 @@ internal static class OneClickReport
             string file=Path.Combine(folder,"result.json");if(!File.Exists(file))throw new InvalidDataException("Successful run has no result");
             using var doc=JsonDocument.Parse(File.ReadAllText(file));var d=doc.RootElement;
             if(!d.TryGetProperty("schema",out var schema))throw new InvalidDataException("Successful result schema missing");
-            string? expectedSchema=mode switch{"epochs-replay"=>"elasticmem.epochs.replay.v1","g0-calibration"=>"elasticmem.g0.calibration.v2","g0-epochs"=>"elasticmem.g0.windows_epochs.v2","g4"=>"elasticmem.g4.codecs.v1","g3-dma"=>"elasticmem.g3.dma.v1","disk-qd1"=>"elasticmem.disk.qd1.v1",_=>null};
+            string? expectedSchema=mode switch{"controlled"=>"elasticmem.controlled.research.v1","epochs-replay"=>"elasticmem.epochs.replay.v1","g0-calibration"=>"elasticmem.g0.calibration.v2","g0-epochs"=>"elasticmem.g0.windows_epochs.v2","g4"=>"elasticmem.g4.codecs.v1","g3-dma"=>"elasticmem.g3.dma.v1","disk-qd1"=>"elasticmem.disk.qd1.v1",_=>null};
             if(schema.GetString()!=expectedSchema)throw new InvalidDataException("Successful result schema mismatch");
             switch(schema.GetString())
             {
+                case "elasticmem.controlled.research.v1":
+                    lines.Add("Контроль известного доступа: только собственная native arena; НЕ реальный renderer,НЕ RAM savings.");
+                    foreach(var c in d.GetProperty("cases").EnumerateArray())
+                    {
+                        var ob=c.GetProperty("observation");
+                        lines.Add("  "+c.GetProperty("name")+": known cells="+N(100*ob.GetProperty("known_fraction").GetDouble())+"%; unknown TEST epochs="+ob.GetProperty("unknown_test_epochs")+"; FN="+ob.GetProperty("known_false_negative")+"; FP="+ob.GetProperty("known_false_positive")+" (только known cells).");
+                        foreach(string kind in new[]{"ground_truth_causal","windows_proxy_causal"})
+                            foreach(var row in c.GetProperty(kind).GetProperty("rows").EnumerateArray().Where(x=>x.GetProperty("idle_epochs").GetInt32()==2&&x.GetProperty("block_pages").GetInt32() is 4 or 16))
+                            {
+                                var utility=row.GetProperty("mean_useful_pages_per_decode");
+                                lines.Add("    "+kind+" T2/cap"+row.GetProperty("block_pages")+" "+row.GetProperty("policy")+": "+(utility.ValueKind==JsonValueKind.Null?"unavailable":N(utility.GetDouble()))+" useful/decode; events="+row.GetProperty("decode_events")+"; unknown="+row.GetProperty("excluded_common_unknown_epochs")+".");
+                            }
+                    }
+                    lines.Add("  Синтетический positive control не подтверждает пользу в Chrome. Primary T2/cap4,16 фиксирован; прочие T exploratory. Реальные G5 gates НЕ ослаблены.");
+                    break;
                 case "elasticmem.epochs.replay.v1":
                     foreach(var p in d.GetProperty("processes").EnumerateArray())
                     {

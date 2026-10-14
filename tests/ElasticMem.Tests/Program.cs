@@ -158,6 +158,23 @@ try
 }
 catch(Exception ex){Check(false,"fresh source fixtures: "+ex);}
 finally{if(Directory.Exists(reportRoot))Directory.Delete(reportRoot,true);}
+reportRoot=Path.Combine(Path.GetTempPath(),"ElasticMem_control_report_"+Guid.NewGuid().ToString("N"));
+try
+{
+    using var controlled=new ElasticMem.Core.Research.ResearchRun(reportRoot,"controlled","test","fixture",new{});
+    var cr=new{rows=new[]{new{idle_epochs=2,block_pages=4,policy="coaccess",mean_useful_pages_per_decode=3.0,decode_events=40,excluded_common_unknown_epochs=1}}};
+    controlled.WriteJson("result.json",new{schema="elasticmem.controlled.research.v1",cases=new[]{new{name="fixture",observation=new{
+        known_fraction=.75,unknown_test_epochs=1,known_false_negative=3,known_false_positive=4},ground_truth_causal=cr,windows_proxy_causal=cr}}});
+    File.WriteAllText(controlled.FilePath("inputs/controlled-child.json"),"private worker IPC fixture");
+    controlled.Seal("controlled_synthetic_validation_not_browser_evidence","fixture");
+    var errors=new List<string>();string report=ElasticMem.App.Research.OneClickReport.Read(reportRoot,errors);
+    Check(errors.Count==0,"controlled numeric report available");
+    Check(report.Contains("known cells=75.00%")&&report.Contains("unknown TEST epochs=1; FN=3; FP=4"),"controlled missingness explicit");
+    Check(report.Contains("ground_truth_causal T2/cap4")&&report.Contains("windows_proxy_causal T2/cap4"),"truth vs observed distinguished");
+    Check(report.Contains("не подтверждает пользу в Chrome"),"synthetic report no browser effectiveness claim");
+}
+catch(Exception ex){Check(false,"controlled report fixture: "+ex);}
+finally{if(Directory.Exists(reportRoot))Directory.Delete(reportRoot,true);}
 Console.WriteLine(fails == 0 ? "ALL TESTS PASSED" : $"{fails} FAILURES");
 
 bench:

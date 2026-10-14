@@ -21,6 +21,7 @@ internal static class ResearchJobs
             {
                 case "environment":result=WindowsEnvironment.Read(run);status="environment_probe_only";break;
                 case "selftest":result=ResearchSelfTest.Run();status="selftests_passed";break;
+                case "controlled":result=ControlledResearch.Run(run,progress,ct);status="controlled_synthetic_validation_not_browser_evidence";break;
                 case "g0-sample":result=WindowsCapture.Sample(options.Pids,options.Seconds,run,progress,ct);status="sampled_observation_not_full_trace";break;
                 case "g0-model":
                     if(new FileInfo(options.Trace).Length>128L<<20)throw new ArgumentException("Trace cap is 128 MiB for this build");

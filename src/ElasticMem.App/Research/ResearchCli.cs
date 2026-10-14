@@ -13,6 +13,8 @@ internal static class ResearchCli
         {
             if(mode=="g0-worker")
             {Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(transcript))!);File.WriteAllText(transcript,System.Text.Json.JsonSerializer.Serialize(EpochCalibration.Worker(),ResearchRun.Json));return true;}
+            if(mode=="controlled-worker")
+            {Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(transcript))!);File.WriteAllText(transcript,System.Text.Json.JsonSerializer.Serialize(ControlledResearch.Worker(),ResearchRun.Json));return true;}
             if(mode=="auto")
             {
                 var auto=AutoResearch.RunAsync(args.Contains("--allow-memory-read"),Int("--seconds",120),null,CancellationToken.None,allowTrim:args.Contains("--allow-working-set-trim"),extended:args.Contains("--extended"),scratch:Get("--scratch")??Path.GetTempPath()).GetAwaiter().GetResult();

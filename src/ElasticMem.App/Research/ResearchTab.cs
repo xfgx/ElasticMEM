@@ -38,6 +38,7 @@ internal sealed class ResearchTab:TabPage
         ("g0-sample","Г0 · наблюдение процессов Windows","Счётчики рабочего набора, private bytes, CPU и page faults. Это выборочные наблюдения, НЕ полная трасса обращений и НЕ потолок экономии."),
         ("g0-model","Г0 · модель по полной трассе","Импорт exact/synthetic событий с map/read/write/unmap. Метрика — средние байты модели gap−e−r, не верхняя граница любого механизма. Полный сборщик трассы пока внешний."),
         ("g0-epochs","Г0 · эпохи с вмешательством","Требует отдельного согласия EmptyWorkingSet. Базовые счётчики/trim/trim+опрос; приближённая модель повторного появления в WS, НЕ точная трасса/Belady. Не отключает системное сжатие или pagefile."),
+        ("controlled","Контроль · известные обращения","Собственный child: 128 native-страниц, три синтетические нагрузки. Известные касания против Windows residency-proxy; Г5 на точной и наблюдённой истории отдельно. Только свой child; без trim браузера. Не доказательство пользы на реальной нагрузке."),
         ("epochs-replay","Г0/Г5 · локальный пересчёт карт","Папка успешного Г0-epochs или auto-summary; пусто — последняя локальная партия. Без чтения процессов/trim. Длинные пороги, всплески и каузальные блоки1/4/8/16. Старый ZIP без EET недостаточен."),
         ("g5","Г5 · упаковка по совместному доступу","Вход — локальная папка успешного Г0-epochs 0.17+. Карты/снимки остаются локально. Train-prefix/test-suffix, соседство/coaccess/content; не live-пейджер."),
         ("g4-churn","Г4 · собственный churn-контроль","Синтетические alloc/free/write собственных 64 страниц. Восстановление живых данных, dead slots и перепаковка; не churn чужого процесса."),
@@ -62,8 +63,9 @@ internal sealed class ResearchTab:TabPage
         var help=new Button{Text="Полная инструкция",AutoSize=true};help.Click+=(_,_)=>ResearchHelp.Show(FindForm()!);
         _source.PlaceholderText="Папка Г1 для Г0/Г4; папка Г0-epochs для Г5";
         _auto.Click+=async(_,_)=>await StartAutomatic();
+        var control=new Button{Text="Контроль доступа (без браузера)",AutoSize=true};control.Click+=async(_,_)=>{if(IsRunning)return;_mode.SelectedIndex=Array.FindIndex(Modes,m=>m.Key=="controlled");await Run();};_config.Add(control);
         var replay=new Button{Text="Пересчитать последнюю партию (без trim)",AutoSize=true};replay.Click+=async(_,_)=>{if(IsRunning)return;_source.Text="";_mode.SelectedIndex=Array.FindIndex(Modes,m=>m.Key=="epochs-replay");await Run();};_config.Add(replay);
-        stack.Add(Ui.Row(replay));
+        stack.Add(Ui.Row(control,replay));
         stack.Add(Ui.Row(_auto,help)).Add(Ui.Hint("Нажатие «Проверить всё» — согласие на локальное чтение до 128 МиБ суммарно: до 64 МиБ исходных и до 64 МиБ свежих снимков выбранных рендереров Chrome/Edge/Steam. Агент остановится; ZIP без дампов создаётся автоматически. Отправки по сети нет."));
         stack.Add(Ui.Row(_allowTrim)).Add(Ui.Row(_extended));_config.Add(_allowTrim);_config.Add(_extended);
         stack.Add(Ui.Hint("Расширенный режим: наблюдение 10 минут; с trim — ещё ≥10 минут на каждый из 2–4 рендереров. Cap ограничивает опрос, НЕ действие trim. Настройки pagefile/MemoryCompression не меняются."));
@@ -107,10 +109,10 @@ internal sealed class ResearchTab:TabPage
         if(mode=="g1"&&MessageBox.Show(this,"Снимки могут содержать пароли, переписку и другие личные данные. Они остаются локально; по умолчанию не попадают в ZIP логов. Не выбирайте игры с античитом. В Г1 — максимум 4 процесса.\n\nПродолжить чтение памяти выбранных PID?","Г1: явное согласие",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
         _batch=null;_cts=new();_completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);BusyChanged?.Invoke(true);_run.Enabled=false;_auto.Enabled=false;_cancel.Enabled=true;_mode.Enabled=false;foreach(var c in _config)c.Enabled=false;
         try{var progress=new Progress<string>(s=>{if(!IsDisposed)_status.Text=s;});
-            string? replayBatch=mode=="epochs-replay"?Path.Combine(AppSettings.Dir,"research-batches",DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")+"-replay"):null;
+            string? replayBatch=mode is "epochs-replay" or "controlled"?Path.Combine(AppSettings.Dir,"research-batches",DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")+"-"+mode):null;
             _last=await Task.Run(()=>ResearchJobs.Execute(mode,options,progress,_cts.Token,replayBatch==null?null:Path.Combine(replayBatch,"runs")));
             if(replayBatch!=null){string zip=Path.Combine(replayBatch,"ElasticMem-logs-"+Path.GetFileName(replayBatch)+".zip");ResearchRun.ExportLogs(Path.Combine(replayBatch,"runs"),zip,false);Open(replayBatch);}
-            _output.Text=File.ReadAllText(Path.Combine(_last,File.Exists(Path.Combine(_last,"result.json"))?"result.json":"report.md"));_status.Text="Сохранено: "+Path.GetFileName(_last);}
+            _output.Text=mode=="controlled"?OneClickReport.Read(Path.GetDirectoryName(_last)!):File.ReadAllText(Path.Combine(_last,File.Exists(Path.Combine(_last,"result.json"))?"result.json":"report.md"));_status.Text="Сохранено: "+Path.GetFileName(_last);}
         catch(Exception ex){_output.Text=ex.ToString();}
         finally{_cts.Dispose();_cts=null;BusyChanged?.Invoke(false);_completion?.TrySetResult();_run.Enabled=true;_auto.Enabled=true;_cancel.Enabled=false;_mode.Enabled=true;foreach(var c in _config)c.Enabled=true;}
     }

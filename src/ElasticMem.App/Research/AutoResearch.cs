@@ -104,10 +104,11 @@ internal static class AutoResearch
             string selftest=await Step("selftest",safe,"Core correctness, not scientific effectiveness.");
             if(BatchPolicy.Failure(steps[^1].Status))
             {
-                foreach(var key in new[]{"g0-sample","g0-calibration","g0-model","g1","g4","g0-epochs","g5","disk-qd1","fault-origin","g4-churn","g2","gpu-probe","g3","g3-dma","ui-audit"})Skip(key,"skipped_core_selftest_failed","Core selftest failed: dependent checks not safe to claim.");
+                foreach(var key in new[]{"controlled","g0-sample","g0-calibration","g0-model","g1","g4","g0-epochs","g5","disk-qd1","fault-origin","g4-churn","g2","gpu-probe","g3","g3-dma","ui-audit"})Skip(key,"skipped_core_selftest_failed","Core selftest failed: dependent checks not safe to claim.");
             }
             else
             {
+                await Step("controlled",safe,"Own child native arena only; three fixed synthetic schedules; ground-truth reads versus Windows residency proxy; no foreign trim/OS setting changes. Synthetic positive control is NOT renderer evidence.");
                 selection=BatchPolicy.Select(await Task.Run(Discover),Environment.ProcessId,minimum:1);
                 counterPids=CounterPids();if(counterPids.Length==0)counterPids=new[]{Environment.ProcessId};
                 await Step("g0-sample",safe with{Pids=counterPids,Seconds=extended?Math.Max(seconds,600):seconds},"Read-only up to5 Chrome/Edge/Steam/Python/Node process counters,when already running. This wider list is NOT used for trims or snapshots. No complete desktop/trace claim.");

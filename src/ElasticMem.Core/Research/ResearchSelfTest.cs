@@ -7,6 +7,45 @@ public static class ResearchSelfTest
     {
         int checks=0;var errors=new List<string>();void Check(bool ok,string name){checks++;if(!ok)errors.Add(name);}
         var rnd=new Random(19);var store=new PackedAgentStore(1000,new[]{"a","b"});var shadow=Enumerable.Repeat(new AgentRecord(0,0,-1,0),1000).ToArray();
+        foreach(string name in ControlledWorkload.Cases)
+        {
+            var controlRows=ControlledWorkload.Activity(name);var controlRepeat=ControlledWorkload.Activity(name);
+            Check(controlRows.SelectMany(x=>x).SequenceEqual(controlRepeat.SelectMany(x=>x)),"fixed controlled schedule "+name);
+            Check(controlRows.All(x=>x.Length==128&&x.Count(v=>v) is 0 or 8),"controlled fixed density "+name);
+            string controlPacked=ControlledWorkload.Pack(controlRows);
+            Check(ControlledWorkload.Unpack(controlPacked).SelectMany(x=>x).SequenceEqual(controlRows.SelectMany(x=>x)),"controlled bitmap roundtrip "+name);
+            bool[][] controlCaseKnown=controlRows.Select(x=>Enumerable.Repeat(true,128).ToArray()).ToArray();
+            using var compare=JsonDocument.Parse(JsonSerializer.Serialize(ControlledWorkload.Compare(controlRows,controlRows,controlCaseKnown)));
+            Check(compare.RootElement.GetProperty("known_fraction").GetDouble()==1&&compare.RootElement.GetProperty("known_false_negative").GetInt64()==0&&compare.RootElement.GetProperty("known_false_positive").GetInt64()==0,"perfect ground truth observation "+name);
+        }
+        var controlTruth=ControlledWorkload.Activity("interleaved_correlated");var controlKnown=controlTruth.Select(x=>Enumerable.Repeat(true,128).ToArray()).ToArray();
+        var noisy=controlTruth.Select(x=>(bool[])x.Clone()).ToArray();noisy[0][0]=false;noisy[0][1]=true;controlKnown[128][0]=false;
+        using(var cmp=JsonDocument.Parse(JsonSerializer.Serialize(ControlledWorkload.Compare(controlTruth,noisy,controlKnown))))
+        {Check(cmp.RootElement.GetProperty("known_false_negative").GetInt64()==1,"controlled missing scheduled read");Check(cmp.RootElement.GetProperty("known_false_positive").GetInt64()==1,"controlled unsolicited observed return");Check(cmp.RootElement.GetProperty("unknown_test_epochs").GetInt32()==1,"controlled unknown not false negative");}
+        foreach(string broken in new[]{"","%%%","AAAA",ControlledWorkload.Pack(controlTruth)[..^4]})
+        {bool refused=false;try{ControlledWorkload.Unpack(broken);}catch(Exception ex)when(ex is InvalidDataException or FormatException){refused=true;}Check(refused,"controlled malformed/truncated bitmap refused");}
+        var controlAddresses=Enumerable.Range(1,128).Select(i=>(ulong)i*4096).ToArray();
+        var co= CausalGrouping.Simulate(controlAddresses,controlTruth,controlTruth.Select(x=>Enumerable.Repeat(true,128).ToArray()).ToArray(),16,2,"coaccess");
+        var adj=CausalGrouping.Simulate(controlAddresses,controlTruth,controlTruth.Select(x=>Enumerable.Repeat(true,128).ToArray()).ToArray(),16,2,"adjacency");
+        Check(co.Events.Count>=30&&adj.Events.Count>=30,"constructed control has enough T2cap16 events");
+        Check(co.Events.Sum(x=>(long)x.Useful)/(double)co.Events.Count>adj.Events.Sum(x=>(long)x.Useful)/(double)adj.Events.Count,"constructed interleaved positive control tests grouping not renderer benefit");
+        var controlPerfect=controlTruth.Select(x=>Enumerable.Repeat(true,128).ToArray()).ToArray();ulong controlChecksum=0;var controlPayload=ControlledWorkload.Contents();
+        for(int t=0;t<256;t++)for(int p=0;p<128;p++)if(controlTruth[t][p])controlChecksum=unchecked(controlChecksum+BitConverter.ToUInt64(controlPayload[p],0));
+        var controlFixture=JsonSerializer.SerializeToElement(new{name="interleaved_correlated",pages=128,epochs=256,
+            truth=ControlledWorkload.Pack(controlTruth),observed=ControlledWorkload.Pack(controlTruth),known=ControlledWorkload.Pack(controlPerfect),
+            checksum=controlChecksum,expected_checksum=controlChecksum,timing=Enumerable.Range(0,256).Select(t=>new{epoch=t,scheduled=controlTruth[t].Count(x=>x),retained=0,touch_us=1d,probe_and_touch_us=2d}).ToArray()});
+        Check(ControlledWorkload.DecodeCase(controlFixture,"interleaved_correlated").Truth.Length==256,"controlled child fixture independently validated");
+        foreach(string bad in new[]{"pages","checksum","truth","known","timing"})
+        {
+            var node=System.Text.Json.Nodes.JsonNode.Parse(controlFixture.GetRawText())!;
+            if(bad=="pages")node["pages"]=127;
+            if(bad=="checksum")node["checksum"]=0UL;
+            if(bad=="truth")node["truth"]=ControlledWorkload.Pack(controlTruth.Select(x=>x.Select(v=>!v).ToArray()).ToArray());
+            if(bad=="known")node["known"]=ControlledWorkload.Pack(controlTruth.Select(x=>new bool[128]).ToArray());
+            if(bad=="timing")node["timing"]![0]!["retained"]=1;
+            bool refused=false;try{ControlledWorkload.DecodeCase(JsonSerializer.SerializeToElement(node),"interleaved_correlated");}catch(InvalidDataException){refused=true;}
+            Check(refused,"controlled invalid child "+bad+" refused");
+        }
         Check(EpochEligibility.Classify(0,0,true)==EpochExclusion.OriginalMappingUnavailable,"epoch reason original takes precedence");
         Check(EpochEligibility.Classify(1,0,true)==EpochExclusion.CurrentMappingUnavailable,"epoch unavailable mapping not death");
         Check(EpochEligibility.Classify(1,2,true)==EpochExclusion.AllocationChanged,"epoch changed allocation before retained");
