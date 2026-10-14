@@ -96,7 +96,7 @@ internal sealed class ResearchTab:TabPage
         var uiAudit=new Button{Text="Проверка интерфейса",AutoSize=true};uiAudit.Click+=async(_,_)=>{if(IsRunning)return;_run.Enabled=false;_auto.Enabled=false;try{_auditTask=UiDiagnostics.Capture(FindForm()!);await _auditTask;}finally{_auditTask=null;_run.Enabled=true;_auto.Enabled=true;}_output.Text="Снимки двух тем и layout-audit сохранены. Включите чувствительные файлы при экспорте, чтобы приложить screenshots.";};
         var verify=new Button{Text="Проверить хеши",AutoSize=true};verify.Click+=(_,_)=>{try{if(_last==null)throw new InvalidOperationException("Сначала выполните прогон");ResearchRun.Verify(_last);_status.Text="Хеши совпали. Это целостность, не доказательство эффективности.";}catch(Exception ex){_status.Text=ex.Message;}};
         stack.Add(Ui.Row(open,verify,export,uiAudit)).Add(_status).Add(_output,true);Controls.Add(stack);
-        _mode.SelectedIndexChanged+=(_,_)=>UpdateMode();_mode.SelectedIndex=0;
+        _mode.SelectedIndexChanged+=(_,_)=>UpdateMode();_mode.SelectedIndex=Array.FindIndex(Modes,m=>m.Key=="live-ab");
         _run.Click+=async(_,_)=>await Run();_cancel.Click+=(_,_)=>_cts?.Cancel();
     }
     void AddOption(string key,Control row,VStack stack){_options[key]=row;_config.Add(row);stack.Add(row);}

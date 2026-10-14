@@ -10,7 +10,7 @@ assert 'PASS 578 ' in (qa/'transport-tests.log').read_text()
 assert 'PASS ' in (qa/'driver-core-tests.log').read_text()
 app=qa/'windows-app';build=json.loads((app/'BUILD.json').read_text());assert build['code_commit']==commit and build['version']==version
 for item in build['files']:
-    f=app/item['name'];assert f.stat().st_size==item['bytes'] and hashlib.sha256(f.read_bytes()).hexdigest()==item['sha256']
+    f=app/item['path'];assert f.stat().st_size==item['bytes'] and hashlib.sha256(f.read_bytes()).hexdigest()==item['sha256']
 exe=(app/'ElasticMem.exe').read_bytes();off=struct.unpack_from('<I',exe,0x3c)[0];assert exe[off:off+4]==b'PE\0\0' and struct.unpack_from('<H',exe,off+4)[0]==0x8664
 sys=(qa/'kernel-cross/ElasticMemStore.sys').read_bytes();off=struct.unpack_from('<I',sys,0x3c)[0];assert sys[off:off+4]==b'PE\0\0' and struct.unpack_from('<H',sys,off+4)[0]==0x8664
 opt=off+24;assert struct.unpack_from('<H',sys,opt+68)[0]==1 # native subsystem
