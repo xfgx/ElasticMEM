@@ -204,6 +204,7 @@ public static class ResearchSelfTest
         }
         finally{if(Directory.Exists(appTemp))Directory.Delete(appTemp,true);}
         checks+=NewResearchTests.Run();
+        checks+=LiveBackendTests.Run();
         if(errors.Count!=0)throw new InvalidDataException(string.Join("\n",errors));return new{status="selftests_passed",checks,seed=19,native_xpress_fixtures_executed=OperatingSystem.IsWindows(),limitations=new[]{"Core/codec correctness only; native Xpress fixtures only when Windows; no live paging/GPU/UI execution"}};
     }
 }

@@ -35,6 +35,7 @@ internal sealed class ResearchTab:TabPage
     public void CancelRun()=>_cts?.Cancel();
     static NumericUpDown N(decimal min,decimal max,decimal value)=>new(){Minimum=min,Maximum=max,Value=value,Width=max>100000?120:88,ThousandsSeparator=true};
     static readonly (string Key,string Title,string Hint)[] Modes={
+        ("live-ab","Live backend · А/Б памяти и задержек","Настоящие Put/Get/записи сжатых страниц в собственном worker:64МиБ, structured + random,3парыAB/BA. Реальные WS/commit и p50/p99 API. Только cooperative-клиент; Chrome/Telegram НЕ переведены на backend. Никаких trim/OS настроек."),
         ("environment","Windows · окружение и MMAgent","Read-only проверка памяти, Memory Compression и PageCombining. Ничего не включает и не меняет. Статус combining не равен измеренной экономии."),
         ("selftest","Самопроверка встроенных механизмов","Детерминированные проверки хранилища, нормализации, модели и хешей. GPU/Windows API проверяются отдельно."),
         ("g0-sample","Г0 · наблюдение процессов Windows","Счётчики рабочего набора, private bytes, CPU и page faults. Это выборочные наблюдения, НЕ полная трасса обращений и НЕ потолок экономии."),
@@ -73,6 +74,9 @@ internal sealed class ResearchTab:TabPage
         var applications=new Button{Text="Проверить реальные приложения: Edge / Chrome / Telegram",AutoSize=true};
         applications.Click+=async(_,_)=>await StartApplications();_config.Add(applications);
         stack.Add(Ui.Row(applications)).Add(Ui.Hint("Два снимка каждого выбранного приложения, до80МиБ исходных снимков; контейнеры занимают дополнительное место. Реальные resident/private байты → сериализованное восстановление + цена decode. Без trim и без live-экономии RAM; итог не является тестом ускорения. ZIP автоматически, дампы исключены."));
+        var live=new Button{Text="Live backend: проверить А/Б RAM и задержки",AutoSize=true};
+        live.Click+=async(_,_)=>{if(IsRunning)return;_mode.SelectedIndex=Array.FindIndex(Modes,m=>m.Key=="live-ab");await Run();};_config.Add(live);
+        stack.Add(Ui.Row(live)).Add(Ui.Hint("Только собственные процессы, требуется≥2ГиБ свободной RAM. Backend пригоден для явно интегрированных клиентов/агентов; не прозрачен для Chrome/Telegram. ZIP автоматически. Никакого trim."));
         stack.Add(Ui.Row(control,replay));
         stack.Add(Ui.Row(_auto,help)).Add(Ui.Hint("Нажатие «Проверить всё» — согласие на локальное чтение до 128 МиБ суммарно: до 64 МиБ исходных и до 64 МиБ свежих снимков выбранных рендереров Chrome/Edge/Steam. Агент остановится; ZIP без дампов создаётся автоматически. Отправки по сети нет."));
         stack.Add(Ui.Row(_allowTrim)).Add(Ui.Row(_extended));_config.Add(_allowTrim);_config.Add(_extended);
@@ -109,6 +113,7 @@ internal sealed class ResearchTab:TabPage
         ResearchOptions options;
         try{options=Options();}catch(Exception ex){_status.Text="Параметры: "+ex.Message;return;}
         string mode=Modes[_mode.SelectedIndex].Key;
+        if(mode=="live-ab")options=options with{AllowTrim=false};
         if(mode=="g0-epochs"&&!options.AllowTrim){_status.Text="Нужно отдельное согласие на EmptyWorkingSet.";return;}
         if(mode=="g1"&&options.Pids.Contains(Environment.ProcessId)){_status.Text="Г1: нельзя снимать само приложение ElasticMem — это загрязняет измерение. Выберите внешние процессы.";return;}
         if(mode=="g0-sample"&&options.Pids.Length==0){_status.Text="Выберите процессы для наблюдения.";return;}
@@ -117,10 +122,10 @@ internal sealed class ResearchTab:TabPage
         if(mode=="g1"&&MessageBox.Show(this,"Снимки могут содержать пароли, переписку и другие личные данные. Они остаются локально; по умолчанию не попадают в ZIP логов. Не выбирайте игры с античитом. В Г1 — максимум 4 процесса.\n\nПродолжить чтение памяти выбранных PID?","Г1: явное согласие",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
         _batch=null;_cts=new();_completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);BusyChanged?.Invoke(true);_run.Enabled=false;_auto.Enabled=false;_cancel.Enabled=true;_mode.Enabled=false;foreach(var c in _config)c.Enabled=false;
         try{var progress=new Progress<string>(s=>{if(!IsDisposed)_status.Text=s;});
-            string? replayBatch=mode is "epochs-replay" or "controlled"?Path.Combine(AppSettings.Dir,"research-batches",DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")+"-"+mode):null;
+            string? replayBatch=mode is "epochs-replay" or "controlled" or "live-ab"?Path.Combine(AppSettings.Dir,"research-batches",DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")+"-"+mode):null;
             _last=await Task.Run(()=>ResearchJobs.Execute(mode,options,progress,_cts.Token,replayBatch==null?null:Path.Combine(replayBatch,"runs")));
             if(replayBatch!=null){string zip=Path.Combine(replayBatch,"ElasticMem-logs-"+Path.GetFileName(replayBatch)+".zip");ResearchRun.ExportLogs(Path.Combine(replayBatch,"runs"),zip,false);Open(replayBatch);}
-            _output.Text=mode=="controlled"?OneClickReport.Read(Path.GetDirectoryName(_last)!):File.ReadAllText(Path.Combine(_last,File.Exists(Path.Combine(_last,"result.json"))?"result.json":"report.md"));_status.Text="Сохранено: "+Path.GetFileName(_last);}
+            _output.Text=mode=="live-ab"&&File.Exists(Path.Combine(_last,"live-ab-report.txt"))?File.ReadAllText(Path.Combine(_last,"live-ab-report.txt")):mode=="controlled"?OneClickReport.Read(Path.GetDirectoryName(_last)!):File.ReadAllText(Path.Combine(_last,File.Exists(Path.Combine(_last,"result.json"))?"result.json":"report.md"));_status.Text="Сохранено: "+Path.GetFileName(_last);}
         catch(Exception ex){_output.Text=ex.ToString();}
         finally{_cts.Dispose();_cts=null;BusyChanged?.Invoke(false);_completion?.TrySetResult();_run.Enabled=true;_auto.Enabled=true;_cancel.Enabled=false;_mode.Enabled=true;foreach(var c in _config)c.Enabled=true;}
     }

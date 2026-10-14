@@ -19,6 +19,7 @@ internal static class ResearchJobs
             progress?.Report("Прогон: "+run.DirectoryPath);object result;string status;
             switch(mode)
             {
+                case "live-ab":if(options.AllowTrim)throw new ArgumentException("Live cooperative AB never trims foreign applications");result=LiveBackendResearch.Run(run,progress,ct);File.WriteAllText(run.FilePath("live-ab-report.txt"),LiveBackendResearch.Describe(result));status="owned_cooperative_live_ab_not_browser_or_telegram";break;
                 case "app-codecs":result=ApplicationResearch.Measure(options,run,progress,ct);status="real_app_sample_codec_verified_not_live_reclaim";break;
                 case "environment":result=WindowsEnvironment.Read(run);status="environment_probe_only";break;
                 case "selftest":result=ResearchSelfTest.Run();status="selftests_passed";break;

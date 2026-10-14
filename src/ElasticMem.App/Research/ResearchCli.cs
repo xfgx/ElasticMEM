@@ -4,6 +4,7 @@ internal static class ResearchCli
 {
     public static bool TryRun(string[] args)
     {
+        if(args.Contains("--live-backend")){try{int mi=Array.IndexOf(args,"--backend-mode");LiveBackendResearch.Protocol(mi<0?"zstd1":mi+1<args.Length?args[mi+1]:"invalid");}catch{Environment.ExitCode=1;}return true;}
         int at=Array.IndexOf(args,"--research");if(at<0)return false;
         string? Get(string name){int i=Array.IndexOf(args,name);return i>=0&&i+1<args.Length?args[i+1]:null;}
         int Int(string name,int fallback)=>int.TryParse(Get(name),out int value)?value:fallback;
@@ -11,6 +12,8 @@ internal static class ResearchCli
         string transcript=Get("--out")??Path.Combine(AppSettings.Dir,"research-cli-"+DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")+".txt");
         try
         {
+            if(mode=="live-ab-worker")
+            {Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(transcript))!);File.WriteAllText(transcript,System.Text.Json.JsonSerializer.Serialize(LiveBackendResearch.Worker(Get("--mode")??"",Get("--workload")??"",Get("--run-id")??""),ResearchRun.Json));return true;}
             if(mode=="g0-worker")
             {Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(transcript))!);File.WriteAllText(transcript,System.Text.Json.JsonSerializer.Serialize(EpochCalibration.Worker(),ResearchRun.Json));return true;}
             if(mode=="controlled-worker")
