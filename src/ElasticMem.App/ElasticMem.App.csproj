@@ -12,10 +12,11 @@
     <RootNamespace>ElasticMem.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>0.23.0</Version>
+    <Version>0.24.0</Version>
     <Product>ElasticMem — эластичное сжатие памяти</Product>
     <SatelliteResourceLanguages>ru;en</SatelliteResourceLanguages>
   </PropertyGroup>
+  <ItemGroup><Compile Include="../../driver/client/KernelPageStore.cs" Link="Driver/KernelPageStore.cs" /><Compile Include="../../driver/client/KernelSmoke.cs" Link="Driver/KernelSmoke.cs" /></ItemGroup>
   <ItemGroup><EmbeddedResource Include="../../windows-check/ПОЛНАЯ-ИНСТРУКЦИЯ.md" LogicalName="ElasticMem.FullInstructions" /></ItemGroup>
   <ItemGroup><ProjectReference Include="../ElasticMem.Core/ElasticMem.Core.csproj" /></ItemGroup>
   <ItemGroup>

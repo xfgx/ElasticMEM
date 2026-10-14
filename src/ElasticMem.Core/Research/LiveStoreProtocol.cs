@@ -3,6 +3,9 @@ using System.Text.Json;
 namespace ElasticMem.Core.Research;
 public static class LiveStoreProtocol
 {
+    // 4096 bytes -> 5464 base64 chars; default JSON may escape every '+' to six chars.
+    // 12000 rejected valid fixture key62 (12138 chars). 65536 safely bounds worst escaped page + header.
+    public const int MaxFrameChars=65536;
     /// <summary>Bounded local stdio protocol. No network listener; caller owns pipe/process.</summary>
     public static int Run(TextReader input,TextWriter output,string mode="zstd1")
     {
@@ -10,7 +13,7 @@ public static class LiveStoreProtocol
         while(true)
         {
             var line=new StringBuilder();int ch;
-            while((ch=input.Read())!=-1&&ch!='\n'){if(line.Length>=12000){output.WriteLine("{\"ok\":false,\"error\":\"request_too_large\"}");output.Flush();return 1;}if(ch!='\r')line.Append((char)ch);}
+            while((ch=input.Read())!=-1&&ch!='\n'){if(line.Length>=MaxFrameChars){output.WriteLine("{\"ok\":false,\"error\":\"request_too_large\"}");output.Flush();return 1;}if(ch!='\r')line.Append((char)ch);}
             if(ch==-1&&line.Length==0)return 0;
             try
             {

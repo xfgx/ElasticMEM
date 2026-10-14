@@ -10,3 +10,10 @@ research/ceiling/windows/*.obj
 research/ceiling/windows/build.log
 research/ceiling/windows/build-info.json
 *.bundle
+
+driver/out/
+*.sys
+*.pdb
+*.obj
+*.cat
+*.cer

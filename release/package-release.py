@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Research candidate 0.24 must not be sent through the 0.23 server-publish pipeline.
+from pathlib import Path as _GuardPath
+if '<Version>0.24.0</Version>' in (_GuardPath(__file__).resolve().parents[1]/'src/ElasticMem.App/ElasticMem.App.csproj').read_text():
+    raise SystemExit('0.24 is a local research candidate; use package-024.py. Windows driver qualification/signing pending; no server publication.')
 import argparse,datetime,hashlib,json,pathlib,re,shutil,struct,subprocess,zipfile,xml.etree.ElementTree as ET
 from release_inventory import BASE,FINAL,verify_build,inventory,validate_paths
 p=argparse.ArgumentParser();p.add_argument('--output',required=True);p.add_argument('--core-log',required=True);p.add_argument('--publish-dir',required=True);p.add_argument('--previous-manifest-sha256',required=True);a=p.parse_args();root=pathlib.Path(__file__).resolve().parents[1];out=pathlib.Path(a.publish_dir);dest=pathlib.Path(a.output);dest.mkdir(parents=True,exist_ok=True);log=pathlib.Path(a.core_log).read_text();sha=lambda b:hashlib.sha256(b).hexdigest();version=ET.parse(root/'src/ElasticMem.App/ElasticMem.App.csproj').getroot().find('.//Version').text;commit=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip()

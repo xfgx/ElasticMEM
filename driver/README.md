@@ -1,0 +1,58 @@
+# ElasticMemStore — исследовательский драйвер Windows 11 x64
+
+**Статус: реализованный код KMDF kernel-хранилища + клиент; не production, не прозрачный RAM-оптимизатор.**
+
+## Что он делает
+
+- Штатный non-PnP KMDF control device `\\.\ElasticMemStore`, ABI v1.
+- PUT/GET/DELETE/RESET/STATS/CONFIG, ровно 4096 байт на страницу, ключи 0…4095.
+- XPRESS через документированные `RtlCompressBuffer`/`RtlDecompressBuffer`; если нет уменьшения или codec не принимает блок — исходные байты. Не zstd в ядре.
+- CRC32 после восстановления; ошибка возвращается без выдачи испорченных байтов. CRC — детектор случайного повреждения, не криптографическая защита от другого kernel-драйвера.
+- Caller buffer не удерживается. При отказе overwrite предыдущие данные остаются. RESET/закрытие очищают байты перед освобождением.
+- Сессия принадлежит FILE_OBJECT: отдельные CreateFile изолированы; DuplicateHandle разделяет ту же сессию.
+- Предел 8 сессий, 4096 страниц/сессию, 16 МиБ запрошенных allocations/сессию, 64 МиБ tracked allocations устройства. Таблица указателей входит в quota; workspace и временный новый overwrite входят в device limit. Поэтому raw-сессия в x64 вмещает 4076, не 4096 заполненных страниц.
+- Только SYSTEM и elevated Administrators; METHOD_BUFFERED, нет указателей, PID/адресов чужого процесса, DMA, hooks или произвольной kernel-памяти.
+- PASSIVE_LEVEL, один device wait-lock для create/cleanup/IOCTL; sequential queue, атомарный краткий request. Отмена до начала операции; уже начатое обновление может завершиться успешно. Не async-pager.
+- Paged pool: ОС может вытеснять его; страницы **не гарантированно физически резидентны**.
+
+## Чего он НЕ делает
+
+Не подменяет Windows Memory Manager, не перехватывает page faults/записи в Chrome или Telegram, не отключает pagefile/Memory Compression, не инжектирует код, не обходит античит, подпись, Secure Boot или HVCI. Это kernel backend для **явно интегрированного** клиента, который владеет страницами и освобождает исходные буферы. Перенос копии чужой страницы в этот драйвер сам по себе ничего не освобождает.
+
+`session_allocation_bytes/global_allocation_bytes` — суммы размеров запросов allocator, НЕ фактическая физическая RAM. Они не включают округления pool, KMDF/file/request contexts, SystemBuffer, образ драйвера и весь процесс клиента. Нельзя выдавать разницу payload за экономию RAM рабочего стола.
+
+Хранилище volatile. Закрытие последнего дескриптора сессии/сбой/перезагрузка уничтожают данные. Не хранить единственную копию важных данных.
+
+## Сборка и загрузка
+
+1. **Отдельная Windows 11 VM**, снимок до установки. Не основной ПК. Драйвер может вызвать BSOD; статические/portable тесты этого не исключают.
+2. VS 2022 Desktop C++, SDK и WDK 10.0.26100, KMDF 1.33; .NET 8 SDK.
+3. Developer PowerShell: `./driver/scripts/Build-Windows.ps1`.
+4. Подписать SYS своим согласованным процессом разработки/поставки драйверов. Private key не включать в архив и не отправлять в чат. Production требует принятого Windows signing pipeline.
+5. Установка требует уже **валидной доверенной подписи**. Скрипт ничего не меняет в security policy. Если текущая политика VM не допускает подпись — остановиться; не отключать защиту ради этого файла.
+6. Elevated PowerShell: `./driver/scripts/Install-SignedDriver.ps1 -Path ./driver/out/Release/ElasticMemStore.sys -ResearchVM`.
+7. `./driver/out/client/ElasticMem.DriverClient.exe smoke kernel-smoke.json` либо приложение: Лаборатория → «Драйвер · проверка kernel-хранилища (только VM)». Приложение должно быть elevated. Автоустановки/auto-elevation нет.
+8. Закрыть клиенты, `./driver/scripts/Uninstall-Driver.ps1`.
+
+В комплекте может быть `kernel-cross/ElasticMemStore.sys`: это **НЕПОДПИСАННЫЙ cross-build**, не прошедший WDK/MSBuild и Windows load validation. Install-SignedDriver должен его отвергнуть. Предпочтительно пересобрать WDK и подписать результат локально. Cross-build сам по себе не доказывает HVCI-совместимость.
+
+## Обязательные проверки VM перед любой поставкой
+
+- WDK Debug/Release x64, Code Analysis; signing/Code Integrity/HVCI logs. Использовать актуальные официальные правила проверки драйверов.
+- Smoke: raw/XPRESS, все байты, overwrite, random negative control, isolation, quotas, malformed ABI/lengths, parallel client calls, reset/handle close.
+- Не-elevated клиент получает access denied; сессия не открывается.
+- Повторный smoke (например, 20 запусков); отдельно несколько процессов, abrupt client exit, CancelIoEx и гонка close/request с собственными fixtures.
+- В VM включить Driver Verifier **только для ElasticMemStore.sys** по стандартной процедуре Microsoft: pool, IRQL, deadlock, I/O/security checks. Снимок и доступ к recovery обязательны; не проверять все системные драйверы.
+- Проверить штатный stop/unload/reload при закрытых handles и отказ/безопасное поведение при активном клиенте; reboot, shutdown. Для open handles нормальный stop может быть недоступен; принудительный unload недопустим.
+- RAM/commit считать для полного client+kernel пути, отдельно CPU и p50/p95/p99, при неизменённой системной политике. XPRESS/raw kernel A/B пока НЕ реализован как измерительный стенд; smoke не измеряет пользу.
+
+## Portable проверки
+
+`ZIG=/path/to/zig driver/tests/run.sh /path/to/output` — C store + test codec (не XPRESS) с UBSan.
+Без ZIG требуется gcc и runtime библиотек AddressSanitizer/UBSan.
+`dotnet run --project tests/ElasticMem.Transport.Tests -c Release` — owned-process IPC, raw/zstd, UTF8/BOM, deadlines, escaped-base64 frame regression (old cap12000, fixture key62=12138), malformed replies, log privacy.
+
+Официальные API: https://learn.microsoft.com/en-us/windows-hardware/drivers/wdf/using-control-device-objects ; https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-rtlcompressbuffer
+
+### Воспроизведение Linux cross-build
+`python3 driver/scripts/prepare-cross.py /path/to/toolchains` загружает pinned Microsoft NuGet пакеты (~266МБ) и создаёт case aliases. Скачайте Zig0.14.1 с официального сайта и проверьте опубликованный checksum. Затем задайте `ZIG`, `WDK_ROOT`, `SDK_ROOT`, выполните `driver/scripts/cross-build.sh /path/to/output`. Это не заменяет WDK/MSBuild/Windows qualification.

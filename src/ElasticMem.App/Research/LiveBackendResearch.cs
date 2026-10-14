@@ -86,6 +86,7 @@ internal static class LiveBackendResearch
                 a_working_set_bytes=a.GetProperty("after_work").GetProperty("working_set_median_bytes").GetDouble(),b_working_set_bytes=b.GetProperty("after_work").GetProperty("working_set_median_bytes").GetDouble(),
                 observed_absolute_working_set_reduction_bytes=a.GetProperty("after_work").GetProperty("working_set_median_bytes").GetDouble()-b.GetProperty("after_work").GetProperty("working_set_median_bytes").GetDouble(),observed_incremental_working_set_reduction_bytes=Increment(a,"working_set_median_bytes")-Increment(b,"working_set_median_bytes"),observed_incremental_private_commit_reduction_bytes=Increment(a,"private_commit_median_bytes")-Increment(b,"private_commit_median_bytes"),a_read_p50_us=a.GetProperty("read_p50_us").GetDouble(),b_read_p50_us=b.GetProperty("read_p50_us").GetDouble(),a_read_p99_us=a.GetProperty("read_p99_us").GetDouble(),b_read_p99_us=b.GetProperty("read_p99_us").GetDouble(),a_write_p99_us=a.GetProperty("write_p99_us").GetDouble(),b_write_p99_us=b.GetProperty("write_p99_us").GetDouble(),checksum_equal=true});
         }
+        run.WriteJson("live-ab-progress.json",new{schema="elasticmem.live.ab.progress.v1",status="owned_memory_stage_completed_ipc_pending_not_complete_run",pairs,workers=rows,transparent_foreign_backend_supported=false});
         var ipc=ProbeIpc(run,ct);
         return new{schema="elasticmem.live.ab.v1",ipc_probe=ipc,status="owned_cooperative_live_ab_not_browser_or_telegram",pairs,workers=rows,transparent_foreign_backend_supported=false,chrome_telegram_ram_saved_bytes=(long?)null,
             limitations=new[]{"Primary comparison preset: A/raw B/zstd1,2fixed workloads,3pairs/orderAB BA AB; descriptive repeated runs,not independent realapp evidence or confidence intervals","Positive incremental WS reduction concerns ONLY own cooperative child at measured checkpoints; it is not total unique physical/system RAM","No generic benefit gate: memory and latency tradeoff must be accepted by the client; random negative control may show overhead","Backend usable only when client owns and releases original pages; browser/Telegram integration absent","No foreign capture/trim/injection/kernel/pagefile/settings changes; no automatic user data upload"}};
@@ -104,7 +105,7 @@ internal static class LiveBackendResearch
         var results=new List<object>();
         foreach(string mode in new[]{"raw","zstd1"})
         {
-            var psi=new ProcessStartInfo(Environment.ProcessPath!){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true};
+            var psi=new ProcessStartInfo(Environment.ProcessPath!){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,StandardInputEncoding=new UTF8Encoding(false),StandardOutputEncoding=new UTF8Encoding(false)};
             foreach(string arg in new[]{"--live-backend","--backend-mode",mode})psi.ArgumentList.Add(arg);
             ct.ThrowIfCancellationRequested();using var child=Process.Start(psi)??throw new IOException("Own IPC child start failed");Exception? primary=null;
             try
@@ -112,18 +113,18 @@ internal static class LiveBackendResearch
                 long identity=child.StartTime.ToUniversalTime().Ticks;
                 JsonElement Call(object request)
                 {
-                    ct.ThrowIfCancellationRequested();if(child.HasExited)throw new IOException("IPC child exited");
-                    using var rpc=CancellationTokenSource.CreateLinkedTokenSource(ct);rpc.CancelAfter(TimeSpan.FromSeconds(10));
-                    string? reply;
-                    try
+                    JsonElement reply=LiveStoreRpc.Exchange(child,request,ct);
+                    if(!reply.GetProperty("ok").GetBoolean())
                     {
-                        child.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request).AsMemory(),rpc.Token).WaitAsync(rpc.Token).GetAwaiter().GetResult();
-                        child.StandardInput.FlushAsync(rpc.Token).WaitAsync(rpc.Token).GetAwaiter().GetResult();
-                        reply=child.StandardOutput.ReadLineAsync(rpc.Token).AsTask().WaitAsync(rpc.Token).GetAwaiter().GetResult();
+                        string? code=reply.TryGetProperty("error",out var error)&&error.ValueKind==JsonValueKind.String?error.GetString():null;
+                        string[] allowed={"JsonException","ArgumentException","InvalidOperationException","KeyNotFoundException","InvalidDataException","FormatException","request_too_large"};
+                        string safeCode=code!=null&&allowed.Contains(code)?code:"unclassified";
+                        var req=JsonSerializer.SerializeToElement(request);string? command=req.GetProperty("cmd").GetString();
+                        int? key=req.TryGetProperty("key",out var keyNode)&&keyNode.TryGetInt32(out int k)?k:null;
+                        run.WriteJson("live-ipc-error.json",new{schema="elasticmem.live.ipc.error.v1",mode,command,logical_fixture_key=key,error_class=safeCode,owned_child_pid=child.Id,owned_child_start_ticks=identity,raw_reply_or_payload_recorded=false});
+                        throw new InvalidDataException($"IPC mode={mode} command={command} fixture_key={key} error_class={safeCode}; no payload logged");
                     }
-                    catch(OperationCanceledException ex)when(!ct.IsCancellationRequested){throw new TimeoutException("Whole IPC RPC exceeded10seconds",ex);}
-                    if(reply==null||reply.Length>12000)throw new InvalidDataException("IPC reply missing/oversize");
-                    using var d=JsonDocument.Parse(reply);if(!d.RootElement.GetProperty("ok").GetBoolean())throw new InvalidDataException("IPC command failed");return d.RootElement.Clone();
+                    return reply;
                 }
                 for(int i=0;i<64;i++)Call(new{cmd="put",key=i,page_base64=Convert.ToBase64String(Page(i,0,"structured"))});
                 var reads=new List<double>();for(int i=0;i<128;i++){int k=i%64;long t=Stopwatch.GetTimestamp();var response=Call(new{cmd="get",key=k});byte[] b=Convert.FromBase64String(response.GetProperty("page_base64").GetString()!);double us=Us(t);if(!b.AsSpan().SequenceEqual(Page(k,0,"structured")))throw new InvalidDataException("IPC full byte mismatch");if(i>=64)reads.Add(us);}

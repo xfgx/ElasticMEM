@@ -35,6 +35,7 @@ internal sealed class ResearchTab:TabPage
     public void CancelRun()=>_cts?.Cancel();
     static NumericUpDown N(decimal min,decimal max,decimal value)=>new(){Minimum=min,Maximum=max,Value=value,Width=max>100000?120:88,ThousandsSeparator=true};
     static readonly (string Key,string Title,string Hint)[] Modes={
+        ("kernel-smoke","Драйвер · проверка kernel-хранилища (только VM)","Нужен установленный подписанный ElasticMemStore.sys и запуск от администратора. Собственные синтетические страницы → XPRESS в paged pool. Это НЕ прозрачное сжатие Chrome/Telegram. Не устанавливает драйвер и не меняет безопасность Windows."),
         ("live-ab","Live backend · А/Б памяти и задержек","Настоящие Put/Get/записи сжатых страниц в собственном worker:64МиБ, structured + random,3парыAB/BA. Реальные WS/commit и p50/p99 API. Только cooperative-клиент; Chrome/Telegram НЕ переведены на backend. Никаких trim/OS настроек."),
         ("environment","Windows · окружение и MMAgent","Read-only проверка памяти, Memory Compression и PageCombining. Ничего не включает и не меняет. Статус combining не равен измеренной экономии."),
         ("selftest","Самопроверка встроенных механизмов","Детерминированные проверки хранилища, нормализации, модели и хешей. GPU/Windows API проверяются отдельно."),
@@ -113,7 +114,8 @@ internal sealed class ResearchTab:TabPage
         ResearchOptions options;
         try{options=Options();}catch(Exception ex){_status.Text="Параметры: "+ex.Message;return;}
         string mode=Modes[_mode.SelectedIndex].Key;
-        if(mode=="live-ab")options=options with{AllowTrim=false};
+        if(mode is "live-ab" or "kernel-smoke")options=options with{AllowTrim=false};
+        if(mode=="kernel-smoke"&&MessageBox.Show(this,"Это исследовательский драйвер. Запускайте только в отдельной Windows VM со снимком. Драйвер должен быть предварительно установлен штатно. Данные синтетические, чужая память не читается. Продолжить?","Kernel smoke",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
         if(mode=="g0-epochs"&&!options.AllowTrim){_status.Text="Нужно отдельное согласие на EmptyWorkingSet.";return;}
         if(mode=="g1"&&options.Pids.Contains(Environment.ProcessId)){_status.Text="Г1: нельзя снимать само приложение ElasticMem — это загрязняет измерение. Выберите внешние процессы.";return;}
         if(mode=="g0-sample"&&options.Pids.Length==0){_status.Text="Выберите процессы для наблюдения.";return;}
@@ -122,7 +124,7 @@ internal sealed class ResearchTab:TabPage
         if(mode=="g1"&&MessageBox.Show(this,"Снимки могут содержать пароли, переписку и другие личные данные. Они остаются локально; по умолчанию не попадают в ZIP логов. Не выбирайте игры с античитом. В Г1 — максимум 4 процесса.\n\nПродолжить чтение памяти выбранных PID?","Г1: явное согласие",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
         _batch=null;_cts=new();_completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);BusyChanged?.Invoke(true);_run.Enabled=false;_auto.Enabled=false;_cancel.Enabled=true;_mode.Enabled=false;foreach(var c in _config)c.Enabled=false;
         try{var progress=new Progress<string>(s=>{if(!IsDisposed)_status.Text=s;});
-            string? replayBatch=mode is "epochs-replay" or "controlled" or "live-ab"?Path.Combine(AppSettings.Dir,"research-batches",DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")+"-"+mode):null;
+            string? replayBatch=mode is "epochs-replay" or "controlled" or "live-ab" or "kernel-smoke"?Path.Combine(AppSettings.Dir,"research-batches",DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")+"-"+mode):null;
             _last=await Task.Run(()=>ResearchJobs.Execute(mode,options,progress,_cts.Token,replayBatch==null?null:Path.Combine(replayBatch,"runs")));
             if(replayBatch!=null){string zip=Path.Combine(replayBatch,"ElasticMem-logs-"+Path.GetFileName(replayBatch)+".zip");ResearchRun.ExportLogs(Path.Combine(replayBatch,"runs"),zip,false);Open(replayBatch);}
             _output.Text=mode=="live-ab"&&File.Exists(Path.Combine(_last,"live-ab-report.txt"))?File.ReadAllText(Path.Combine(_last,"live-ab-report.txt")):mode=="controlled"?OneClickReport.Read(Path.GetDirectoryName(_last)!):File.ReadAllText(Path.Combine(_last,File.Exists(Path.Combine(_last,"result.json"))?"result.json":"report.md"));_status.Text="Сохранено: "+Path.GetFileName(_last);}
