@@ -20,6 +20,8 @@ internal static class Program
         {
             switch (args[i].ToLowerInvariant())
             {
+                case "--backend-agent": opts.BackendPanel=true;opts.Tray=true;break;
+                case "--backend-ui": opts.BackendPanel=true;break;
                 case "--agent": opts.StartAgent = true; break;
                 case "--all": opts.All = true; break;
                 case "--process": if (i + 1 < args.Length) { opts.Process = args[++i]; opts.All = false; } break;
@@ -28,13 +30,15 @@ internal static class Program
                 case "--updated": opts.UpdatedFrom = i + 1 < args.Length ? args[++i] : "?"; break;
             }
         }
-        Application.Run(new MainForm(opts));
+        if(opts.BackendPanel)opts.StartAgent=false; // Backend mode must not start the legacy host trim agent.
+        using var singleton=args.Contains("--backend-agent")?new System.Threading.Mutex(false,"Local\\ElasticMem.BackendAgent."+System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value):null;
+        bool held=false;try{if(singleton!=null){held=singleton.WaitOne(0);if(!held)return;}Application.Run(new MainForm(opts));}finally{if(held)singleton!.ReleaseMutex();}
     }
 }
 
 public sealed class StartupOptions
 {
-    public bool StartAgent, Tray, All = true;
+    public bool StartAgent, Tray, All = true, BackendPanel;
     public string Process = "";
     public string? UpdatedFrom;
     public string[] RawArgs = Array.Empty<string>();

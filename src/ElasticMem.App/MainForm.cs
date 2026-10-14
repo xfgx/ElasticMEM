@@ -57,6 +57,7 @@ public sealed class MainForm : Form
     private UpdateTab _updateTab = null!;
     private AppProfile? _agentProfile;
     private ResearchTab _researchTab=null!;
+    private ElasticMem.App.Backend.BackendTab _backendTab=null!;
     private bool _accessBusy,_benchBusy;
 
     private void StartAgentForProfile(AppProfile p)
@@ -94,6 +95,9 @@ public sealed class MainForm : Form
         tabs.TabPages.Add(BuildAccessTab());
         _researchTab = new ResearchTab(() => _agent.Running || _anCts!=null || _benchBusy || _appsTab.HasActiveWork || _accessBusy,async()=>{if(_agent.Running){await _agent.StopAndWaitAsync();_btnStart.Text="▶ Запустить агент";}});
         tabs.TabPages.Add(_researchTab);
+        _backendTab=new ElasticMem.App.Backend.BackendTab(()=>_researchTab.IsRunning||_agent.Running||_anCts!=null||_benchBusy||_appsTab.HasActiveWork||_accessBusy);tabs.TabPages.Add(_backendTab);
+        if(_startup.BackendPanel)Shown+=async(_,_)=>{tabs.SelectedTab=_backendTab;await _backendTab.AgentStarted();};
+        FormClosing+=async(_,e)=>{if(_backendTab.IsBusy){e.Cancel=true;await _backendTab.WaitAndStop();if(!IsDisposed)BeginInvoke(Close);}};
         _researchTab.BusyChanged += busy => { foreach(TabPage page in tabs.TabPages)if(page!=_researchTab)page.Enabled=!busy; };
         FormClosing += async (_, e) => { if(_researchTab.IsRunning){e.Cancel=true;await _researchTab.CancelAndWait();if(!IsDisposed)BeginInvoke(Close);} };
         _updateTab = new UpdateTab(MakeMono(), _startup.RawArgs, AddLog, _startup.UpdatedFrom);
@@ -323,7 +327,7 @@ public sealed class MainForm : Form
     {
         FillProcessCombos();
         _ = CheckMmAgent(askEnable: false);
-        _ = _updateTab.StartupCheckAsync();
+        if(!_startup.BackendPanel)_ = _updateTab.StartupCheckAsync();
         if (_startup.UpdatedFrom != null && !_startup.StartAgent) _tabs.SelectedTab = _updateTab;
         if (_startup.StartAgent)
         {
@@ -331,8 +335,8 @@ public sealed class MainForm : Form
             _cbProc.Text = _startup.Process;
             _nIdle.Value = (decimal)Math.Clamp(_startup.MinIdle, 5, 3600);
             ToggleAgent();
-            if (_startup.Tray) BeginInvoke(() => { WindowState = FormWindowState.Minimized; Hide(); ShowInTaskbar = false; });
         }
+        if (_startup.Tray && (_startup.StartAgent || _startup.BackendPanel)) BeginInvoke(() => { WindowState = FormWindowState.Minimized; Hide(); ShowInTaskbar = false; });
     }
 
     private void RestoreFromTray() { Show(); ShowInTaskbar = true; WindowState = FormWindowState.Normal; Activate(); }

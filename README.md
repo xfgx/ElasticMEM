@@ -112,3 +112,6 @@ Fresh identity-bound per-target renderer capture immediately before epochs; excl
 
 Полная актуальная установка: `windows-check/ПОЛНАЯ-ИНСТРУКЦИЯ.md` (также встроена в приложение).
 Добавлены выбор Edge/Chrome/Telegram, logs-only сводный CSV и опциональная проверка **копий** тех же real-app страниц через kernel RAW/XPRESS только в VM. Никакого освобождения оригинальной памяти приложения; physical RAM saving и speedup не измеряются. Новый Windows application/kernel-sample путь требует проверки на пользовательском ПК/VM. Native driver binary unchanged: предыдущий Server 2025 synthetic smoke подтверждён; Windows 11/HVCI/Verifier не квалифицированы. Старый LLD SYS не устанавливать.
+
+## Backend preview 0.27
+`backend/README.md`: Windows host desktop stays; tray agent manages a paired Hyper-V guest and supported RDS RemoteApp. Guest compression/DM uses Windows/Hyper-V, not our SYS. SYS/WHP custom-VMM provider building blocks are separate and unconnected; no complete custom pager or new native SYS execution claim.
