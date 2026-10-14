@@ -165,6 +165,11 @@ try
     var cr=new{rows=new[]{new{idle_epochs=2,block_pages=4,policy="coaccess",mean_useful_pages_per_decode=3.0,decode_events=40,excluded_common_unknown_epochs=1}}};
     controlled.WriteJson("result.json",new{schema="elasticmem.controlled.research.v1",cases=new[]{new{name="fixture",observation=new{
         known_fraction=.75,unknown_test_epochs=1,known_false_negative=3,known_false_positive=4},ground_truth_causal=cr,windows_proxy_causal=cr}}});
+    // Version2 result must render lifecycle separately,not as a positive causal gate.
+    var controlResult=System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(controlled.FilePath("result.json")))!;
+    controlResult["schema"]="elasticmem.controlled.research.v2";
+    controlResult["lifecycle"]=System.Text.Json.JsonSerializer.SerializeToNode(new{active_page_epoch_cells=28672,dead_page_epoch_cells=4000,reserved_never_committed_page_epoch_cells=96,reserved_reported_valid_before=0,reserved_reported_valid_after=2,retained_active_unknown_cells=3,known_false_negative=1,known_false_positive=2,committed_pages=1000,decommitted_pages=900,dead_reported_valid_before=0,dead_reported_valid_after=1,checksum_verified=true});
+    File.WriteAllText(controlled.FilePath("result.json"),controlResult.ToJsonString());
     File.WriteAllText(controlled.FilePath("inputs/controlled-child.json"),"private worker IPC fixture");
     controlled.Seal("controlled_synthetic_validation_not_browser_evidence","fixture");
     var errors=new List<string>();string report=ElasticMem.App.Research.OneClickReport.Read(reportRoot,errors);
@@ -172,6 +177,8 @@ try
     Check(report.Contains("known cells=75.00%")&&report.Contains("unknown TEST epochs=1; FN=3; FP=4"),"controlled missingness explicit");
     Check(report.Contains("ground_truth_causal T2/cap4")&&report.Contains("windows_proxy_causal T2/cap4"),"truth vs observed distinguished");
     Check(report.Contains("не подтверждает пользу в Chrome"),"synthetic report no browser effectiveness claim");
+    Check(report.Contains("Lifecycle decommit/recommit: active=28672; dead=4000; reserved-only=96; retained unknown=3; FN/FP=1/2"),"lifecycle report preserves disjoint populations");
+    Check(report.Contains("Г5 lifecycle skipped")&&report.Contains("dead reported Valid before/after=0/1"),"lifecycle report no fake causal gate or hidden dead anomaly");
 }
 catch(Exception ex){Check(false,"controlled report fixture: "+ex);}
 finally{if(Directory.Exists(reportRoot))Directory.Delete(reportRoot,true);}

@@ -10,6 +10,18 @@ public static class BatchPolicy
             .OrderByDescending(g=>g.Sum(c=>Math.Max(0,c.WorkingSet))).ThenBy(g=>g.Key,StringComparer.OrdinalIgnoreCase)
             .Select(g=>g.GroupBy(c=>c.Pid).Select(x=>x.First()).OrderByDescending(c=>c.WorkingSet).ThenBy(c=>c.Pid).Take(4).ToArray()).FirstOrDefault()??Array.Empty<ResearchCandidate>();
     }
+    public static string ValidateBrowser(string preference)
+    {
+        if(preference is not("auto-browser" or "msedge" or "chrome" or "steamwebhelper"))throw new ArgumentException("Browser must be auto-browser,msedge,chrome or explicit steamwebhelper");
+        return preference;
+    }
+    public static ResearchCandidate[] SelectBrowser(IEnumerable<ResearchCandidate> candidates,int self,string preference="auto-browser",int minimum=2)
+    {
+        ValidateBrowser(preference);var rows=candidates.ToArray();
+        if(preference!="auto-browser")return Select(rows,self,preference,minimum);
+        // Do not let a single Edge renderer hide a usable Chrome pair. Never silently choose Steam.
+        var edge=Select(rows,self,"msedge",minimum);return edge.Length>=minimum?edge:Select(rows,self,"chrome",minimum);
+    }
     public static bool Failure(string status)=>status=="completed_with_failures"||status.Contains("failed",StringComparison.OrdinalIgnoreCase)||status.StartsWith("invalid",StringComparison.Ordinal)||status.StartsWith("interrupted",StringComparison.Ordinal)||status.StartsWith("cancelled",StringComparison.Ordinal);
     public static string Conclusion(IEnumerable<string> statuses)
     {

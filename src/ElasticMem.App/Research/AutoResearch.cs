@@ -79,11 +79,12 @@ internal static class AutoResearch
         }
         return result.ToArray();
     }
-    public static async Task<AutoOutcome> RunAsync(bool memoryConsent,int seconds,IProgress<string>? progress,CancellationToken ct,Func<string,CancellationToken,Task<string>>? uiAudit=null,bool allowTrim=false,bool extended=false,string? scratch=null)
+    public static async Task<AutoOutcome> RunAsync(bool memoryConsent,int seconds,IProgress<string>? progress,CancellationToken ct,Func<string,CancellationToken,Task<string>>? uiAudit=null,bool allowTrim=false,bool extended=false,string? scratch=null,string browserPreference="auto-browser",bool browserOnly=false)
     {
+        BatchPolicy.ValidateBrowser(browserPreference);if(browserOnly&&(allowTrim||extended))throw new ArgumentException("Short browser check never trims or uses extended mode");
         string batch=Path.Combine(AppSettings.Dir,"research-batches",DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")+"-"+Guid.NewGuid().ToString("N")[..8]);string root=Path.Combine(batch,"runs");Directory.CreateDirectory(root);
-        var steps=new List<AutoStep>();var selection=Array.Empty<ResearchCandidate>();var g1Selection=Array.Empty<ResearchCandidate>();int[] counterPids=Array.Empty<int>();
-        using var summary=new ResearchRun(root,"auto-summary",Updater.Current.ToString(),ResearchJobs.Commit,new{seconds,memory_consent=memoryConsent,working_set_trim_consent=allowTrim,extended,selection="same-session native x64 Chromium renderers; one family; 2..4; refresh before G1",snapshot_mib=16,pool_mib=32,iterations=100,screenshots=false});
+        var discovered=Array.Empty<ResearchCandidate>();var steps=new List<AutoStep>();var selection=Array.Empty<ResearchCandidate>();var g1Selection=Array.Empty<ResearchCandidate>();int[] counterPids=Array.Empty<int>();
+        using var summary=new ResearchRun(root,"auto-summary",Updater.Current.ToString(),ResearchJobs.Commit,new{seconds,memory_consent=memoryConsent,working_set_trim_consent=allowTrim,extended,browser_preference=browserPreference,browser_only=browserOnly,selection="same-session native x64 Chromium renderers; one family; 2..4; refresh before G1",snapshot_mib=16,pool_mib=32,iterations=100,screenshots=false});
         string archive=Path.Combine(batch,"ElasticMem-logs-"+Path.GetFileName(batch)+".zip");
         async Task<string> Step(string key,ResearchOptions options,string note)
         {
@@ -108,15 +109,17 @@ internal static class AutoResearch
             }
             else
             {
-                await Step("controlled",safe,"Own child native arena only; three fixed synthetic schedules; ground-truth reads versus Windows residency proxy; no foreign trim/OS setting changes. Synthetic positive control is NOT renderer evidence.");
-                selection=BatchPolicy.Select(await Task.Run(Discover),Environment.ProcessId,minimum:1);
-                counterPids=CounterPids();if(counterPids.Length==0)counterPids=new[]{Environment.ProcessId};
-                await Step("g0-sample",safe with{Pids=counterPids,Seconds=extended?Math.Max(seconds,600):seconds},"Read-only up to5 Chrome/Edge/Steam/Python/Node process counters,when already running. This wider list is NOT used for trims or snapshots. No complete desktop/trace claim.");
-                await Step("g0-calibration",safe,"Isolated own32MiB worker: baseline/trim/trim+query,rotated10rounds,descriptive paired bootstrap,measured operations/s. Not real browser throughput.");
+                if(!browserOnly)await Step("controlled",safe,"Own child native arena only; three fixed synthetic schedules plus separate lifecycle decommit/recommit generations; ground-truth reads versus Windows residency proxy; no foreign trim/OS setting changes. Synthetic positive control is NOT renderer evidence.");
+                discovered=await Task.Run(Discover);selection=BatchPolicy.SelectBrowser(discovered,Environment.ProcessId,browserPreference);
+                progress?.Report("Браузер на ЭТОМ ПК: "+(selection.Length==0?"нет подтверждённой пары для "+browserPreference:selection[0].Family+" ("+selection.Length+" рендерера)"));
+                counterPids=browserOnly?selection.Select(x=>x.Pid).ToArray():CounterPids();if(!browserOnly&&counterPids.Length==0)counterPids=new[]{Environment.ProcessId};
+                if(browserOnly&&counterPids.Length==0)Skip("g0-sample","skipped_no_selected_browser_pair","No confirmed pair for requested local browser; no self/other-family substitution.");
+                else await Step("g0-sample",safe with{Pids=counterPids,Seconds=extended?Math.Max(seconds,600):seconds},browserOnly?"Read-only counters for selected local browser renderer pair only; no other-family substitution.":"Read-only up to5 Chrome/Edge/Steam/Python/Node process counters,when already running. This wider list is NOT used for trims or snapshots. No complete desktop/trace claim.");
+                if(!browserOnly)await Step("g0-calibration",safe,"Isolated own32MiB worker: baseline/trim/trim+query,rotated10rounds,descriptive paired bootstrap,measured operations/s. Not real browser throughput.");
                 Skip("g0-model","skipped_exact_trace_unavailable","This build does not acquire a complete Windows access trace. DAMON/page_idle sampling must not be relabelled exact.");
                 g1Selection=selection.Length==0?Array.Empty<ResearchCandidate>():BatchPolicy.Select(await Task.Run(Discover),Environment.ProcessId,selection[0].Family);
                 if(!memoryConsent)Skip("g1","skipped_no_memory_read_consent","Memory capture requires explicit consent; CLI use --allow-memory-read.");
-                else if(g1Selection.Length<2)Skip("g1","skipped_no_safe_process_pair","No 2..4 readable native x64 same-family renderers. Open normal Chrome/Edge tabs or Steam client and repeat; no apps are launched automatically.");
+                else if(g1Selection.Length<2)Skip("g1","skipped_no_safe_process_pair","On THIS Windows computer no 2..4 confirmed renderer pair for preference="+browserPreference+". Open at least2 normal tabs in the selected Edge/Chrome on THIS computer; no remote browser access,no silent family fallback,no apps launched automatically.");
                 else
                 {
                     string g1=await Step("g1",safe with{Pids=g1Selection.Select(p=>p.Pid).ToArray(),SnapshotMiB=16,ExpectedStarts=g1Selection.ToDictionary(p=>p.Pid,p=>p.StartTicks)},"Fresh same-family renderer selection; residency pre/post guards; no self capture. Private snapshots remain local and are excluded from ZIP.");
@@ -145,8 +148,10 @@ internal static class AutoResearch
                 if(!memoryConsent||g1Selection.Length<2){Skip("g5","skipped_g1_source_unavailable","No epoch source");Skip("g4","skipped_g1_source_unavailable","No successful resident G1 source");Skip("g0-epochs","skipped_g1_source_unavailable","No successful resident G1 source");}
                 Skip("fault-origin","skipped_fault_origin_not_attributed","Post-trim own reads have unknown backing. No confirmed Xpress/pagefile latency; no pressure induced or system settings changed.");
                 Skip("g4-churn","skipped_volume_decision_unavailable","Own synthetic churn available as manual control; real renderer churn/driver decision requires independent volume evidence.");
-                await Step("disk-qd1",safe with{Scratch=scratch??Path.GetTempPath()},"Own32MiB unbuffered random file QD1,4/64/256KiB; runs without GPU. NOT real pagefile fault or verified NVMe.");
+                if(!browserOnly)await Step("disk-qd1",safe with{Scratch=scratch??Path.GetTempPath()},"Own32MiB unbuffered random file QD1,4/64/256KiB; runs without GPU. NOT real pagefile fault or verified NVMe.");
                 await Step("environment",safe,"Second read-only environment/store-visibility probe; WS is not compressed payload.");
+                if(!browserOnly)
+                {
                 await Step("g2",safe,"Own fixed-schema records; serialized footprint, not CPython/V8 RSS.");
                 string gpu=await Step("gpu-probe",safe,"Software and UMA adapters are never used as VRAM evidence.");
                 int adapter=-1,dmaAdapter=-1;
@@ -165,12 +170,13 @@ internal static class AutoResearch
                     ct.ThrowIfCancellationRequested();progress?.Report("Автопроверка: интерфейс двух тем");string folder=await uiAudit(root,ct);ResearchRun.Verify(folder);
                     using var m=JsonDocument.Parse(File.ReadAllText(Path.Combine(folder,"manifest.json")));steps.Add(new("ui-audit",m.RootElement.GetProperty("status").GetString()!,Path.GetFileName(folder),"Mechanical audit at current DPI, no screenshots, not human visual signoff."));
                 }
+                }
             }
         }
         catch(OperationCanceledException ex){steps.Add(new("batch","cancelled_partial_not_result","",ex.Message));}
         catch(Exception ex){summary.Log(ex.ToString());steps.Add(new("batch","failed_automation","",ex.Message));}
         string conclusion=BatchPolicy.Conclusion(steps.Select(s=>s.Status));
-        string report="ElasticMem "+Updater.Current+" — автоматическая проверка\r\n\r\nСтатус: "+conclusion+"\r\n\r\n"+string.Join("\r\n",steps.Select(s=>$"{s.Check}: {s.Status}\r\n  {s.Note}"))+"\r\n\r\nГ0 PID: "+string.Join(", ",selection.Select(x=>$"{x.Family} ({x.Pid})"))+"\r\nГ1 PID: "+string.Join(", ",g1Selection.Select(x=>$"{x.Family} ({x.Pid})"))+"\r\n\r\nФайлы: "+batch+"\r\nПланируемый ZIP без дампов, контейнеров, трасс и screenshots: "+archive+"\r\nНичего не отправлено по сети. Перед отправкой просмотрите архив.\r\nГ0-модель/VM-стенд, kernel pager, семантическая нормализация, CPython/V8 патч и CPU/AVX-путь Г3 не реализованы.\r\n";
+        string report="ElasticMem "+Updater.Current+" — "+(browserOnly?"короткая проверка браузера":"автоматическая проверка")+"\r\nБраузер на ЭТОМ ПК: "+browserPreference+"; удалённые ПК не опрашиваются.\r\n\r\nСтатус: "+conclusion+"\r\n\r\n"+string.Join("\r\n",steps.Select(s=>$"{s.Check}: {s.Status}\r\n  {s.Note}"))+"\r\n\r\nГ0 PID: "+string.Join(", ",selection.Select(x=>$"{x.Family} ({x.Pid})"))+"\r\nГ1 PID: "+string.Join(", ",g1Selection.Select(x=>$"{x.Family} ({x.Pid})"))+"\r\n\r\nФайлы: "+batch+"\r\nПланируемый ZIP без дампов, контейнеров, трасс и screenshots: "+archive+"\r\nНичего не отправлено по сети. Перед отправкой просмотрите архив.\r\nГ0-модель/VM-стенд, kernel pager, семантическая нормализация, CPython/V8 патч и CPU/AVX-путь Г3 не реализованы.\r\n";
         report=report.Replace("Г0 PID: "+string.Join(", ",selection.Select(x=>$"{x.Family} ({x.Pid})")),"Г0 счётчики PID: "+string.Join(", ",counterPids));
         var numericErrors=new List<string>();
         try{report+=OneClickReport.Read(root,numericErrors,summary.DirectoryPath);}catch(Exception ex){summary.Log("Numeric report error: "+ex);numericErrors.Add(ex.GetType().Name);}
@@ -180,7 +186,7 @@ internal static class AutoResearch
             string previous=conclusion;conclusion=BatchPolicy.Conclusion(steps.Select(s=>s.Status));
             report=report.Replace("Статус: "+previous,"Статус: "+conclusion)+"\r\nЧИСЛОВАЯ СВОДКА С ОШИБКАМИ; см. диагностические прогоны.\r\n";
         }
-        summary.WriteJson("result.json",new{schema="elasticmem.auto.v1",status=conclusion,steps,selection,g1_selection=g1Selection,privacy="No uploads; raw inputs/snapshots/containers/screenshots excluded from generated ZIP; logs not guaranteed anonymous",limitations=new[]{"No new transparent optimizer or memory reclaim enabled","G0 sampled counters, not full trace/rigorous ceiling","G3 includes DEFAULT DMA and optional GPU_UPLOAD; fixed small pools,not durable pager","UI mechanical audit, not visual quality signoff"}});
+        summary.WriteJson("result.json",new{schema="elasticmem.auto.v1",status=conclusion,steps,selection,g1_selection=g1Selection,browser_preference=browserPreference,browser_only=browserOnly,browser_discovery=discovered.GroupBy(p=>p.Family).Select(g=>new{family=g.Key,confirmed_renderers=g.Count()}),scope="THIS Windows computer,current session only; no remote discovery",privacy="No uploads; raw inputs/snapshots/containers/screenshots excluded from generated ZIP; logs not guaranteed anonymous",limitations=new[]{"No new transparent optimizer or memory reclaim enabled","G0 sampled counters, not full trace/rigorous ceiling","G3 includes DEFAULT DMA and optional GPU_UPLOAD; fixed small pools,not durable pager","UI mechanical audit, not visual quality signoff"}});
         File.WriteAllText(summary.FilePath("auto-report.txt"),report);summary.Seal(conclusion,"Automatic batch. See result.json/auto-report.txt. Skips/failures are retained, not claimed successful.");ResearchRun.Verify(summary.DirectoryPath);
         try{await Task.Run(()=>ResearchRun.ExportLogs(root,archive,false));}
         catch(Exception ex){report+="\r\nZIP НЕ СОЗДАН: "+ex.Message;if(File.Exists(archive))try{File.Move(archive,archive+".invalid");}catch{} archive="";conclusion="failed_export_not_result";}

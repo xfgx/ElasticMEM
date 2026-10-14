@@ -10,6 +10,8 @@ internal sealed class ResearchTab:TabPage
         public override Size GetPreferredSize(Size proposedSize){int w=Math.Max(420,Items.Cast<object>().Select(x=>TextRenderer.MeasureText(x.ToString(),Font).Width+48).DefaultIfEmpty(420).Max());return new Size(Math.Min(w,MaximumSize.Width>0?MaximumSize.Width:w),base.GetPreferredSize(proposedSize).Height);}
     }
     readonly ComboBox _mode=new ModeComboBox();
+    readonly ComboBox _browser=new(){DropDownStyle=ComboBoxStyle.DropDownList,Width=300};
+    static readonly string[] BrowserKeys={"auto-browser","msedge","chrome"};
     readonly TextBox _pids=new(){Width=200,PlaceholderText="PID через запятую"};
     readonly NumericUpDown _seconds=N(1,3600,120),_limit=N(1,64,16),_records=N(1000,5000000,100000),_iterations=N(10,2000,100),_pool=N(16,128,32),_adapter=N(0,15,0);
     readonly NumericUpDown _eviction=N(1,1000000,10),_recovery=N(1,1000000,100),_maxFault=N(0,1000000,100);
@@ -38,7 +40,7 @@ internal sealed class ResearchTab:TabPage
         ("g0-sample","Г0 · наблюдение процессов Windows","Счётчики рабочего набора, private bytes, CPU и page faults. Это выборочные наблюдения, НЕ полная трасса обращений и НЕ потолок экономии."),
         ("g0-model","Г0 · модель по полной трассе","Импорт exact/synthetic событий с map/read/write/unmap. Метрика — средние байты модели gap−e−r, не верхняя граница любого механизма. Полный сборщик трассы пока внешний."),
         ("g0-epochs","Г0 · эпохи с вмешательством","Требует отдельного согласия EmptyWorkingSet. Базовые счётчики/trim/trim+опрос; приближённая модель повторного появления в WS, НЕ точная трасса/Belady. Не отключает системное сжатие или pagefile."),
-        ("controlled","Контроль · известные обращения","Собственный child: 128 native-страниц, три синтетические нагрузки. Известные касания против Windows residency-proxy; Г5 на точной и наблюдённой истории отдельно. Только свой child; без trim браузера. Не доказательство пользы на реальной нагрузке."),
+        ("controlled","Контроль · известные обращения","Собственный child: 128 native-страниц, три фиксированные нагрузки + decommit/recommit с поколениями. Известные касания против Windows residency-proxy; Г5 на точной и наблюдённой истории отдельно. Только свой child; без trim браузера. Не доказательство пользы на реальной нагрузке."),
         ("epochs-replay","Г0/Г5 · локальный пересчёт карт","Папка успешного Г0-epochs или auto-summary; пусто — последняя локальная партия. Без чтения процессов/trim. Длинные пороги, всплески и каузальные блоки1/4/8/16. Старый ZIP без EET недостаточен."),
         ("g5","Г5 · упаковка по совместному доступу","Вход — локальная папка успешного Г0-epochs 0.17+. Карты/снимки остаются локально. Train-prefix/test-suffix, соседство/coaccess/content; не live-пейджер."),
         ("g4-churn","Г4 · собственный churn-контроль","Синтетические alloc/free/write собственных 64 страниц. Восстановление живых данных, dead slots и перепаковка; не churn чужого процесса."),
@@ -62,6 +64,9 @@ internal sealed class ResearchTab:TabPage
         var stack=new VStack{Padding=new Padding(16)};
         var help=new Button{Text="Полная инструкция",AutoSize=true};help.Click+=(_,_)=>ResearchHelp.Show(FindForm()!);
         _source.PlaceholderText="Папка Г1 для Г0/Г4; папка Г0-epochs для Г5";
+        _browser.Items.AddRange(new object[]{"Авто: Microsoft Edge, затем Chrome","Только Microsoft Edge (msedge.exe)","Только Google Chrome (chrome.exe)"});_browser.SelectedIndex=0;_config.Add(_browser);
+        var browserCheck=new Button{Text="Проверить Chrome / Edge (коротко)",AutoSize=true};browserCheck.Click+=async(_,_)=>await StartAutomatic(true);_config.Add(browserCheck);
+        stack.Add(Ui.Row(Ui.L("Браузер на этом ПК"),_browser,browserCheck)).Add(Ui.Hint("Откройте 2–4 обычные вкладки на ЭТОМ компьютере. Нажатие короткой проверки — согласие на чтение локальных снимков браузера (могут содержать секреты; в обычный ZIP не входят). 15с счётчиков + Г1/Г4, без trim/GPU. ZIP автоматически. Другой ПК не опрашивается."));
         _auto.Click+=async(_,_)=>await StartAutomatic();
         var control=new Button{Text="Контроль доступа (без браузера)",AutoSize=true};control.Click+=async(_,_)=>{if(IsRunning)return;_mode.SelectedIndex=Array.FindIndex(Modes,m=>m.Key=="controlled");await Run();};_config.Add(control);
         var replay=new Button{Text="Пересчитать последнюю партию (без trim)",AutoSize=true};replay.Click+=async(_,_)=>{if(IsRunning)return;_source.Text="";_mode.SelectedIndex=Array.FindIndex(Modes,m=>m.Key=="epochs-replay");await Run();};_config.Add(replay);
@@ -116,7 +121,7 @@ internal sealed class ResearchTab:TabPage
         catch(Exception ex){_output.Text=ex.ToString();}
         finally{_cts.Dispose();_cts=null;BusyChanged?.Invoke(false);_completion?.TrySetResult();_run.Enabled=true;_auto.Enabled=true;_cancel.Enabled=false;_mode.Enabled=true;foreach(var c in _config)c.Enabled=true;}
     }
-    public async Task StartAutomatic()
+    public async Task StartAutomatic(bool browserOnly=false)
     {
         if(IsRunning)return;
         _cts=new();_completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);BusyChanged?.Invoke(true);_auto.Enabled=false;_run.Enabled=false;_cancel.Enabled=true;_mode.Enabled=false;foreach(var c in _config)c.Enabled=false;
@@ -127,7 +132,7 @@ internal sealed class ResearchTab:TabPage
             if(_agentRunning())throw new InvalidOperationException("Другой бенчмарк ещё работает. Дождитесь его завершения и повторите автопроверку.");
             _cts.Token.ThrowIfCancellationRequested();
             var progress=new Progress<string>(s=>{if(!IsDisposed)_status.Text=s;});
-            _batch=await AutoResearch.RunAsync(true,120,progress,_cts.Token,(root,ct)=>UiDiagnostics.Capture(FindForm()!,root,false,ct),_allowTrim.Checked,_extended.Checked,_scratch.Text);
+            _batch=await AutoResearch.RunAsync(true,browserOnly?15:120,progress,_cts.Token,(root,ct)=>UiDiagnostics.Capture(FindForm()!,root,false,ct),!browserOnly&&_allowTrim.Checked,!browserOnly&&_extended.Checked,_scratch.Text,BrowserKeys[_browser.SelectedIndex],browserOnly);
             _last=_batch.LastRun;_output.Text=_batch.Report;_status.Text=string.IsNullOrEmpty(_batch.Archive)?"Автопрогон завершён, ZIP не создан — смотрите причину.":"Готово: "+_batch.Status+" · ZIP собран автоматически";
             if(!string.IsNullOrEmpty(_batch.Archive))Open(Path.GetDirectoryName(_batch.Archive)!);
         }

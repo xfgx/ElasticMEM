@@ -25,10 +25,12 @@ internal static class OneClickReport
             using var doc=JsonDocument.Parse(File.ReadAllText(file));var d=doc.RootElement;
             if(!d.TryGetProperty("schema",out var schema))throw new InvalidDataException("Successful result schema missing");
             string? expectedSchema=mode switch{"controlled"=>"elasticmem.controlled.research.v1","epochs-replay"=>"elasticmem.epochs.replay.v1","g0-calibration"=>"elasticmem.g0.calibration.v2","g0-epochs"=>"elasticmem.g0.windows_epochs.v2","g4"=>"elasticmem.g4.codecs.v1","g3-dma"=>"elasticmem.g3.dma.v1","disk-qd1"=>"elasticmem.disk.qd1.v1",_=>null};
-            if(schema.GetString()!=expectedSchema)throw new InvalidDataException("Successful result schema mismatch");
+            if(schema.GetString()!=expectedSchema&&!(mode=="controlled"&&schema.GetString()=="elasticmem.controlled.research.v2"))throw new InvalidDataException("Successful result schema mismatch");
             switch(schema.GetString())
             {
                 case "elasticmem.controlled.research.v1":
+                case "elasticmem.controlled.research.v2":
+                    if(schema.GetString()=="elasticmem.controlled.research.v2"&&!d.TryGetProperty("lifecycle",out _))throw new InvalidDataException("Controlled v2 lifecycle missing");
                     lines.Add("Контроль известного доступа: только собственная native arena; НЕ реальный renderer,НЕ RAM savings.");
                     foreach(var c in d.GetProperty("cases").EnumerateArray())
                     {
@@ -40,6 +42,11 @@ internal static class OneClickReport
                                 var utility=row.GetProperty("mean_useful_pages_per_decode");
                                 lines.Add("    "+kind+" T2/cap"+row.GetProperty("block_pages")+" "+row.GetProperty("policy")+": "+(utility.ValueKind==JsonValueKind.Null?"unavailable":N(utility.GetDouble()))+" useful/decode; events="+row.GetProperty("decode_events")+"; unknown="+row.GetProperty("excluded_common_unknown_epochs")+".");
                             }
+                    }
+                    if(d.TryGetProperty("lifecycle",out var life))
+                    {
+                        lines.Add("  Lifecycle decommit/recommit: active="+life.GetProperty("active_page_epoch_cells")+"; dead="+life.GetProperty("dead_page_epoch_cells")+"; reserved-only="+life.GetProperty("reserved_never_committed_page_epoch_cells")+"; retained unknown="+life.GetProperty("retained_active_unknown_cells")+"; FN/FP="+life.GetProperty("known_false_negative")+"/"+life.GetProperty("known_false_positive")+" (known active only).");
+                        lines.Add("  Commits/decommits="+life.GetProperty("committed_pages")+"/"+life.GetProperty("decommitted_pages")+"; dead reported Valid before/after="+life.GetProperty("dead_reported_valid_before")+"/"+life.GetProperty("dead_reported_valid_after")+"; reserved-only Valid before/after="+life.GetProperty("reserved_reported_valid_before")+"/"+life.GetProperty("reserved_reported_valid_after")+"; checksum="+life.GetProperty("checksum_verified")+". Unknown НЕ death; поколения не смешиваются. Г5 lifecycle skipped,не поддерживает death.");
                     }
                     lines.Add("  Синтетический positive control не подтверждает пользу в Chrome. Primary T2/cap4,16 фиксирован; прочие T exploratory. Реальные G5 gates НЕ ослаблены.");
                     break;

@@ -17,7 +17,7 @@ internal static class ResearchCli
             {Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(transcript))!);File.WriteAllText(transcript,System.Text.Json.JsonSerializer.Serialize(ControlledResearch.Worker(),ResearchRun.Json));return true;}
             if(mode=="auto")
             {
-                var auto=AutoResearch.RunAsync(args.Contains("--allow-memory-read"),Int("--seconds",120),null,CancellationToken.None,allowTrim:args.Contains("--allow-working-set-trim"),extended:args.Contains("--extended"),scratch:Get("--scratch")??Path.GetTempPath()).GetAwaiter().GetResult();
+                var auto=AutoResearch.RunAsync(args.Contains("--allow-memory-read"),Int("--seconds",120),null,CancellationToken.None,allowTrim:args.Contains("--allow-working-set-trim"),extended:args.Contains("--extended"),scratch:Get("--scratch")??Path.GetTempPath(),browserPreference:Get("--browser")??"auto-browser",browserOnly:args.Contains("--browser-only")).GetAwaiter().GetResult();
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(transcript))!);File.WriteAllText(transcript,auto.Report);
                 Environment.ExitCode=BatchPolicy.Failure(auto.Status)||string.IsNullOrEmpty(auto.Archive)?1:0;return true;
             }

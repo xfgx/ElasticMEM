@@ -46,6 +46,38 @@ public static class ResearchSelfTest
             bool refused=false;try{ControlledWorkload.DecodeCase(JsonSerializer.SerializeToElement(node),"interleaved_correlated");}catch(InvalidDataException){refused=true;}
             Check(refused,"controlled invalid child "+bad+" refused");
         }
+        var lifePlan=LifecycleWorkload.Plan();var lifePayload=ControlledWorkload.Contents();ulong lifeChecksum=0;long lifeCommits=0,lifeDecommits=0;
+        for(int t=0;t<256;t++)for(int p=0;p<128;p++)
+        {
+            if(lifePlan.Touch[t][p])lifeChecksum=unchecked(lifeChecksum+LifecycleWorkload.Word(lifePayload[p],lifePlan.Generation[t][p]));
+            if(lifePlan.Alive[t][p]&&(t==0||!lifePlan.Alive[t-1][p]))lifeCommits++;
+            if(!lifePlan.Alive[t][p]&&t>0&&lifePlan.Alive[t-1][p])lifeDecommits++;
+            Check(!lifePlan.Touch[t][p]||lifePlan.Alive[t][p],"lifecycle touches only live cells");
+            if(t>0)Check(lifePlan.Generation[t][p]==lifePlan.Generation[t-1][p]+(lifePlan.Alive[t][p]&&!lifePlan.Alive[t-1][p]?1:0),"lifecycle generation only changes on recommit");
+        }
+        var lifeFixture=JsonSerializer.SerializeToElement(new{name=LifecycleWorkload.Name,pages=128,epochs=256,alive=ControlledWorkload.Pack(lifePlan.Alive),touch=ControlledWorkload.Pack(lifePlan.Touch),
+            before_valid=ControlledWorkload.Pack(Enumerable.Range(0,256).Select(_=>new bool[128]).ToArray()),after_valid=ControlledWorkload.Pack(lifePlan.Touch),generations=Convert.ToBase64String(lifePlan.Generation.SelectMany(x=>x).ToArray()),checksum=lifeChecksum,expected_checksum=lifeChecksum,committed_pages=lifeCommits,decommitted_pages=lifeDecommits});
+        using(var lf=JsonDocument.Parse(JsonSerializer.Serialize(LifecycleWorkload.Analyze(lifeFixture))))
+        {
+            Check(lf.RootElement.GetProperty("active_page_epoch_cells").GetInt64()+lf.RootElement.GetProperty("dead_page_epoch_cells").GetInt64()+lf.RootElement.GetProperty("reserved_never_committed_page_epoch_cells").GetInt64()==32768,"lifecycle disjoint population");
+            Check(lf.RootElement.GetProperty("known_false_negative").GetInt64()==0&&lf.RootElement.GetProperty("known_false_positive").GetInt64()==0,"lifecycle perfect live observation");
+            Check(lf.RootElement.GetProperty("dead_page_epoch_cells").GetInt64()>0&&lifeCommits>128&&lifeDecommits>128,"lifecycle real transition schedule");
+            Check(lf.RootElement.GetProperty("causal_g5_status").GetString()!.StartsWith("skipped"),"lifecycle never silently enters fixed-identity G5");
+        }
+        foreach(string bad in new[]{"alive","touch","generations","checksum","committed_pages","decommitted_pages","pages"})
+        {
+            var n=System.Text.Json.Nodes.JsonNode.Parse(lifeFixture.GetRawText())!;
+            if(bad is "alive" or "touch")n[bad]=ControlledWorkload.Pack(Enumerable.Range(0,256).Select(_=>new bool[128]).ToArray());
+            else if(bad=="generations")n[bad]=Convert.ToBase64String(new byte[32768]);else n[bad]=0;
+            bool refused=false;try{LifecycleWorkload.Analyze(JsonSerializer.SerializeToElement(n));}catch(InvalidDataException){refused=true;}Check(refused,"lifecycle corrupt "+bad+" rejected");
+        }
+        var lifeBefore=Enumerable.Range(0,256).Select(_=>new bool[128]).ToArray();var lifeAfter=lifePlan.Touch.Select(x=>(bool[])x.Clone()).ToArray();
+        var lifeNode=System.Text.Json.Nodes.JsonNode.Parse(lifeFixture.GetRawText())!;
+        // [0,0] reserved-only, [32,0] truly post-decommit; [0,34] live but unscheduled; [0,33] live and scheduled.
+        lifeBefore[0][33]=true;lifeAfter[0][33]=false;lifeAfter[0][0]=true;lifeAfter[32][0]=true;lifeAfter[0][34]=true;
+        lifeNode["before_valid"]=ControlledWorkload.Pack(lifeBefore);lifeNode["after_valid"]=ControlledWorkload.Pack(lifeAfter);
+        using(var lf=JsonDocument.Parse(JsonSerializer.Serialize(LifecycleWorkload.Analyze(JsonSerializer.SerializeToElement(lifeNode)))))
+        {Check(lf.RootElement.GetProperty("retained_active_unknown_cells").GetInt64()==1,"lifecycle retained excluded not FN/dead");Check(lf.RootElement.GetProperty("known_false_negative").GetInt64()==0,"lifecycle unknown scheduled read not counted as missed");Check(lf.RootElement.GetProperty("known_false_positive").GetInt64()==1,"lifecycle live false positive separate");Check(lf.RootElement.GetProperty("dead_reported_valid_after").GetInt64()==1,"lifecycle post-decommit anomaly separate from FP");Check(lf.RootElement.GetProperty("reserved_reported_valid_after").GetInt64()==1,"lifecycle never-committed distinct from death");}
         Check(EpochEligibility.Classify(0,0,true)==EpochExclusion.OriginalMappingUnavailable,"epoch reason original takes precedence");
         Check(EpochEligibility.Classify(1,0,true)==EpochExclusion.CurrentMappingUnavailable,"epoch unavailable mapping not death");
         Check(EpochEligibility.Classify(1,2,true)==EpochExclusion.AllocationChanged,"epoch changed allocation before retained");
@@ -83,6 +115,15 @@ public static class ResearchSelfTest
         Check(BatchPolicy.Select(candidates.Select(c=>c with{Family="game"}),99).Length==0,"nonallowlisted family excluded");
         Check(BatchPolicy.Select(candidates,99,"steamwebhelper").Length==0,"refresh does not change family");
         Check(BatchPolicy.Select(new[]{candidates[0],candidates[0]},99).Length==0,"duplicate PID is not a pair");
+        var browsers=new[]{new ResearchCandidate(101,"msedge",1,1024,true,true,true),new ResearchCandidate(102,"msedge",2,1024,true,true,true),new ResearchCandidate(103,"chrome",3,999999,true,true,true),new ResearchCandidate(104,"chrome",4,999999,true,true,true),new ResearchCandidate(105,"steamwebhelper",5,9999999,true,true,true),new ResearchCandidate(106,"steamwebhelper",6,9999999,true,true,true)};
+        Check(BatchPolicy.SelectBrowser(browsers,999).All(x=>x.Family=="msedge"),"auto browser prefers safe Edge pair over larger Chrome/Steam");
+        Check(BatchPolicy.SelectBrowser(browsers.Where(x=>x.Pid!=102),999).All(x=>x.Family=="chrome"),"single Edge does not hide Chrome pair");
+        Check(BatchPolicy.SelectBrowser(browsers.Where(x=>x.Family!="msedge"),999,"msedge").Length==0,"explicit Edge never falls back Chrome/Steam");
+        Check(BatchPolicy.SelectBrowser(browsers.Where(x=>x.Family=="steamwebhelper"),999).Length==0,"automatic browser never silently selects Steam");
+        Check(BatchPolicy.SelectBrowser(browsers,999,"chrome").All(x=>x.Family=="chrome"),"explicit Chrome respected");
+        Check(BatchPolicy.SelectBrowser(browsers.Select(x=>x with{Renderer=false}),999).Length==0,"browser role guard retained");
+        bool badBrowser=false;try{BatchPolicy.SelectBrowser(browsers,999,"edge");}catch(ArgumentException){badBrowser=true;}Check(badBrowser,"unsupported alias never broadens browser scope");
+
         Check(BatchPolicy.Conclusion(new[]{"selftests_passed","unsupported_no_measurement"})=="completed_with_skips","unsupported is not measured success");
         Check(BatchPolicy.Conclusion(new[]{"failed_no_valid_result","skipped_no_safe_process_pair"})=="completed_with_failures","failure dominates skip");
         Check(BatchPolicy.Conclusion(new[]{"cancelled_partial_not_result","selftests_passed"})=="cancelled_partial_not_result","cancel partial status");
