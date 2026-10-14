@@ -15,8 +15,19 @@
 #define IOCTL_EM_DELETE EM_IOCTL(0x803u)
 #define IOCTL_EM_RESET EM_IOCTL(0x804u)
 #define IOCTL_EM_CONFIG EM_IOCTL(0x805u)
+/* Additive pager protocol v1; legacy ABI1 stays available. */
+#define IOCTL_EM_PUT_COMPRESSED EM_IOCTL(0x806u)
+#define IOCTL_EM_GET_VERSIONED EM_IOCTL(0x807u)
+#define IOCTL_EM_DELETE_VERSIONED EM_IOCTL(0x808u)
+#define EM_PAGER_VERSION 1u
+
 /* Natural 8-byte alignment on x64. Headers contain only uint32_t. */
 typedef struct EM_HEADER { uint32_t version, key, flags, reserved; } EM_HEADER;
+typedef struct EM_VERSIONED_REQUEST { EM_HEADER header; uint64_t generation; } EM_VERSIONED_REQUEST;
+typedef struct EM_PAGER_RECEIPT {
+    uint32_t version, key; uint64_t generation;
+    uint32_t payload_bytes, allocation_bytes, crc32, reserved;
+} EM_PAGER_RECEIPT;
 typedef struct EM_PUT_REQUEST { EM_HEADER header; uint8_t page[EM_PAGE_BYTES]; } EM_PUT_REQUEST;
 typedef struct EM_STATS {
     uint32_t version, mode, pages, max_pages;

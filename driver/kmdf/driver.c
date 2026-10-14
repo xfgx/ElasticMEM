@@ -5,6 +5,9 @@
 C_ASSERT(sizeof(EM_HEADER)==16);
 C_ASSERT(sizeof(EM_PUT_REQUEST)==4112);
 C_ASSERT(sizeof(EM_STATS)==104);
+C_ASSERT(sizeof(EM_VERSIONED_REQUEST)==24);
+C_ASSERT(sizeof(EM_PAGER_RECEIPT)==32);
+C_ASSERT(FIELD_OFFSET(EM_NODE,data)==24);
 #define EM_TAG 'mMlE'
 #define EM_GLOBAL_LIMIT (64ull * 1024 * 1024)
 #define EM_SESSION_LIMIT (16ull * 1024 * 1024)
@@ -51,7 +54,8 @@ static int EmDecode(void *context,const uint8_t *input,uint32_t size,uint8_t *ou
 static NTSTATUS EmStatus(EM_RESULT result) {
     switch(result){case EM_OK:return STATUS_SUCCESS;case EM_INVALID:return STATUS_INVALID_PARAMETER;
     case EM_MISSING:return STATUS_NOT_FOUND;case EM_QUOTA:return STATUS_QUOTA_EXCEEDED;
-    case EM_NO_MEMORY:return STATUS_INSUFFICIENT_RESOURCES;default:return STATUS_DATA_ERROR;}
+    case EM_NO_MEMORY:return STATUS_INSUFFICIENT_RESOURCES;case EM_STALE:return STATUS_REVISION_MISMATCH;
+    case EM_NOT_BENEFICIAL:return STATUS_NOT_SUPPORTED;default:return STATUS_DATA_ERROR;}
 }
 VOID EmCreate(WDFDEVICE device,WDFREQUEST request,WDFFILEOBJECT file) {
     DEVICE_CONTEXT *d=EmDevice(device);FILE_CONTEXT *f=EmFile(file);NTSTATUS status;
@@ -74,23 +78,34 @@ VOID EmCleanup(WDFFILEOBJECT file) {
 VOID EmIoctl(WDFQUEUE queue,WDFREQUEST request,size_t outputLength,size_t inputLength,ULONG code) {
     DEVICE_CONTEXT *d=EmDevice(WdfIoQueueGetDevice(queue));WDFFILEOBJECT file=WdfRequestGetFileObject(request);
     FILE_CONTEXT *f;EM_HEADER header;PVOID input=NULL,output=NULL;NTSTATUS status;ULONG_PTR information=0;
-    size_t expected=(code==IOCTL_EM_PUT)?sizeof(EM_PUT_REQUEST):sizeof(EM_HEADER);
+    uint64_t generation=0;EM_PAGER_RECEIPT receipt;
+    BOOLEAN versioned=(code==IOCTL_EM_GET_VERSIONED || code==IOCTL_EM_DELETE_VERSIONED);
+    BOOLEAN put=(code==IOCTL_EM_PUT || code==IOCTL_EM_PUT_COMPRESSED);
+    size_t expected=put?sizeof(EM_PUT_REQUEST):(versioned?sizeof(EM_VERSIONED_REQUEST):sizeof(EM_HEADER));
     if(!file){WdfRequestComplete(request,STATUS_INVALID_HANDLE);return;}f=EmFile(file);
-    if(code!=IOCTL_EM_STATS && code!=IOCTL_EM_PUT && code!=IOCTL_EM_GET && code!=IOCTL_EM_DELETE && code!=IOCTL_EM_RESET && code!=IOCTL_EM_CONFIG){WdfRequestComplete(request,STATUS_INVALID_DEVICE_REQUEST);return;}
+    if(code!=IOCTL_EM_STATS && code!=IOCTL_EM_PUT && code!=IOCTL_EM_GET && code!=IOCTL_EM_DELETE && code!=IOCTL_EM_RESET && code!=IOCTL_EM_CONFIG && code!=IOCTL_EM_PUT_COMPRESSED && !versioned){WdfRequestComplete(request,STATUS_INVALID_DEVICE_REQUEST);return;}
     if(inputLength!=expected){WdfRequestComplete(request,STATUS_INFO_LENGTH_MISMATCH);return;}
     status=WdfRequestRetrieveInputBuffer(request,expected,&input,NULL);if(!NT_SUCCESS(status)){WdfRequestComplete(request,status);return;}
+    if(versioned)generation=((EM_VERSIONED_REQUEST *)input)->generation;
     RtlCopyMemory(&header,input,sizeof(header)); /* Capture before touching shared METHOD_BUFFERED output. */
     if(header.version!=EM_ABI_VERSION || header.reserved!=0 || (code!=IOCTL_EM_CONFIG && header.flags!=0) ||
        ((code==IOCTL_EM_STATS || code==IOCTL_EM_RESET || code==IOCTL_EM_CONFIG) && header.key!=0) ||
        (code==IOCTL_EM_CONFIG && header.flags>EM_MODE_XPRESS)) {WdfRequestComplete(request,STATUS_INVALID_PARAMETER);return;}
-    if((code==IOCTL_EM_GET && outputLength!=EM_PAGE_BYTES) || (code==IOCTL_EM_STATS && outputLength!=sizeof(EM_STATS)) ||
-       (code!=IOCTL_EM_GET && code!=IOCTL_EM_STATS && outputLength!=0)){WdfRequestComplete(request,STATUS_INFO_LENGTH_MISMATCH);return;}
+    if(((code==IOCTL_EM_GET || code==IOCTL_EM_GET_VERSIONED) && outputLength!=EM_PAGE_BYTES) || (code==IOCTL_EM_STATS && outputLength!=sizeof(EM_STATS)) ||
+       (code==IOCTL_EM_PUT_COMPRESSED && outputLength!=sizeof(EM_PAGER_RECEIPT)) ||
+       (code!=IOCTL_EM_GET && code!=IOCTL_EM_GET_VERSIONED && code!=IOCTL_EM_PUT_COMPRESSED && code!=IOCTL_EM_STATS && outputLength!=0)){WdfRequestComplete(request,STATUS_INFO_LENGTH_MISMATCH);return;}
     if(outputLength){status=WdfRequestRetrieveOutputBuffer(request,outputLength,&output,NULL);if(!NT_SUCCESS(status)){WdfRequestComplete(request,status);return;}}
     status=WdfWaitLockAcquire(d->lock,NULL);if(!NT_SUCCESS(status)){WdfRequestComplete(request,status);return;}
     if(!f->active)status=STATUS_FILE_CLOSED;
     else if(WdfRequestIsCanceled(request))status=STATUS_CANCELLED;
     else {
     switch(code){
+    case IOCTL_EM_PUT_COMPRESSED:
+        status=EmStatus(em_put_compressed(&f->store,header.key,((EM_PUT_REQUEST *)input)->page,EM_PAGE_BYTES,d->scratch,&receipt));
+        /* Buffered output aliases input; copy only AFTER input consumed. */
+        if(NT_SUCCESS(status)){RtlCopyMemory(output,&receipt,sizeof(receipt));information=sizeof(receipt);}break;
+    case IOCTL_EM_GET_VERSIONED:status=EmStatus(em_get_versioned(&f->store,header.key,generation,(uint8_t *)output,EM_PAGE_BYTES));if(NT_SUCCESS(status))information=EM_PAGE_BYTES;break;
+    case IOCTL_EM_DELETE_VERSIONED:status=EmStatus(em_delete_versioned(&f->store,header.key,generation));break;
     case IOCTL_EM_PUT:status=EmStatus(em_put(&f->store,header.key,((EM_PUT_REQUEST *)input)->page,EM_PAGE_BYTES,d->scratch));break;
     case IOCTL_EM_GET:status=EmStatus(em_get(&f->store,header.key,(uint8_t *)output,EM_PAGE_BYTES));if(NT_SUCCESS(status)){information=EM_PAGE_BYTES;}break;
     case IOCTL_EM_DELETE:status=EmStatus(em_delete(&f->store,header.key));break;

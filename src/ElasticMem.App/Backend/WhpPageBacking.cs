@@ -9,9 +9,9 @@ namespace ElasticMem.App.Backend;
 internal sealed class SysVmStore:IVmCompressedStore,IDisposable
 {
     readonly KernelPageStore store=new(KernelPageStore.StoreMode.Xpress);
-    public void Put(uint key,byte[] bytes)=>store.Put(key,bytes);
-    public byte[] Get(uint key)=>store.Get(key);
-    public bool Delete(uint key)=>store.Delete(key);
+    public VmStoreReceipt Put(uint key,byte[] bytes){var r=store.PutCompressed(key,bytes);return new(r.Generation,r.PayloadBytes,r.AllocationBytes);}
+    public byte[] Get(uint key,ulong generation)=>store.GetVersioned(key,generation);
+    public bool Delete(uint key,ulong generation)=>store.DeleteVersioned(key,generation);
     public void Dispose()=>store.Dispose();
 }
 internal sealed class WhpPageBacking:IVmPageBacking,IDisposable

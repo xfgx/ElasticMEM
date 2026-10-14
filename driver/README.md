@@ -1,3 +1,15 @@
+# 0.28 SYS paging foundation — UNQUALIFIED DRIVER SOURCE
+
+New source changes invalidate the old native smoke report as evidence for this revision. No new SYS is built or executed here. Existing `driver/verification` refers only to the previous revision.
+
+Added compressed-only PUT receipt, monotonic per-open generation and conditional GET/DELETE. PUT rejects RAW or payload+node allocation >=4096 without replacing prior data. Reset does not reset generations. Core CRC validates restored bytes. Legacy ABI1 remains; node overhead is now24 bytes. Session16MiB/global64MiB/max4096 pages are unchanged: NOT enough for a whole browser VM. Paged-pool allocation is not a physical-RAM-saved metric.
+
+Custom VMM adapter uses only new compressed-only/generation IOCTLs. Old installed SYS rejects them: it MUST NOT silently fall back to raw/Windows Memory Compression. Automatic windows-bootable VMM, vCPU/DMA barrier and cold-page policy remain missing.
+
+Windows test: build with `driver/scripts/Build-Windows.ps1` in VS2022 Developer PowerShell + WDK10.0.26100, sign using approved existing driver trust, install ONLY in disposable authorized VM; do not disable security. Then `ElasticMem.DriverClient.exe pager-smoke pager-smoke.json` or use Backend VM → SYS owned-buffer test in app0.28. It checks synthetic own VirtualAlloc pages, SYS compressed storage, native decommit and full restore. NOT Edge/Chrome/Telegram paging. If policy/trust blocks the driver, stop.
+
+Read `backend/SYS-028.md` before testing. Prior full driver instructions below refer to legacy operations.
+
 # ElasticMemStore — исследовательский драйвер Windows x64
 
 **Статус: KMDF kernel-хранилище + клиент; нативный smoke прошёл на Windows Server 2025 x64. Не production, не прозрачный RAM-оптимизатор; Windows 11 пока не проверена.**

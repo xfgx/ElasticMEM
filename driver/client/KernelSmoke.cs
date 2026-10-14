@@ -36,7 +36,7 @@ public static class KernelSmoke
             h[0]=2;Check(a.RejectProbe(0x8000E000,h,104)!=0,"ABI version rejected");h[0]=1;
             h[12]=1;Check(a.RejectProbe(0x8000E000,h,104)!=0,"reserved rejected");h[12]=0;
             Check(a.RejectProbe(0x8000E004,h,0)!=0,"short PUT rejected");
-            Check(a.RejectProbe(0x8000E018,h,0)!=0,"unknown IOCTL rejected");
+            Check(a.RejectProbe(0x8000E3FC,h,0)!=0,"unknown IOCTL rejected");
             h[4]=0;h[5]=16;Check(a.RejectProbe(0x8000E008,h,4096)!=0,"out of range key rejected");h[5]=0;
             h[8]=1;Check(a.RejectProbe(0x8000E014,h,0)!=0,"mode change on nonempty store rejected");
             a.Reset();var after=a.Stats();Check(after.Pages==0 && after.PayloadBytes==0,"reset");
@@ -46,7 +46,7 @@ public static class KernelSmoke
             // RAW storage reaches 16MiB quota before 4096 nodes plus table would fit; failure preserves data.
             using(var quota=new KernelPageStore(KernelPageStore.StoreMode.Raw))
             {bool refused=false;for(uint k=0;k<4096;k++){ct.ThrowIfCancellationRequested();try{quota.Put(k,new byte[4096]);}catch(Win32Exception ex)when(ex.NativeErrorCode==1816||ex.NativeErrorCode==8||ex.NativeErrorCode==1450){refused=true;break;}}
-                Check(refused && quota.Stats().Pages==4076,"bounded session quota at planned capacity");Check(quota.Get(0).All(x=>x==0),"quota failure retains prior values");}
+                Check(refused && quota.Stats().Pages==(16*1024*1024-4096*8)/(4096+24),"bounded session quota at planned capacity");Check(quota.Get(0).All(x=>x==0),"quota failure retains prior values");}
             Check(a.Stats().GlobalAllocationBytes==before.GlobalAllocationBytes,"quota session cleanup");
             var handles=new List<KernelPageStore>();bool sessionRefused=false;
             try{for(int i=0;i<7;i++)handles.Add(new KernelPageStore(mode));}catch(Win32Exception){sessionRefused=true;}

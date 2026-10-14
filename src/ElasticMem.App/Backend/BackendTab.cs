@@ -41,6 +41,15 @@ internal sealed class BackendTab:TabPage
         var compression=B("4 · Включить сжатие Windows в госте",async()=>{if(Confirm("Enable-MMAgent -MemoryCompression только ВНУТРИ привязанной VM. Политика host не меняется. У Windows нет гарантии сжатия конкретного PID. Продолжить?"))Show(await controller.Run("EnableCompression"));});
         var publish=B("5 · Опубликовать приложения RemoteApp",async()=>{if(Confirm("Опубликовать allowlisted system-wide Edge/Chrome/Telegram в существующей RDS collection этого единственного гостевого Session Host? Нужны настроенные домен/RDS/лицензии. Windows11 registry patches не используются."))Show(await controller.Run("PublishApps"));});
         stack.Add(Ui.Row(compression,publish));
+        var sysTest=B("SYS · сжатие → освобождение → восстановление (свой буфер)",async()=>{
+            if(!Confirm("Только изолированная тестовая VM с новым подписанным SYS. Проверка 64 собственных страниц ElasticMem: XPRESS в SYS, VirtualFree decommit, версия/полное восстановление. Это НЕ память гостевой VM и НЕ Chrome/Telegram. Продолжить?"))return;
+            string root=Path.Combine(AppSettings.Dir,"sys-pager-reports");
+            using var run=new ResearchRun(root,"sys-owned-pager",Updater.Current.ToString(),"local",new{scope="synthetic owned native backing",foreign_memory=false});
+            try{var result=await Task.Run(()=>ElasticMem.DriverClient.PagerSmoke.Run());run.WriteJson("result.json",result);run.Seal("passed_owned_fixture_only","SYS synthetic owned buffer; NOT Windows guest pager; physical RAM saving unproven");Show(JsonSerializer.SerializeToElement(result));}
+            catch(Exception ex){run.WriteJson("result.json",new{status="failed_no_valid_result",error_class=ex.GetType().Name,physical_ram_saved_bytes=(long?)null});run.Seal("failed_no_valid_result","No native SYS paging confirmation");throw;}
+            status.Text+=" · Отчёт: "+run.DirectoryPath;
+        });
+        stack.Add(Ui.Row(sysTest));
         var refresh=B("Обновить процессы / память",RefreshBackend);
         var saveBaseline=B("Точка сравнения",()=>{if(!current.HasValue||!Passed(current.Value))throw new InvalidOperationException("Сначала успешное обновление работающей VM");baseline=current.Value.Clone();status.Text="Baseline сохранён для этой VM/boot. Это не причинный A/B.";return Task.CompletedTask;});
         var export=B("ZIP логов без credentials",()=>{string zip=controller.Export(baseline,current);status.Text=zip;Process.Start(new ProcessStartInfo("explorer.exe",Path.GetDirectoryName(zip)!){UseShellExecute=true});return Task.CompletedTask;});

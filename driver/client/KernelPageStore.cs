@@ -10,7 +10,7 @@ namespace ElasticMem.DriverClient;
 public sealed class KernelPageStore : IDisposable
 {
     public const int PageBytes=4096,MaxPages=4096;
-    const uint StatsCode=0x8000E000,PutCode=0x8000E004,GetCode=0x8000E008,DeleteCode=0x8000E00C,ResetCode=0x8000E010,ConfigCode=0x8000E014;
+    const uint StatsCode=0x8000E000,PutCode=0x8000E004,GetCode=0x8000E008,DeleteCode=0x8000E00C,ResetCode=0x8000E010,ConfigCode=0x8000E014,PutCompressedCode=0x8000E018,GetVersionedCode=0x8000E01C,DeleteVersionedCode=0x8000E020;
     readonly SafeFileHandle handle;readonly object gate=new();bool disposed;
     public enum StoreMode : uint { Raw=0,Xpress=1 }
     [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]
@@ -37,6 +37,23 @@ public sealed class KernelPageStore : IDisposable
     }
     public void Put(uint key,ReadOnlySpan<byte> page)
     {Key(key);if(page.Length!=PageBytes)throw new ArgumentException("Exact 4096-byte page required",nameof(page));byte[] b=new byte[4112];Header(key).CopyTo(b,0);page.CopyTo(b.AsSpan(16));try{Call(PutCode,b,0);}finally{Array.Clear(b);}}
+    public KernelPagerReceipt PutCompressed(uint key,ReadOnlySpan<byte> page)
+    {
+        Key(key);if(page.Length!=PageBytes)throw new ArgumentException("Exact 4096-byte page required",nameof(page));
+        byte[] b=new byte[4112];Header(key).CopyTo(b,0);page.CopyTo(b.AsSpan(16));
+        try {
+            byte[] o=Call(PutCompressedCode,b,32);
+            uint U(int i)=>BinaryPrimitives.ReadUInt32LittleEndian(o.AsSpan(i));
+            ulong generation=BinaryPrimitives.ReadUInt64LittleEndian(o.AsSpan(8));
+            if(U(0)!=1||U(4)!=key||generation==0||U(16)==0||U(20)!=U(16)+24||U(20)>=PageBytes||U(28)!=0)throw new InvalidDataException("Invalid compressed-page receipt; original backing MUST be retained");
+            return new(key,generation,U(16),U(20),U(24));
+        }finally{Array.Clear(b);}
+    }
+    static byte[] Versioned(uint key,ulong generation)
+    {Key(key);if(generation==0)throw new ArgumentOutOfRangeException(nameof(generation));byte[] b=new byte[24];Header(key).CopyTo(b,0);BinaryPrimitives.WriteUInt64LittleEndian(b.AsSpan(16),generation);return b;}
+    public byte[] GetVersioned(uint key,ulong generation)=>Call(GetVersionedCode,Versioned(key,generation),PageBytes);
+    public bool DeleteVersioned(uint key,ulong generation)
+    {try{Call(DeleteVersionedCode,Versioned(key,generation),0);return true;}catch(Win32Exception ex)when(ex.NativeErrorCode==1168){return false;}}
     public byte[] Get(uint key){Key(key);return Call(GetCode,Header(key),PageBytes);}
     public bool Delete(uint key){Key(key);try{Call(DeleteCode,Header(key),0);return true;}catch(Win32Exception ex)when(ex.NativeErrorCode==1168){return false;}}
     public void Reset()=>Call(ResetCode,Header(0),0);
@@ -51,4 +68,5 @@ public sealed class KernelPageStore : IDisposable
     {lock(gate){ObjectDisposedException.ThrowIf(disposed,this);byte[] output=new byte[outputSize];return DeviceIoControl(handle,code,input,(uint)input.Length,output,(uint)output.Length,out _,IntPtr.Zero)?0:Marshal.GetLastWin32Error();}}
     public void Dispose(){lock(gate){if(disposed)return;disposed=true;handle.Dispose();}}
 }
+public sealed record KernelPagerReceipt(uint Key,ulong Generation,uint PayloadBytes,uint AllocationBytes,uint Crc32);
 public sealed record KernelStats(uint Version,KernelPageStore.StoreMode Mode,uint Pages,uint MaxPages,ulong LogicalBytes,ulong PayloadBytes,ulong SessionAllocationBytes,ulong SessionQuotaBytes,ulong GlobalAllocationBytes,ulong GlobalLimitBytes,ulong Puts,ulong Gets,ulong Deletes,ulong CompressedPages,ulong RawPages);

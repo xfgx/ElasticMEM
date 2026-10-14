@@ -1,3 +1,7 @@
+# 0.28 verification update (supersedes 0.27 SYS statements below)
+
+Driver source NOW changed: generation-safe compressed-only IOCTLs, receipt, conditional GET/DELETE; new SYS native build/execution NOT performed. App has native owned-buffer test and the VMM source adapter uses new SYS protocol only; no guest paging integration. 0.28 core C tested under ASan/UBSan with a TEST codec. 0.28 VMM model checks20. Old native reports in driver/verification are HISTORICAL, not a test of this revision. Exact logs/current compile proof in release QA.json. No physical RAM savings measured.
+
 # Backend 0.27 verification boundary
 
 Implemented, compiled source: host Backend VM GUI, Windows PowerShell Direct worker, RemoteApp file generation, explicit Hyper-V memory configuration, guest compression opt-in, selected guest PID termination and tray agent. These are **not natively executed here**.

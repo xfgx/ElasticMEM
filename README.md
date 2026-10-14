@@ -115,3 +115,6 @@ Fresh identity-bound per-target renderer capture immediately before epochs; excl
 
 ## Backend preview 0.27
 `backend/README.md`: Windows host desktop stays; tray agent manages a paired Hyper-V guest and supported RDS RemoteApp. Guest compression/DM uses Windows/Hyper-V, not our SYS. SYS/WHP custom-VMM provider building blocks are separate and unconnected; no complete custom pager or new native SYS execution claim.
+
+## 0.28 SYS paging foundation
+Real driver/core + KMDF source changes: compressed-only beneficial storage receipt and generation-safe GET/DELETE. New native owned-buffer SYS test in GUI/client, VMM adapter and GPA exit-router source. No new SYS built/executed, no Windows guest VMM connected, no real-app physical savings proven. See backend/SYS-028.md. Prior driver verification is historical only.
