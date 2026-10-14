@@ -66,7 +66,7 @@ foreach (var mk in new Func<long, IMemoryStore>[] {
 fails += ArrayTests.Run();
 fails += PageStoreSampleTests.Run();
 fails += BackendTests.Run() + VmBackendTests.Run() + VmCreationTests.Run();
-fails += VmProviderTests.Run();
+fails += VmProviderTests.Run() + WhpFoundationTests.Run();
 try { Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(ElasticMem.Core.Research.ResearchSelfTest.Run())); } catch(Exception ex) { Check(false, "research selftest: " + ex); }
 string reportRoot=Path.Combine(Path.GetTempPath(),"ElasticMem_report_"+Guid.NewGuid().ToString("N"));
 try

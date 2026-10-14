@@ -9,7 +9,7 @@ internal sealed class BackendTab:TabPage
     sealed record ProfileChoice(string Id,string Text){public override string ToString()=>Text;}
     sealed record KindChoice(VmBackendKind Kind,string Text){public override string ToString()=>Text;}
     readonly ComboBox profiles=new(){Width=430,DropDownStyle=ComboBoxStyle.DropDownList},newKind=new(){Width=260,DropDownStyle=ComboBoxStyle.DropDownList};
-    readonly List<Control> hypervOnly=new();bool loadingProfiles;
+    readonly List<Control> hypervOnly=new(),sysOnly=new();bool loadingProfiles;
     readonly NumericUpDown sysCapacity=N(64,1048576,8192),sysQuota=N(1,32,16);
 
     readonly TextBox vm=new(){Width=200,PlaceholderText="Имя профиля / VM"},host=new(){Width=230,PlaceholderText="RDS host FQDN / IPv4"},collection=new(){Width=180,PlaceholderText="RDS collection"};
@@ -27,12 +27,12 @@ internal sealed class BackendTab:TabPage
     {
         this.otherWork=otherWork;
         var stack=new VStack{Padding=new Padding(16)};
-        stack.Add(Ui.Hint("Тип1 — наш SYS page store, без Hyper-V. Windows-VMM пока не реализован: это профиль разработки, не работающая VM. Тип2 — Hyper-V VM. Никакой автоматической подмены типов. Сжатие RAM приложений через наш SYS пока не доказано."));
+        stack.Add(Ui.Hint("Тип1 — свой WHP VMM + SYS (экспериментально): только synthetic guest, Windows boot/UEFI/устройства НЕ реализованы. WHP требует гипервизор Windows. Тип2 — существующий Hyper-V backend (не SYS pager). Нет fallback. Экономия RAM приложений не подтверждена."));
         stack.Add(Ui.Row(Ui.L("VM"),vm,Ui.L("RemoteApp host"),host,Ui.L("Collection"),collection));
         stack.Add(Ui.Row(Ui.L("Min MiB"),min,Ui.L("Startup MiB"),startup,Ui.L("Max MiB"),max,Ui.L("Buffer %"),buffer));
         var help=new Button{Text="Инструкция Backend VM",AutoSize=true};help.Click+=(_,_)=>ElasticMem.App.Research.ResearchHelp.Show(FindForm()!);
         stack.Add(Ui.Row(auto,help));controls.AddRange(new Control[]{vm,host,collection,min,startup,max,buffer,auto});
-        newKind.Items.Add(new KindChoice(VmBackendKind.Sys,"Тип1 · наш SYS (VMM не готов)"));newKind.Items.Add(new KindChoice(VmBackendKind.HyperV,"Тип2 · Hyper-V"));newKind.SelectedIndex=0;
+        newKind.Items.Add(new KindChoice(VmBackendKind.Sys,"Тип1 · свой VMM + SYS (экспериментально)"));newKind.Items.Add(new KindChoice(VmBackendKind.HyperV,"Тип2 · Hyper-V (существующий backend)"));newKind.SelectedIndex=0;
         profiles.SelectedIndexChanged+=async(_,_)=>{if(loadingProfiles||busy||profiles.SelectedItem is not ProfileChoice selected)return;await Perform(()=>{controller.SelectProfile(selected.Id);ReloadProfiles();return Task.CompletedTask;});};
         Button B(string text,Func<Task> action){var b=new Button{Text=text,AutoSize=true};b.Click+=async(_,_)=>await Perform(action);controls.Add(b);return b;}
         var addProfile=B("Новый профиль выбранного типа",()=>{
@@ -57,7 +57,9 @@ internal sealed class BackendTab:TabPage
             status.Text="VM создана, запущена и привязана по GUID. Guest OS ещё не подтверждена. Откройте консоль; затем укажите RDP hostname/IP и сохраните учётную запись нового гостя. Пароль предыдущей VM не используется.";
             var console=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"vmconnect.exe")){UseShellExecute=false};console.ArgumentList.Add("localhost");console.ArgumentList.Add(saved.VmName);try{Process.Start(console);}catch{status.Text+=" VMConnect не открыт; откройте уже созданную VM через Hyper-V Manager. Не создавайте повторную VM вслепую.";}
         });
-        stack.Add(Ui.Row(createVm));
+        hypervOnly.Add(createVm);
+        var notBoot=new Button{Text="Свой VMM · Windows boot — не реализовано",AutoSize=true,Enabled=false};
+        stack.Add(Ui.Row(createVm,notBoot));
         var pair=B("1 · Сохранить / привязать VM",async()=>{
             var kind=controller.Load()?.BackendKind??throw new InvalidOperationException("Сначала создайте профиль выбранного типа.");
             var candidate=new BackendProfile(vm.Text.Trim(),kind==VmBackendKind.Sys?"unconfigured.invalid":host.Text.Trim(),kind==VmBackendKind.Sys?"ElasticMem":collection.Text.Trim(),(int)min.Value,(int)startup.Value,(int)max.Value,(int)buffer.Value,AutoStartVm:kind==VmBackendKind.HyperV&&auto.Checked,BackendKind:kind,SysStoreCapacity:(uint)sysCapacity.Value,SysStoreQuota:(ulong)sysQuota.Value*1024*1024);candidate.Validate();
@@ -82,6 +84,18 @@ internal sealed class BackendTab:TabPage
             catch(Exception ex){run.WriteJson("result.json",new{status="failed_no_valid_result",error_class=ex.GetType().Name,physical_ram_saved_bytes=(long?)null});run.Seal("failed_no_valid_result","No native SYS paging confirmation");throw;}
             status.Text+=" · Отчёт: "+run.DirectoryPath;
         });
+        sysOnly.AddRange(new Control[]{sysCapacity,sysQuota});
+        async Task RunWhp(bool inject)
+        {
+            if(controller.Load()?.BackendKind!=VmBackendKind.Sys)throw new InvalidOperationException("Выберите профиль своего VMM, без fallback.");
+            if(!Confirm("Только disposable Windows x64 с доступным WHP и новым доверенным SYS. Выполняется маленький 16-bit guest: НЕ Windows/Chrome/Telegram. Никакие security/boot настройки не меняются. "+(inject?"Будет инъекция отказа GET для проверки запрета resume.":"Будет проверка native fault → SYS restore.")))return;
+            Show(await WhpRunnerController.Run(inject));status.Text+=" · Отчёт: "+WhpRunnerController.Reports;
+        }
+        var whpTest=B("Свой VMM · WHP/SYS synthetic fault",()=>RunWhp(false));
+        var whpLoss=B("Свой VMM · инъекция отказа GET",()=>RunWhp(true));sysOnly.AddRange(new Control[]{whpTest,whpLoss});
+        var missingDevices=new Button{Text="UEFI / устройства / migration — не реализовано",Enabled=false,AutoSize=true};
+        var exportWhp=B("ZIP WHP/SYS отчётов",()=>{string zip=ResearchRun.ExportLogs(WhpRunnerController.Reports,Path.Combine(AppSettings.Dir,"ElasticMem-whp-sys-"+DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")+".zip"),false);status.Text=zip;Process.Start(new ProcessStartInfo("explorer.exe",Path.GetDirectoryName(zip)!){UseShellExecute=true});return Task.CompletedTask;});
+        stack.Add(Ui.Row(whpTest,whpLoss,exportWhp,missingDevices));
         stack.Add(Ui.Row(Ui.L("SYS slots"),sysCapacity,Ui.L("Session quota MiB"),sysQuota,sysTest));
         hypervOnly.AddRange(new Control[]{host,collection,min,startup,max,buffer,auto,credential,memory,start,stop,compression,publish});
         var refresh=B("Обновить процессы / память",RefreshBackend);
@@ -110,7 +124,7 @@ internal sealed class BackendTab:TabPage
         if(saved!=null){vm.Text=saved.VmName;host.Text=saved.RdpHost;collection.Text=saved.CollectionName;min.Value=saved.MinimumMiB;startup.Value=saved.StartupMiB;max.Value=saved.MaximumMiB;buffer.Value=saved.MemoryBufferPercent;auto.Checked=saved.AutoStartVm;sysCapacity.Value=saved.SysStoreCapacity;sysQuota.Value=saved.SysStoreQuota/(1024*1024);}
         baseline=null;current=null;processes.Rows.Clear();ApplyKindControls();status.Text=saved==null?"Создайте профиль: тип1 наш SYS, тип2 Hyper-V.":$"{saved.VmName} · тип{(int)saved.BackendKind}. "+(saved.BackendKind==VmBackendKind.Sys?"SYS store без Hyper-V; запуск Windows-VM пока недоступен.":"Hyper-V; это НЕ наш SYS pager.");
     }
-    void ApplyKindControls(){bool hv=saved?.BackendKind==VmBackendKind.HyperV;foreach(var c in hypervOnly)c.Enabled=!busy&&hv;}
+    void ApplyKindControls(){bool hv=saved?.BackendKind==VmBackendKind.HyperV;foreach(var c in hypervOnly)c.Enabled=!busy&&hv;foreach(var c in sysOnly)c.Enabled=!busy&&saved?.BackendKind==VmBackendKind.Sys;}
     static bool Confirm(string text)=>MessageBox.Show(text,"ElasticMem backend · согласие",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)==DialogResult.Yes;
     static bool Passed(JsonElement r)=>r.TryGetProperty("status",out var s)&&s.GetString()=="passed";
     void Show(JsonElement result){output.Text=JsonSerializer.Serialize(result,ResearchRun.Json);status.Text=result.TryGetProperty("status",out var s)?s.GetString():"unknown";}

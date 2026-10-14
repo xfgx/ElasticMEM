@@ -1,3 +1,5 @@
+> **0.31 — НЕ готовый Windows VMM.** Добавлен нативный WHP synthetic run-loop с SYS page-fault adapter, single-vCPU/no-DMA барьером и метриками. Код здесь не выполнялся в Windows; Windows boot/UEFI/devices/multi-vCPU/migration/физическая экономия не реализованы/не подтверждены. WHP требует Windows hypervisor. Инструкция и полный список ограничений: `backend/VMM-031.md`. Нового SYS binary нет.
+
 # ElasticMem — эластичное сжатие памяти для Windows 11
 
 ## Установка
