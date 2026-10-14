@@ -186,6 +186,23 @@ public static class ResearchSelfTest
             using(var run=new ResearchRun(temp,"test","unit","fixture",new{})){File.WriteAllText(run.FilePath("raw.txt"),"a");run.Seal("passed","unit");ResearchRun.Verify(run.DirectoryPath);Check(true,"sealed hash verify");File.WriteAllText(Path.Combine(run.DirectoryPath,"raw.txt"),"b");try{ResearchRun.Verify(run.DirectoryPath);Check(false,"tamper rejected");}catch(InvalidDataException){Check(true,"tamper rejected");}}
         }
         finally{Directory.Delete(temp,true);}
+        string appTemp=Path.Combine(Path.GetTempPath(),"elasticmem-app-codec-test-"+Guid.NewGuid().ToString("N"));
+        try
+        {
+            var appPages=Enumerable.Range(0,8).Select(i=>Enumerable.Range(0,4096).Select(j=>(byte)(i%2==0?0:(j+i)%251)).ToArray()).ToArray();
+            var appInput=new CodecInput(123,456,Enumerable.Range(1,8).Select(i=>(ulong)i*4096).ToArray(),appPages);
+            using var appDoc=JsonDocument.Parse(JsonSerializer.Serialize(CodecBench.Run(new[]{appInput},appTemp,null,CancellationToken.None,false)));
+            var appResult=appDoc.RootElement;
+            Check(appResult.GetProperty("comparison_kind").GetString()=="single_process_fixed_codecs_no_training","real app codec mode label");
+            Check(appResult.GetProperty("training_pid").ValueKind==JsonValueKind.Null&&appResult.GetProperty("training_pages").GetInt32()==0,"real app has no training PID");
+            Check(appResult.GetProperty("test_pages").GetInt32()==8&&appResult.GetProperty("test_pids")[0].GetInt32()==123,"single process all pages benchmarked");
+            Check(appResult.GetProperty("codecs").EnumerateArray().All(x=>!x.GetProperty("codec").GetString()!.Contains("dictionary")),"no dictionary in real app comparison");
+            Check(appResult.GetProperty("codecs").EnumerateArray().Where(x=>x.GetProperty("status").GetString()=="serialized_roundtrip_checked").Count()==(OperatingSystem.IsWindows()?5:3),"real app fixed codec roundtrips");
+            Check(!File.Exists(Path.Combine(appTemp,"zstd-training-dictionary.bin")),"no untrained dictionary artifact");
+            bool invalid=false;try{CodecBench.Run(new[]{appInput,appInput with{Pid=124}},appTemp,null,CancellationToken.None,false);}catch(ArgumentException){invalid=true;}Check(invalid,"untrained mode rejects multiple PIDs");
+            invalid=false;try{CodecBench.Run(new[]{appInput},appTemp,null,CancellationToken.None);}catch(ArgumentException){invalid=true;}Check(invalid,"legacy held-out mode still requires distinct train/test");
+        }
+        finally{if(Directory.Exists(appTemp))Directory.Delete(appTemp,true);}
         checks+=NewResearchTests.Run();
         if(errors.Count!=0)throw new InvalidDataException(string.Join("\n",errors));return new{status="selftests_passed",checks,seed=19,native_xpress_fixtures_executed=OperatingSystem.IsWindows(),limitations=new[]{"Core/codec correctness only; native Xpress fixtures only when Windows; no live paging/GPU/UI execution"}};
     }

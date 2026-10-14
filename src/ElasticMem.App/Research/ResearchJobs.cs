@@ -19,6 +19,7 @@ internal static class ResearchJobs
             progress?.Report("Прогон: "+run.DirectoryPath);object result;string status;
             switch(mode)
             {
+                case "app-codecs":result=ApplicationResearch.Measure(options,run,progress,ct);status="real_app_sample_codec_verified_not_live_reclaim";break;
                 case "environment":result=WindowsEnvironment.Read(run);status="environment_probe_only";break;
                 case "selftest":result=ResearchSelfTest.Run();status="selftests_passed";break;
                 case "controlled":result=ControlledResearch.Run(run,progress,ct);status="controlled_synthetic_validation_not_browser_evidence";break;

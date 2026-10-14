@@ -70,6 +70,9 @@ internal sealed class ResearchTab:TabPage
         _auto.Click+=async(_,_)=>await StartAutomatic();
         var control=new Button{Text="Контроль доступа (без браузера)",AutoSize=true};control.Click+=async(_,_)=>{if(IsRunning)return;_mode.SelectedIndex=Array.FindIndex(Modes,m=>m.Key=="controlled");await Run();};_config.Add(control);
         var replay=new Button{Text="Пересчитать последнюю партию (без trim)",AutoSize=true};replay.Click+=async(_,_)=>{if(IsRunning)return;_source.Text="";_mode.SelectedIndex=Array.FindIndex(Modes,m=>m.Key=="epochs-replay");await Run();};_config.Add(replay);
+        var applications=new Button{Text="Проверить реальные приложения: Edge / Chrome / Telegram",AutoSize=true};
+        applications.Click+=async(_,_)=>await StartApplications();_config.Add(applications);
+        stack.Add(Ui.Row(applications)).Add(Ui.Hint("Два снимка каждого выбранного приложения, до80МиБ исходных снимков; контейнеры занимают дополнительное место. Реальные resident/private байты → сериализованное восстановление + цена decode. Без trim и без live-экономии RAM; итог не является тестом ускорения. ZIP автоматически, дампы исключены."));
         stack.Add(Ui.Row(control,replay));
         stack.Add(Ui.Row(_auto,help)).Add(Ui.Hint("Нажатие «Проверить всё» — согласие на локальное чтение до 128 МиБ суммарно: до 64 МиБ исходных и до 64 МиБ свежих снимков выбранных рендереров Chrome/Edge/Steam. Агент остановится; ZIP без дампов создаётся автоматически. Отправки по сети нет."));
         stack.Add(Ui.Row(_allowTrim)).Add(Ui.Row(_extended));_config.Add(_allowTrim);_config.Add(_extended);
@@ -119,6 +122,22 @@ internal sealed class ResearchTab:TabPage
             if(replayBatch!=null){string zip=Path.Combine(replayBatch,"ElasticMem-logs-"+Path.GetFileName(replayBatch)+".zip");ResearchRun.ExportLogs(Path.Combine(replayBatch,"runs"),zip,false);Open(replayBatch);}
             _output.Text=mode=="controlled"?OneClickReport.Read(Path.GetDirectoryName(_last)!):File.ReadAllText(Path.Combine(_last,File.Exists(Path.Combine(_last,"result.json"))?"result.json":"report.md"));_status.Text="Сохранено: "+Path.GetFileName(_last);}
         catch(Exception ex){_output.Text=ex.ToString();}
+        finally{_cts.Dispose();_cts=null;BusyChanged?.Invoke(false);_completion?.TrySetResult();_run.Enabled=true;_auto.Enabled=true;_cancel.Enabled=false;_mode.Enabled=true;foreach(var c in _config)c.Enabled=true;}
+    }
+    async Task StartApplications()
+    {
+        if(IsRunning)return;
+        if(MessageBox.Show(this,"Будут прочитаны локальные снимки памяти запущенных Chrome/Edge и Telegram (до80МиБ суммарно). Они могут содержать пароли и переписку; остаются локально и не входят в ZIP.\n\nДва снимка с паузой15с. Работайте с приложениями как обычно. Никакого trim, перехвата памяти или доказательства live-экономии RAM.\n\nПродолжить?".Replace("\n","\r\n"),"Чтение памяти приложений: согласие",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
+        _cts=new();_completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);BusyChanged?.Invoke(true);_run.Enabled=false;_auto.Enabled=false;_cancel.Enabled=true;_mode.Enabled=false;foreach(var c in _config)c.Enabled=false;
+        try
+        {
+            if(_prepareAuto!=null)await _prepareAuto();
+            if(_agentRunning())throw new InvalidOperationException("Дождитесь завершения агента/бенчмарка.");
+            _cts.Token.ThrowIfCancellationRequested();
+            _batch=await ApplicationResearch.RunAsync(true,new Progress<string>(s=>{if(!IsDisposed)_status.Text=s;}),_cts.Token);
+            _last=_batch.LastRun;_output.Text=_batch.Report;_status.Text="Завершено: "+_batch.Status;Open(Path.GetDirectoryName(_batch.Archive)!);
+        }
+        catch(Exception ex){_output.Text=ex.ToString();_status.Text="Проверка не завершена.";}
         finally{_cts.Dispose();_cts=null;BusyChanged?.Invoke(false);_completion?.TrySetResult();_run.Enabled=true;_auto.Enabled=true;_cancel.Enabled=false;_mode.Enabled=true;foreach(var c in _config)c.Enabled=true;}
     }
     public async Task StartAutomatic(bool browserOnly=false)

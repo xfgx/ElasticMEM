@@ -11,7 +11,7 @@ internal static class AutoResearch
 {
     [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]
     static extern bool QueryFullProcessImageName(IntPtr process,uint flags,StringBuilder name,ref uint size);
-    static void EnsureNoOtherInstances()
+    internal static void EnsureNoOtherInstances()
     {
         using var self=Process.GetCurrentProcess();foreach(var other in Process.GetProcessesByName(self.ProcessName))using(other)if(other.Id!=Environment.ProcessId)throw new InvalidOperationException("Закройте другие экземпляры ElasticMem: состояние их агентов неизвестно. Проверка экземпляров не является глобальной блокировкой старых агентов.");
     }
