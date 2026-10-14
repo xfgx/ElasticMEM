@@ -2,7 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using ElasticMem.Core.Research;
 namespace ElasticMem.App.Research;
-internal sealed record ResearchOptions(int[] Pids,int Seconds=30,int SnapshotMiB=16,int Records=100000,int Iterations=100,int PoolMiB=32,int Adapter=0,string Scratch="",bool Negative=false,string Trace="",string Metadata="",double EvictionUs=10,double RecoveryUs=100,double MaxFaultUs=100,IReadOnlyDictionary<int,long>? ExpectedStarts=null,string SourceRun="",bool AllowTrim=false,int Epochs=12,bool Extended=false,int EpochPid=0);
+internal sealed record ResearchOptions(int[] Pids,int Seconds=30,int SnapshotMiB=16,int Records=100000,int Iterations=100,int PoolMiB=32,int Adapter=0,string Scratch="",bool Negative=false,string Trace="",string Metadata="",double EvictionUs=10,double RecoveryUs=100,double MaxFaultUs=100,IReadOnlyDictionary<int,long>? ExpectedStarts=null,string SourceRun="",bool AllowTrim=false,int Epochs=12,bool Extended=false,int EpochPid=0,bool KernelSamples=false);
 internal static class ResearchJobs
 {
     public static string Root=>Path.Combine(AppSettings.Dir,"research-runs");
@@ -21,6 +21,7 @@ internal static class ResearchJobs
             {
                 case "kernel-smoke":if(options.AllowTrim)throw new ArgumentException("Kernel smoke never trims foreign applications");ct.ThrowIfCancellationRequested();result=ElasticMem.DriverClient.KernelSmoke.Run(ct:ct);status="passed_owned_driver_smoke_only";break;
                 case "live-ab":if(options.AllowTrim)throw new ArgumentException("Live cooperative AB never trims foreign applications");result=LiveBackendResearch.Run(run,progress,ct);File.WriteAllText(run.FilePath("live-ab-report.txt"),LiveBackendResearch.Describe(result));status="owned_cooperative_live_ab_not_browser_or_telegram";break;
+                case "kernel-random-control":result=KernelApplicationSamples.RandomControl(run,ct);status="synthetic_kernel_control_verified_not_application";break;
                 case "app-codecs":result=ApplicationResearch.Measure(options,run,progress,ct);status="real_app_sample_codec_verified_not_live_reclaim";break;
                 case "environment":result=WindowsEnvironment.Read(run);status="environment_probe_only";break;
                 case "selftest":result=ResearchSelfTest.Run();status="selftests_passed";break;

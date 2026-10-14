@@ -7,6 +7,8 @@ p.add_argument('--client',required=True)
 p.add_argument('--output',required=True)
 a=p.parse_args()
 root=pathlib.Path(__file__).resolve().parents[1]
+if '<Version>0.24.0</Version>' not in (root/'src/ElasticMem.App/ElasticMem.App.csproj').read_text():
+ raise SystemExit('Historical 0.24 packager: current app version changed. Use package-025.py.')
 ev=pathlib.Path(a.evidence).resolve(); client=pathlib.Path(a.client).resolve(); out=pathlib.Path(a.output).resolve()
 def git(*args):return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()

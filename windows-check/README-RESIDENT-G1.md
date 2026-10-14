@@ -1,3 +1,5 @@
+> Актуальная установка и тест Edge/Chrome/Telegram для 0.25.0: `ПОЛНАЯ-ИНСТРУКЦИЯ.md`. Драйвер необязателен; kernel sample только в VM. Ниже — справка существующих исследовательских режимов, не подтверждение нового Windows runtime.
+
 # ElasticMem 0.14 — resident G1 verification
 
 Это исследовательская версия. Windows API, GPU и GUI здесь (Linux) не исполнялись.

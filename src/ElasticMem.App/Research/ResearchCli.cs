@@ -21,11 +21,11 @@ internal static class ResearchCli
             if(mode=="applications")
             {
                 if(args.Contains("--allow-working-set-trim")||args.Contains("--extended"))throw new ArgumentException("Application checks never trim or enable extended intervention");
-                var app=ApplicationResearch.RunAsync(args.Contains("--allow-memory-read"),null,CancellationToken.None).GetAwaiter().GetResult();
+                var app=ApplicationResearch.RunAsync(args.Contains("--allow-memory-read"),null,CancellationToken.None,kernelSamples:args.Contains("--kernel-samples"),application:Get("--application")??"all",researchVm:args.Contains("--research-vm")).GetAwaiter().GetResult();
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(transcript))!);File.WriteAllText(transcript,app.Report);
                 Environment.ExitCode=app.Status=="real_application_samples_checked_not_optimizer"?0:1;return true;
             }
-            if(mode=="app-codecs")throw new ArgumentException("Internal identity-bound mode; use applications --allow-memory-read");
+            if(mode is "app-codecs" or "kernel-random-control")throw new ArgumentException("Internal identity-bound mode; use applications --allow-memory-read");
             if(mode=="auto")
             {
                 var auto=AutoResearch.RunAsync(args.Contains("--allow-memory-read"),Int("--seconds",120),null,CancellationToken.None,allowTrim:args.Contains("--allow-working-set-trim"),extended:args.Contains("--extended"),scratch:Get("--scratch")??Path.GetTempPath(),browserPreference:Get("--browser")??"auto-browser",browserOnly:args.Contains("--browser-only")).GetAwaiter().GetResult();

@@ -58,3 +58,7 @@
 
 ### Воспроизведение Linux cross-build
 `python3 driver/scripts/prepare-cross.py /path/to/toolchains` загружает pinned Microsoft NuGet пакеты (~266МБ) и создаёт case aliases. Скачайте Zig0.14.1 с официального сайта и проверьте опубликованный checksum. Затем задайте `ZIG`, `WDK_ROOT`, `SDK_ROOT`, выполните `driver/scripts/cross-build.sh /path/to/output`. Скрипт теперь создаёт только `driver.obj` и `em_store.obj`, не SYS. На Windows выполните `Native-Relink.ps1 -ObjectDirectory <objects> -LinkerPath <official-link.exe> -WdkRoot <WDK-root> -OutputDirectory <output>`; используется KMDF1.33/WDK10.0.26100.0. Это исследовательский альтернативный путь, не замена WDK/MSBuild/Windows qualification.
+
+### Клиент приложения 0.25.0
+
+Опциональная кнопка «VM: копии приложений → kernel RAW/XPRESS» сравнивает одни скопированные байты Edge/Chrome/Telegram в двух режимах, проверяет full-byte GET и RESET counters, пишет безопасные `kernel-samples.csv`/сводку. Это добавляет kernel allocations, **не освобождает оригиналы приложения**. Новый путь клиента не был выполнен на Windows; ранее passed относится к unchanged SYS и synthetic 0.24 client. Полная установка/локальная VM подпись: `../windows-check/ПОЛНАЯ-ИНСТРУКЦИЯ.md`. Новый `Sign-ResearchDriver.ps1` сам ещё не runtime-tested; применяется только к exact verified unsigned image, не меняет boot policy.

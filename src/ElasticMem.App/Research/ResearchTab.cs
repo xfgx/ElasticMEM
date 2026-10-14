@@ -11,6 +11,8 @@ internal sealed class ResearchTab:TabPage
     }
     readonly ComboBox _mode=new ModeComboBox();
     readonly ComboBox _browser=new(){DropDownStyle=ComboBoxStyle.DropDownList,Width=300};
+    readonly ComboBox _application=new(){DropDownStyle=ComboBoxStyle.DropDownList,Width=250};
+    static readonly string[] ApplicationKeys={"all","msedge","chrome","Telegram"};
     static readonly string[] BrowserKeys={"auto-browser","msedge","chrome"};
     readonly TextBox _pids=new(){Width=200,PlaceholderText="PID через запятую"};
     readonly NumericUpDown _seconds=N(1,3600,120),_limit=N(1,64,16),_records=N(1000,5000000,100000),_iterations=N(10,2000,100),_pool=N(16,128,32),_adapter=N(0,15,0);
@@ -74,6 +76,10 @@ internal sealed class ResearchTab:TabPage
         var replay=new Button{Text="Пересчитать последнюю партию (без trim)",AutoSize=true};replay.Click+=async(_,_)=>{if(IsRunning)return;_source.Text="";_mode.SelectedIndex=Array.FindIndex(Modes,m=>m.Key=="epochs-replay");await Run();};_config.Add(replay);
         var applications=new Button{Text="Проверить реальные приложения: Edge / Chrome / Telegram",AutoSize=true};
         applications.Click+=async(_,_)=>await StartApplications();_config.Add(applications);
+        _application.Items.AddRange(new object[]{"Все: Edge / Chrome / Telegram","Только Microsoft Edge","Только Google Chrome","Только Telegram"});_application.SelectedIndex=0;_config.Add(_application);
+        var kernelApplications=new Button{Text="VM: копии приложений → kernel RAW/XPRESS",AutoSize=true};
+        kernelApplications.Click+=async(_,_)=>await StartApplications(true);_config.Add(kernelApplications);
+        stack.Add(Ui.Row(_application,kernelApplications)).Add(Ui.Hint("Kernel — только отдельная VM с уже установленным доверенным драйвером и запуском от администратора. Проверяет копии реальных байтов и random control; НЕ освобождает память приложения. Не устанавливает драйвер и не меняет Windows security."));
         stack.Add(Ui.Row(applications)).Add(Ui.Hint("Два снимка каждого выбранного приложения, до80МиБ исходных снимков; контейнеры занимают дополнительное место. Реальные resident/private байты → сериализованное восстановление + цена decode. Без trim и без live-экономии RAM; итог не является тестом ускорения. ZIP автоматически, дампы исключены."));
         var live=new Button{Text="Live backend: проверить А/Б RAM и задержки",AutoSize=true};
         live.Click+=async(_,_)=>{if(IsRunning)return;_mode.SelectedIndex=Array.FindIndex(Modes,m=>m.Key=="live-ab");await Run();};_config.Add(live);
@@ -131,9 +137,10 @@ internal sealed class ResearchTab:TabPage
         catch(Exception ex){_output.Text=ex.ToString();}
         finally{_cts.Dispose();_cts=null;BusyChanged?.Invoke(false);_completion?.TrySetResult();_run.Enabled=true;_auto.Enabled=true;_cancel.Enabled=false;_mode.Enabled=true;foreach(var c in _config)c.Enabled=true;}
     }
-    async Task StartApplications()
+    async Task StartApplications(bool kernelSamples=false)
     {
         if(IsRunning)return;
+        if(kernelSamples&&MessageBox.Show(this,"Подтверждаю отдельную disposable VM со снимком и установленным доверенным ElasticMemStore. Это копирование данных в kernel pool, НЕ оптимизация RAM приложения. Windows 11/HVCI/Verifier ещё не квалифицированы. Продолжить?","Kernel: только VM",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
         if(MessageBox.Show(this,"Будут прочитаны локальные снимки памяти запущенных Chrome/Edge и Telegram (до80МиБ суммарно). Они могут содержать пароли и переписку; остаются локально и не входят в ZIP.\n\nДва снимка с паузой15с. Работайте с приложениями как обычно. Никакого trim, перехвата памяти или доказательства live-экономии RAM.\n\nПродолжить?".Replace("\n","\r\n"),"Чтение памяти приложений: согласие",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
         _cts=new();_completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);BusyChanged?.Invoke(true);_run.Enabled=false;_auto.Enabled=false;_cancel.Enabled=true;_mode.Enabled=false;foreach(var c in _config)c.Enabled=false;
         try
@@ -141,7 +148,7 @@ internal sealed class ResearchTab:TabPage
             if(_prepareAuto!=null)await _prepareAuto();
             if(_agentRunning())throw new InvalidOperationException("Дождитесь завершения агента/бенчмарка.");
             _cts.Token.ThrowIfCancellationRequested();
-            _batch=await ApplicationResearch.RunAsync(true,new Progress<string>(s=>{if(!IsDisposed)_status.Text=s;}),_cts.Token);
+            _batch=await ApplicationResearch.RunAsync(true,new Progress<string>(s=>{if(!IsDisposed)_status.Text=s;}),_cts.Token,kernelSamples,ApplicationKeys[_application.SelectedIndex],researchVm:kernelSamples);
             _last=_batch.LastRun;_output.Text=_batch.Report;_status.Text="Завершено: "+_batch.Status;Open(Path.GetDirectoryName(_batch.Archive)!);
         }
         catch(Exception ex){_output.Text=ex.ToString();_status.Text="Проверка не завершена.";}

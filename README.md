@@ -107,3 +107,8 @@ ElasticMem.exe --scan telegram,chrome,steam,yandex [--trim] [--limit 512] [--out
 
 ## 0.19.0
 Fresh identity-bound per-target renderer capture immediately before epochs; exclusive observation-health aggregates; explicit codec size gates, scenario bursts and FILE/GPU median-only ratios. Strict G5 unknown handling unchanged. See full Russian guide. No Windows runtime signoff from Linux.
+
+## Исследовательское обновление 0.25.0
+
+Полная актуальная установка: `windows-check/ПОЛНАЯ-ИНСТРУКЦИЯ.md` (также встроена в приложение).
+Добавлены выбор Edge/Chrome/Telegram, logs-only сводный CSV и опциональная проверка **копий** тех же real-app страниц через kernel RAW/XPRESS только в VM. Никакого освобождения оригинальной памяти приложения; physical RAM saving и speedup не измеряются. Новый Windows application/kernel-sample путь требует проверки на пользовательском ПК/VM. Native driver binary unchanged: предыдущий Server 2025 synthetic smoke подтверждён; Windows 11/HVCI/Verifier не квалифицированы. Старый LLD SYS не устанавливать.

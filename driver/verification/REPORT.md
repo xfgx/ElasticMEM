@@ -1,3 +1,5 @@
+> Исторический отчёт native driver 0.24.0, сохранён при commit a750330. В 0.25.0 application client/логирование изменены; driver C и exact native SYS не менялись. Прежний PASS не является Windows-проверкой нового application sample пути.
+
 # ElasticMemStore — нативная VM-проверка 0.24.0
 
 ## Результат
