@@ -1,3 +1,5 @@
+> **Update after native VM testing:** previous Linux LLD SYS is unsafe and must not be installed. Microsoft-native-link replacement passed Server 2025 research smoke (4042 checks), unload/reload and restricted-token ACL. Windows 11/Verifier/HVCI/MSBuild remain untested. See `driver/verification/REPORT.md`; earlier unvalidated status statements below describe the initial candidate.
+
 # Recovery and 0.24 research candidate
 
 Recovered from the publicly published 0.23.0 source archive. Archive SHA256:

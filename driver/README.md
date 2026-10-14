@@ -1,6 +1,8 @@
-# ElasticMemStore — исследовательский драйвер Windows 11 x64
+# ElasticMemStore — исследовательский драйвер Windows x64
 
-**Статус: реализованный код KMDF kernel-хранилища + клиент; не production, не прозрачный RAM-оптимизатор.**
+**Статус: KMDF kernel-хранилище + клиент; нативный smoke прошёл на Windows Server 2025 x64. Не production, не прозрачный RAM-оптимизатор; Windows 11 пока не проверена.**
+
+Подробности и исходные доказательства: `verification/REPORT.md`. 4042 проверки RAW/XPRESS, штатные unload/reload и restricted-token ACL прошли. Driver Verifier, HVCI, HLK, независимая обычная учётная запись и длительный stress не проверены.
 
 ## Что он делает
 
@@ -34,7 +36,7 @@
 7. `./driver/out/client/ElasticMem.DriverClient.exe smoke kernel-smoke.json` либо приложение: Лаборатория → «Драйвер · проверка kernel-хранилища (только VM)». Приложение должно быть elevated. Автоустановки/auto-elevation нет.
 8. Закрыть клиенты, `./driver/scripts/Uninstall-Driver.ps1`.
 
-В комплекте может быть `kernel-cross/ElasticMemStore.sys`: это **НЕПОДПИСАННЫЙ cross-build**, не прошедший WDK/MSBuild и Windows load validation. Install-SignedDriver должен его отвергнуть. Предпочтительно пересобрать WDK и подписать результат локально. Cross-build сам по себе не доказывает HVCI-совместимость.
+**Старые `kernel-cross/ElasticMemStore.sys` и `kernel-cross-UNSIGNED/ElasticMemStore.sys` отозваны как исследовательские артефакты: НЕ устанавливать даже после подписи.** LLD-образ не загрузился; попытка исправить его вызвала BSOD в VM. Новый `driver-native-UNSIGNED/ElasticMemStore.sys` получен Microsoft link.exe и проверен в VM с локальной тестовой подписью. В поставке он unsigned: требуется собственная доверенная подпись и отдельная VM. MSBuild-сборка и HVCI по-прежнему не проверены.
 
 ## Обязательные проверки VM перед любой поставкой
 
@@ -55,4 +57,4 @@
 Официальные API: https://learn.microsoft.com/en-us/windows-hardware/drivers/wdf/using-control-device-objects ; https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-rtlcompressbuffer
 
 ### Воспроизведение Linux cross-build
-`python3 driver/scripts/prepare-cross.py /path/to/toolchains` загружает pinned Microsoft NuGet пакеты (~266МБ) и создаёт case aliases. Скачайте Zig0.14.1 с официального сайта и проверьте опубликованный checksum. Затем задайте `ZIG`, `WDK_ROOT`, `SDK_ROOT`, выполните `driver/scripts/cross-build.sh /path/to/output`. Это не заменяет WDK/MSBuild/Windows qualification.
+`python3 driver/scripts/prepare-cross.py /path/to/toolchains` загружает pinned Microsoft NuGet пакеты (~266МБ) и создаёт case aliases. Скачайте Zig0.14.1 с официального сайта и проверьте опубликованный checksum. Затем задайте `ZIG`, `WDK_ROOT`, `SDK_ROOT`, выполните `driver/scripts/cross-build.sh /path/to/output`. Скрипт теперь создаёт только `driver.obj` и `em_store.obj`, не SYS. На Windows выполните `Native-Relink.ps1 -ObjectDirectory <objects> -LinkerPath <official-link.exe> -WdkRoot <WDK-root> -OutputDirectory <output>`; используется KMDF1.33/WDK10.0.26100.0. Это исследовательский альтернативный путь, не замена WDK/MSBuild/Windows qualification.

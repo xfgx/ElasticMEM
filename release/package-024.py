@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Local research candidate only. No network publication or updater manifest writes."""
 import argparse,hashlib,json,pathlib,subprocess,zipfile,shutil,struct
+raise SystemExit("RETIRED: legacy LLD SYS failed native VM testing. Use package-driver-verified.py; see driver/verification/REPORT.md.")
 p=argparse.ArgumentParser();p.add_argument('--qa',required=True);p.add_argument('--output',required=True);a=p.parse_args()
 root=pathlib.Path(__file__).resolve().parents[1];qa=pathlib.Path(a.qa).resolve();out=pathlib.Path(a.output).resolve();out.mkdir(parents=True,exist_ok=False)
 run=lambda *args:subprocess.check_output(['git','-C',str(root),*args],text=True).strip()

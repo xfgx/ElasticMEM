@@ -1,0 +1,19 @@
+{
+  "tested_code_commit": "2ea62910a9a44fe2f8d25d1fca37f18601abbc1c",
+  "objects_sha256": {
+    "driver.obj": "ac1235f9ff7e3c3f87d04fe45624b98430244786478fa2d06ebed0ce91b03860",
+    "em_store.obj": "20b2b1099bc178b0cb6f6f8019d289c3aa5816337d89a1fdb95001e70c768f44"
+  },
+  "unsigned_native_sys_sha256": "5362244d0d4d0724312ee3e403303190448fbdaf108b3d2a4a3a4b2cd6cea8a5",
+  "guest_test_signed_sys_sha256": "a143a233ddd5ec96128b7c1f2ad0bdfea618298fab5a0fee24a8d5ec4fc01acc",
+  "client_sha256": "d4465ff2c2d0d88a91e6879bca0a0cc79380fc6202c3485bab6aa33b34be3693",
+  "linker": "Microsoft link.exe 14.44.35207, executed inside Windows",
+  "compiler": "Zig 0.14.1 / Clang COFF objects cross-compiled on Linux",
+  "msvc_package_sha256": "f4ad3cee4ef18e9f36382399261de27be6910ab3467178d7e687377ec841306d",
+  "wdk": "10.0.26100.0; KMDF1.33",
+  "msbuild_executed": false,
+  "windows11_tested": false,
+  "hvci_tested": false,
+  "driver_verifier_tested": false,
+  "private_keys_exported": false
+}

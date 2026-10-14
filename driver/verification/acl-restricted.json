@@ -1,0 +1,7 @@
+{
+  "schema": "elasticmem.acl.restricted-token.v1",
+  "status": "passed",
+  "admin_open": true,
+  "restricted_win32_error": 5,
+  "independent_standard_user_tested": false
+}
