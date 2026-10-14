@@ -118,3 +118,6 @@ Fresh identity-bound per-target renderer capture immediately before epochs; excl
 
 ## 0.28 SYS paging foundation
 Real driver/core + KMDF source changes: compressed-only beneficial storage receipt and generation-safe GET/DELETE. New native owned-buffer SYS test in GUI/client, VMM adapter and GPA exit-router source. No new SYS built/executed, no Windows guest VMM connected, no real-app physical savings proven. See backend/SYS-028.md. Prior driver verification is historical only.
+
+## 0.29 automatic Hyper-V VM creation preview
+Backend VM wizard: trusted local VHDX/ISO, SHA256/private copy, Gen2/SecureBoot/vTPM, CPU/DM/existing switch, start + GUID pairing. VHDX must be prepared; ISO needs interactive Windows Setup. No automatic RDS/domain/licenses/apps/new SYS. Windows native creation NOT executed here. Read backend/AUTO-VM-029.md.

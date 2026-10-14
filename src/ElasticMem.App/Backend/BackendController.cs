@@ -12,7 +12,7 @@ internal sealed class BackendController
     readonly SemaphoreSlim gate=new(1,1);
     public string PrivateFolder {get;}=Path.Combine(AppSettings.Dir,"backend-private");
     public string ConfigPath=>Path.Combine(ProtectedFolder,WindowsIdentity.GetCurrent().User!.Value+".json");
-    public string CredentialPath=>Path.Combine(PrivateFolder,"guest-credential.clixml");
+    string CredentialFor(BackendProfile p)=>Path.Combine(PrivateFolder,VmCredentialScope.FileName(p.VmId));
     public string LogPath=>Path.Combine(PrivateFolder,"events.jsonl");
     static string ProtectedFolder=>Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),"ElasticMemBackendTools");
     public static bool Admin=>new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
@@ -68,7 +68,7 @@ internal sealed class BackendController
             requestConfig=Path.Combine(ProtectedFolder,"request-"+Guid.NewGuid().ToString("N")+".json");
             File.WriteAllText(requestConfig,JsonSerializer.Serialize(profile),new UTF8Encoding(false));
             var start=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe")){UseShellExecute=false,CreateNoWindow=operation!="SaveCredential",RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
-            foreach(var a in new[]{"-NoLogo","-NoProfile","-File",script,"-Operation",operation,"-ConfigPath",requestConfig,"-CredentialPath",CredentialPath,"-TargetPid",pid.ToString(),"-StartTicks",ticks.ToString(),"-SessionId",session.ToString()})start.ArgumentList.Add(a);
+            foreach(var a in new[]{"-NoLogo","-NoProfile","-File",script,"-Operation",operation,"-ConfigPath",requestConfig,"-CredentialPath",CredentialFor(profile),"-TargetPid",pid.ToString(),"-StartTicks",ticks.ToString(),"-SessionId",session.ToString()})start.ArgumentList.Add(a);
             using var child=Process.Start(start)??throw new IOException("Worker start failed");
             var stdout=ReadBounded(child.StandardOutput,256*1024);var stderr=ReadBounded(child.StandardError,64*1024);
             using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(operation=="SaveCredential"?180:90));
@@ -82,6 +82,38 @@ internal sealed class BackendController
             return result;
         }
         finally{if(requestConfig!=null)try{File.Delete(requestConfig);}catch{}gate.Release();}
+    }
+    public async Task<VmCreationPlan> HashCreationMedia(VmCreationPlan plan)
+    {
+        plan.Validate();NotReparse(plan.MediaPath);
+        string digest=await Task.Run(()=>{using var stream=new FileStream(plan.MediaPath,FileMode.Open,FileAccess.Read,FileShare.Read);return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream)).ToLowerInvariant();});
+        return plan with{MediaSha256=digest};
+    }
+    public async Task<JsonElement> RunCreation(string operation,VmCreationPlan? plan=null)
+    {
+        if(operation is not("HostInfo" or "CreateVm"))throw new ArgumentException("Creation operation outside allowlist");
+        if(operation=="CreateVm")(plan??throw new ArgumentNullException(nameof(plan))).Validate();
+        await gate.WaitAsync();string? request=null;
+        try
+        {
+            if(!Admin)throw new InvalidOperationException("Запустите ElasticMem от администратора. Hyper-V/boot/security автоматически не включаются.");
+            ProtectDirectory(ProtectedFolder,false);ProtectDirectory(PrivateFolder,true);
+            string lockPath=Path.Combine(ProtectedFolder,WindowsIdentity.GetCurrent().User!.Value+".lock");NotReparse(lockPath);
+            using var lease=File.Open(lockPath,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
+            using var resource=Assembly.GetExecutingAssembly().GetManifestResourceStream("ElasticMem.Backend.CreateVm")??throw new IOException("Creation resource missing");
+            using var reader=new StreamReader(resource);string script=reader.ReadToEnd();string worker=Path.Combine(ProtectedFolder,"CreateVm.ps1");NotReparse(worker);
+            File.WriteAllText(worker,script,new UTF8Encoding(true));if(File.ReadAllText(worker)!=script)throw new IOException("Creator integrity check failed");
+            request=Path.Combine(ProtectedFolder,"create-"+Guid.NewGuid().ToString("N")+".json");File.WriteAllText(request,JsonSerializer.Serialize((object?)plan??new{}),new UTF8Encoding(false));
+            var start=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe")){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
+            foreach(var a in new[]{"-NoLogo","-NoProfile","-File",worker,"-Operation",operation,"-ConfigPath",request})start.ArgumentList.Add(a);
+            using var child=Process.Start(start)??throw new IOException("Creator start failed");var stdout=ReadBounded(child.StandardOutput,256*1024);var stderr=ReadBounded(child.StandardError,64*1024);
+            using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(operation=="CreateVm"?3600:90));
+            try{await child.WaitForExitAsync(timeout.Token);}catch(OperationCanceledException){try{child.Kill();}catch{}Append(new{schema="elasticmem.vm.creation.event.v1",utc=DateTime.UtcNow,operation,status="timeout_outcome_unknown",creation_id=plan?.CreationId});throw new TimeoutException("Исход неизвестен. Не нажимайте повторно: проверьте VM и creation.json в ProgramData/ElasticMemBackendVMs; созданные ресурсы не удаляются вслепую.");}
+            string json=await stdout;await stderr;JsonElement result;
+            try{result=JsonDocument.Parse(json.Trim()).RootElement.Clone();}catch{throw new InvalidDataException("Creator did not return JSON. Check approved PowerShell policy; no Bypass was used.");}
+            Append(new{schema="elasticmem.vm.creation.event.v1",utc=DateTime.UtcNow,operation,result});return result;
+        }
+        finally{if(request!=null)try{File.Delete(request);}catch{}gate.Release();}
     }
     static async Task<string> ReadBounded(StreamReader reader,int limit)
     {

@@ -1,3 +1,7 @@
+# 0.29 VM creation preview
+
+Added Hyper-V creation worker/wizard and38 portable creation contract checks. PowerShell5-script parser syntax only. Native Hyper-V creation, vTPM/SecureBoot, boot and Windows GUI NOT executed. No SYS/driver changes since0.28; previous driver reports remain historical. Read AUTO-VM-029.md and current QA.json.
+
 # 0.28 verification update (supersedes 0.27 SYS statements below)
 
 Driver source NOW changed: generation-safe compressed-only IOCTLs, receipt, conditional GET/DELETE; new SYS native build/execution NOT performed. App has native owned-buffer test and the VMM source adapter uses new SYS protocol only; no guest paging integration. 0.28 core C tested under ASan/UBSan with a TEST codec. 0.28 VMM model checks20. Old native reports in driver/verification are HISTORICAL, not a test of this revision. Exact logs/current compile proof in release QA.json. No physical RAM savings measured.

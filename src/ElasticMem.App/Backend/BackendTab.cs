@@ -27,6 +27,21 @@ internal sealed class BackendTab:TabPage
         var help=new Button{Text="Инструкция Backend VM",AutoSize=true};help.Click+=(_,_)=>ElasticMem.App.Research.ResearchHelp.Show(FindForm()!);
         stack.Add(Ui.Row(auto,help));controls.AddRange(new Control[]{vm,host,collection,min,startup,max,buffer,auto});
         Button B(string text,Func<Task> action){var b=new Button{Text=text,AutoSize=true};b.Click+=async(_,_)=>await Perform(action);controls.Add(b);return b;}
+        var createVm=B("Создать Windows VM автоматически…",async()=>{
+            var info=await controller.RunCreation("HostInfo");Show(info);if(!Passed(info))return;
+            string proposed=vm.Text.Trim();if(proposed==""||info.GetProperty("vm_names").EnumerateArray().Any(n=>string.Equals(n.GetString(),proposed,StringComparison.OrdinalIgnoreCase)))proposed="ElasticMem-Backend-"+DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            using var wizard=new CreateVmDialog(info,proposed,(int)min.Value,(int)startup.Value,(int)max.Value,(int)buffer.Value);
+            if(wizard.ShowDialog(FindForm())!=DialogResult.OK||wizard.Plan==null)return;
+            status.Text="Проверка SHA256 образа… затем копирование, создание и запуск VM. Не закрывайте приложение.";
+            var request=await controller.HashCreationMedia(wizard.Plan);
+            var result=await controller.RunCreation("CreateVm",request);Show(result);
+            if(result.GetProperty("status").GetString()!="created_running_guest_unverified")return;
+            var createdProfile=VmCreationOutcome.Accept(request,result,collection.Text.Trim(),auto.Checked);controller.Save(createdProfile);saved=createdProfile;
+            vm.Text=saved.VmName;host.Text=saved.RdpHost;collection.Text=saved.CollectionName;baseline=null;current=null;processes.Rows.Clear();
+            status.Text="VM создана, запущена и привязана по GUID. Guest OS ещё не подтверждена. Откройте консоль; затем укажите RDP hostname/IP и сохраните учётную запись нового гостя. Пароль предыдущей VM не используется.";
+            var console=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"vmconnect.exe")){UseShellExecute=false};console.ArgumentList.Add("localhost");console.ArgumentList.Add(saved.VmName);try{Process.Start(console);}catch{status.Text+=" VMConnect не открыт; откройте уже созданную VM через Hyper-V Manager. Не создавайте повторную VM вслепую.";}
+        });
+        stack.Add(Ui.Row(createVm));
         var pair=B("1 · Сохранить / привязать VM",async()=>{
             var candidate=new BackendProfile(vm.Text.Trim(),host.Text.Trim(),collection.Text.Trim(),(int)min.Value,(int)startup.Value,(int)max.Value,(int)buffer.Value,AutoStartVm:auto.Checked);candidate.Validate();
             if(!Confirm("Будет привязана VM «"+candidate.VmName+"». Управление относится только к её GUID. Готовая Windows VM/RDS должна уже существовать. Продолжить?"))return;
