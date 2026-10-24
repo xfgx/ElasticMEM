@@ -38,6 +38,9 @@ jobs:
           dotnet publish tools/ElasticMem.VmmRunner/ElasticMem.VmmRunner.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o pkg/ElasticMem/vmm-runner
           if ($LASTEXITCODE -ne 0) { throw 'runner publish failed' }
           Get-ChildItem pkg -Recurse -Filter *.pdb | Remove-Item
+      - name: Version guard (built app must report the release version)
+        shell: bash
+        run: bash release/check-version.sh "${TAG#v}"
       - name: Native smoke (no WHP/driver required)
         shell: pwsh
         run: |
