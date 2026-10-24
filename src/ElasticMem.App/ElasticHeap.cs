@@ -35,12 +35,16 @@ public sealed unsafe class ElasticHeap : IDisposable
     readonly object _gate = new();
     readonly VectoredHandler _handler; // держим ссылку, чтобы делегат не собрал GC
     readonly IntPtr _veh;
+    public static bool AllowExperimentalVeh;
     volatile bool _disposed;
     long _faults, _decompressed, _evictions; double _faultMsTotal; readonly List<double> _faultMs = new();
 
     public ElasticHeap(IPageCodec codec, int pages, long quotaBytes)
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+        // 0.36.0: запуск из GUI ронял процесс (управляемые выделения/вызовы внутри VEH). Путь не готов —
+        // оставлен в исходниках для доработки, но включается только явным флагом, не из приложения.
+        if (!AllowExperimentalVeh) throw new NotSupportedException("Транзакционный VEH-путь временно отключён как небезопасный; используйте CompressedPageTable напрямую.");
         if (pages is < 1 or > 1048576) throw new ArgumentOutOfRangeException(nameof(pages));
         _pages = pages; _table = new CompressedPageTable(codec, pages, quotaBytes);
         IntPtr region = VirtualAlloc(IntPtr.Zero, (nuint)((long)pages * PageBytes), MEM_RESERVE, PAGE_NOACCESS);
