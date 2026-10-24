@@ -40,6 +40,10 @@ internal static class Native
     [DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr VirtualQueryEx(IntPtr h, IntPtr addr, out MEMORY_BASIC_INFORMATION mbi, IntPtr len);
     [DllImport("kernel32.dll", SetLastError = true)] public static extern bool ReadProcessMemory(IntPtr h, IntPtr addr, byte[] buf, IntPtr size, out IntPtr read);
     [DllImport("kernel32.dll", SetLastError = true)] public static extern bool K32EmptyWorkingSet(IntPtr h);
+    public const uint PROCESS_VM_OPERATION = 0x0008;
+    [StructLayout(LayoutKind.Sequential)] public struct MEMORY_RANGE_ENTRY { public IntPtr VirtualAddress; public UIntPtr NumberOfBytes; }
+    // Windows 8+/Server 2012+. Асинхронно подтягивает указанные диапазоны чужого процесса в рабочий набор.
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern bool PrefetchVirtualMemory(IntPtr h, UIntPtr numberOfEntries, [In] MEMORY_RANGE_ENTRY[] entries, uint flags);
     [DllImport("kernel32.dll", SetLastError = true)] public static extern bool K32GetProcessMemoryInfo(IntPtr h, out PROCESS_MEMORY_COUNTERS_EX c, uint cb);
     [DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetProcessTimes(IntPtr h, out long creation, out long exit, out long kernel, out long user);
     [DllImport("kernel32.dll", SetLastError = true)] public static extern bool ProcessIdToSessionId(int pid, out int session);

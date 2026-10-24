@@ -85,3 +85,35 @@ public sealed class WsProbe
         return Count == 0 ? -1 : (double)valid / Count;
     }
 }
+
+/// <summary>
+/// Текущие резидентные ПРИВАТНЫЕ страницы процесса, свёрнутые в регионы по 64 КиБ (ключ = адрес >> 16).
+/// После вытеснения рабочего набора это ровно то, что процесс вернул сам, — сигнал «горячего сейчас».
+/// </summary>
+public static class ResidentRegions
+{
+    public static HashSet<ulong>? Capture(IntPtr h, int maxPages = 1 << 20)
+    {
+        int n = 64 * 1024;
+        for (int attempt = 0; attempt < 7; attempt++)
+        {
+            var buf = new UIntPtr[n + 1];
+            if (Native.K32QueryWorkingSet(h, buf, (uint)(buf.Length * IntPtr.Size)))
+            {
+                long count = Math.Min((long)(ulong)buf[0], maxPages);
+                var regions = new HashSet<ulong>();
+                for (long i = 1; i <= count && i < buf.Length; i++)
+                {
+                    ulong e = (ulong)buf[i];
+                    if ((e & 0x100) != 0) continue;        // общая страница (DLL/общий буфер) — не наша
+                    regions.Add((e & ~0xFFFUL) >> 16);     // адрес страницы -> регион 64 КиБ
+                }
+                return regions;
+            }
+            if (Marshal.GetLastWin32Error() != 24 /*ERROR_BAD_LENGTH*/) return null;
+            long need = (long)(ulong)buf[0];
+            n = (int)Math.Min(int.MaxValue / 16, Math.Max(n * 2, need + need / 8 + 1024));
+        }
+        return null;
+    }
+}
