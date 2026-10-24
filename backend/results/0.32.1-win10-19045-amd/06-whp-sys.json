@@ -1,0 +1,22 @@
+{
+  "schema": "elasticmem.whp.runner.failure.v2",
+  "status": "failed_no_valid_result",
+  "mode": "synthetic",
+  "backend": "custom_WHP_SYS",
+  "failed_stage": "sys_open",
+  "error_class": "Win32Exception",
+  "hresult": "0x80004005",
+  "win32_error": 2,
+  "whp_status": null,
+  "os": {
+    "is_windows": true,
+    "version": "10.0.19045.0",
+    "build": 19045,
+    "is_windows11_build": false,
+    "process_arch": "X64",
+    "elevated": false
+  },
+  "windows_guest_booted": false,
+  "physical_ram_saved_bytes": null,
+  "automatic_backend_fallback": false
+}
