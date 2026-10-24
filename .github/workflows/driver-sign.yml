@@ -1,0 +1,81 @@
+name: driver-sign
+# Собирает и ПОДПИСЫВАЕТ драйвер в CI.
+#   test  — самоподписанный сертификат, созданный в раннере. Грузится ТОЛЬКО в test-signing VM
+#           (Secure Boot выключен), импортировав приложенный .cer. Для обычных ПК НЕ подходит.
+#   attest — attestation-подпись Microsoft через Partner Center Hardware API. Включается, только если
+#           заданы секреты репозитория (AAD-приложение + EV-сертификат в Partner Center). Это
+#           единственный путь, чтобы драйвер грузился у обычных пользователей без выключения Secure Boot.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'test | attest'
+        default: 'test'
+permissions:
+  contents: read
+jobs:
+  build-and-sign:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - name: Build driver (WDK toolset)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          $ver = (Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Include\*\km' -Directory | ForEach-Object { $_.Parent.Name } | Sort-Object | Select-Object -Last 1)
+          msbuild driver\kmdf\ElasticMemStore.vcxproj /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 "/p:WindowsTargetPlatformVersion=$ver" 2>&1 | Tee-Object out\build.log
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Copy-Item (Get-ChildItem driver\out -Recurse -Filter ElasticMemStore.sys | Select-Object -First 1).FullName out\ElasticMemStore.sys
+      - name: Test-sign (self-signed; VM/test-signing only)
+        if: ${{ (github.event.inputs.mode || 'test') == 'test' }}
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=ElasticMem CI test-signing (VM only)' `
+            -CertStoreLocation Cert:\CurrentUser\My -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256
+          Set-AuthenticodeSignature -FilePath out\ElasticMemStore.sys -Certificate $cert -HashAlgorithm SHA256 | Out-Null
+          Export-Certificate -Cert $cert -FilePath out\ElasticMem-testsign-public.cer | Out-Null
+          $s = Get-AuthenticodeSignature out\ElasticMemStore.sys
+          "signature_status=$($s.Status)" | Tee-Object out\sign.txt
+          "signer=$($s.SignerCertificate.Subject)" | Tee-Object -Append out\sign.txt
+          (Get-FileHash out\ElasticMemStore.sys -Algorithm SHA256).Hash | Tee-Object out\sha256.txt
+          "NOTE: self-signed. Loads ONLY in a test-signing VM after importing the .cer as Trusted Root + TrustedPublisher. NOT valid on normal PCs." | Tee-Object -Append out\sign.txt
+          Copy-Item packaging\driver\* out\ -Recurse -Force
+      - name: Attestation-sign (Microsoft-trusted; needs repo secrets)
+        if: ${{ github.event.inputs.mode == 'attest' }}
+        shell: pwsh
+        run: |
+          if (-not $env:PARTNER_TENANT_ID) {
+            @"
+          Attestation signing requires repository secrets that are NOT set:
+            PARTNER_TENANT_ID, PARTNER_CLIENT_ID, PARTNER_CLIENT_SECRET  (Azure AD app linked to Partner Center)
+            PARTNER_SELLER_ID                                           (Partner Center account)
+          and an EV code-signing certificate enrolled in the Hardware dashboard.
+          Without these, Microsoft cannot attestation-sign the driver, so it CANNOT load on Secure Boot PCs.
+          See packaging/driver/ATTESTATION.md for the exact setup.
+          "@ | Tee-Object out\sign.txt
+            exit 1
+          }
+          # Submit driver/out\Release to the Hardware API (hardware/driver attestation), poll, download the
+          # Microsoft-signed package. Implemented once secrets exist; see ATTESTATION.md.
+          ./packaging/driver/Submit-Attestation.ps1 -Sys out\ElasticMemStore.sys -Out out
+        env:
+          PARTNER_TENANT_ID: ${{ secrets.PARTNER_TENANT_ID }}
+          PARTNER_CLIENT_ID: ${{ secrets.PARTNER_CLIENT_ID }}
+          PARTNER_CLIENT_SECRET: ${{ secrets.PARTNER_CLIENT_SECRET }}
+          PARTNER_SELLER_ID: ${{ secrets.PARTNER_SELLER_ID }}
+      - name: Verify signature
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path out\ElasticMemStore.sys) {
+            $s = Get-AuthenticodeSignature out\ElasticMemStore.sys
+            "Verify: Status=$($s.Status) Signer=$($s.SignerCertificate.Subject)" | Tee-Object -Append out\sign.txt
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: driver-signed-${{ github.event.inputs.mode || 'test' }}
+          path: out/
+          if-no-files-found: warn
