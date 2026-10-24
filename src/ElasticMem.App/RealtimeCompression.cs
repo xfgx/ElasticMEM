@@ -71,6 +71,8 @@ public sealed class RealtimeCompressionTab : TabPage
     void Append(string s)
     {
         if (InvokeRequired) { BeginInvoke(() => Append(s)); return; }
+        // Лог не растёт без предела: оставляем последние ~100 тыс. символов.
+        if (_log.TextLength > 200_000) _log.Text = _log.Text[^100_000..];
         _log.AppendText(s.TrimEnd() + Environment.NewLine);
     }
     static string Mib(long b) => (b >= 0 ? "" : "−") + (Math.Abs(b) / (1024.0 * 1024.0)).ToString("0") + " МиБ";
@@ -158,6 +160,8 @@ public sealed class RealtimeCompressionTab : TabPage
     {
         var want = new HashSet<string>(spec.Split(',', StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
         var hot = new Dictionary<int, RealtimeHotSet>();
+        var settled = new Dictionary<int, long>(); // рабочий набор после прошлого цикла
+        using var self = Process.GetCurrentProcess(); var selfCpu0 = self.TotalProcessorTime; var wall0 = DateTime.UtcNow;
         var sys0 = SysMem.Take();
         long cycles = 0, totalPrefetched = 0; bool prefetchWorks = true;
         Append($"Старт. Доступно ОЗУ {Mib(sys0.Available)}, хранилище сжатия {Mib(sys0.Store)}.");
@@ -173,12 +177,15 @@ public sealed class RealtimeCompressionTab : TabPage
                     catch { }
                     finally { p.Dispose(); }
                 }
-                long prefetchedThisCycle = 0; double refaultSum = 0; int refaultN = 0;
+                long prefetchedThisCycle = 0; double refaultSum = 0; int refaultN = 0; int compacted = 0, skippedStable = 0;
                 var winPids = new HashSet<int>(targets.Select(t => t.pid));
                 foreach (var (pid, h) in targets)
                 {
                     if (!hot.TryGetValue(pid, out var model)) { model = new RealtimeHotSet(); hot[pid] = model; }
                     long wsBefore = Native.TryGetMemInfo(h, out var mb) ? (long)(ulong)mb.WorkingSetSize : 0;
+                    // Набор не вырос — сжимать нечего; вытеснение только заставило бы распаковывать горячее (CPU).
+                    if (!RealtimeHotSet.NeedsCompaction(wsBefore, settled.TryGetValue(pid, out long st) ? st : 0)) { skippedStable++; Native.CloseHandle(h); continue; }
+                    compacted++;
                     Native.K32EmptyWorkingSet(h);
                     // Короткое окно: приложение само возвращает то, что ему срочно нужно = горячее сейчас.
                     System.Threading.Thread.Sleep(250);
@@ -195,9 +202,13 @@ public sealed class RealtimeCompressionTab : TabPage
                         if (Native.PrefetchVirtualMemory(h, (UIntPtr)entries.Length, entries, 0)) { prefetchedThisCycle += (long)entries.Length * RealtimeHotSet.RegionBytes; }
                         else prefetchWorks = false;
                     }
+                    settled[pid] = Native.TryGetMemInfo(h, out var ms) ? (long)(ulong)ms.WorkingSetSize : wsAccessed;
                     Native.CloseHandle(h);
                     if (ct.IsCancellationRequested) break;
                 }
+                // Забываем завершившиеся процессы (иначе модели копятся, а PID переиспользуются).
+                var alive = new HashSet<int>(targets.Select(t => t.pid));
+                foreach (var dead in hot.Keys.Where(k => !alive.Contains(k)).ToList()) { hot.Remove(dead); settled.Remove(dead); }
                 double resp = 0; int rn = 0;
                 foreach (var w in UiProbe.Windows(winPids).Take(6)) { resp += UiProbe.Ping(w); rn++; }
                 resp = rn > 0 ? resp / rn : 0;
@@ -206,7 +217,9 @@ public sealed class RealtimeCompressionTab : TabPage
                 totalPrefetched += prefetchedThisCycle; cycles++;
 
                 var sys = SysMem.Take();
-                Append($"Цикл {cycles}: приложений {targets.Count}, доступно ОЗУ {Mib(sys.Available)} (с начала {(sys.Available - sys0.Available >= 0 ? "+" : "")}{Mib(sys.Available - sys0.Available)}), хранилище сжатия {Mib(sys.Store)} (+{Mib(sys.Store - sys0.Store)}), горячих возвращено {Mib(prefetchedThisCycle)}, отклик окна {resp:F0} мс, возврат рабочего набора {refault * 100:F0}%" + (prefetchWorks ? "" : "  [prefetch недоступен]"));
+                self.Refresh();
+                double selfCpu = (self.TotalProcessorTime - selfCpu0).TotalSeconds / Math.Max(1e-3, (DateTime.UtcNow - wall0).TotalSeconds) / Environment.ProcessorCount * 100;
+                Append($"Цикл {cycles}: сжато {compacted}, стабильных пропущено {skippedStable}, ElasticMem: CPU {selfCpu:F1}%, память {Mib(self.WorkingSet64)}; приложений {targets.Count}, доступно ОЗУ {Mib(sys.Available)} (с начала {(sys.Available - sys0.Available >= 0 ? "+" : "")}{Mib(sys.Available - sys0.Available)}), хранилище сжатия {Mib(sys.Store)} (+{Mib(sys.Store - sys0.Store)}), горячих возвращено {Mib(prefetchedThisCycle)}, отклик окна {resp:F0} мс, возврат рабочего набора {refault * 100:F0}%" + (prefetchWorks ? "" : "  [prefetch недоступен]"));
 
                 for (int i = 0; i < 16 && !ct.IsCancellationRequested; i++) System.Threading.Thread.Sleep(250); // ~4 c между циклами
             }

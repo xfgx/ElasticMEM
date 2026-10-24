@@ -54,6 +54,24 @@ static class RealtimeHotSetTests
         for (int i = 0; i < 3; i++) e.Observe(Array.Empty<ulong>());
         C(e.HotRegions().Count == 0, "empty observations keep nothing hot");
 
+        // Память ограничена: 4000 тронутых регионов за интервал раньше давали 16 млн пар. Теперь — не больше
+        // MaxCoaccessSample^2 пар за интервал и MaxNeighbors соседей на регион.
+        var big = new RealtimeHotSet();
+        var many = Enumerable.Range(0, 4000).Select(i => (ulong)i).ToArray();
+        for (int i = 0; i < 20; i++) big.Observe(many);
+        C(big.CoaccessEntries <= 4000L * RealtimeHotSet.MaxNeighbors, "co-access memory bounded by regions*MaxNeighbors");
+        C(big.CoaccessEntries < 4000L * 4000L / 100, "co-access far below all-pairs");
+        var sw = System.Diagnostics.Stopwatch.StartNew(); big.Observe(many); sw.Stop();
+        C(sw.ElapsedMilliseconds < 2000, "one interval with 4000 regions stays cheap (" + sw.ElapsedMilliseconds + " ms)");
+
+        // Не трогаем процесс, если набор почти не вырос (иначе он распаковывает своё же горячее — лишний CPU).
+        const long Mb = 1L << 20;
+        C(RealtimeHotSet.NeedsCompaction(100 * Mb, 0), "first time: compact");
+        C(!RealtimeHotSet.NeedsCompaction(105 * Mb, 100 * Mb), "small growth: skip");
+        C(RealtimeHotSet.NeedsCompaction(130 * Mb, 100 * Mb), "grew >25%: compact");
+        C(!RealtimeHotSet.NeedsCompaction(10 * Mb, 4 * Mb), "tiny process +6MB under 8MB floor: skip");
+        C(RealtimeHotSet.NeedsCompaction(13 * Mb, 4 * Mb), "tiny process +9MB over floor: compact");
+
         Console.WriteLine($"REALTIME HOTSET {checks} checks; pure policy, NOT native EmptyWorkingSet/Prefetch");
         return fails;
     }

@@ -46,10 +46,12 @@ public sealed class RealtimeHotSet
             if (!_score.ContainsKey(key)) _score[key] = 1 - _decay;
             _count[key] = _count.TryGetValue(key, out int c) ? c + 1 : 1;
         }
-        // Совместный доступ: пары, тронутые в одном интервале, чаще нужны вместе.
-        if (hit.Count is > 1 and <= 4096)
+        // Совместный доступ. Раньше считались ВСЕ пары: при 4096 регионах это 16,7 млн записей за интервал
+        // на процесс — гигабайты памяти и нагрузка на CPU. Теперь берём не больше MaxCoaccessSample регионов
+        // (детерминированная выборка), т. е. не больше ~2000 пар, и ограничиваем число соседей у региона.
+        if (hit.Count > 1)
         {
-            var arr = hit.ToArray();
+            var arr = hit.Count <= MaxCoaccessSample ? hit.ToArray() : Sample(hit, MaxCoaccessSample, ++_interval);
             for (int i = 0; i < arr.Length; i++)
                 for (int j = i + 1; j < arr.Length; j++)
                 { Bump(arr[i], arr[j]); Bump(arr[j], arr[i]); }
@@ -60,11 +62,36 @@ public sealed class RealtimeHotSet
             { _score.Remove(key); _coaccess.Remove(key); _count.Remove(key); }
     }
 
+    public const int MaxCoaccessSample = 64, MaxNeighbors = 32;
+    long _interval;
+    public long CoaccessEntries => _coaccess.Values.Sum(m => (long)m.Count);
+
+    static ulong[] Sample(HashSet<ulong> set, int k, long salt)
+    {
+        // Детерминированно для теста, но меняется от интервала к интервалу: сортировка по хешу (регион, номер интервала).
+        return set.OrderBy(r => unchecked((r * 0x9E3779B97F4A7C15UL) ^ (ulong)salt * 0xBF58476D1CE4E5B9UL)).Take(k).ToArray();
+    }
+
     void Bump(ulong a, ulong b)
     {
         if (!_coaccess.TryGetValue(a, out var m)) { m = new(); _coaccess[a] = m; }
-        m[b] = m.TryGetValue(b, out int c) ? Math.Min(c + 1, 1_000_000) : 1;
+        if (m.TryGetValue(b, out int c)) { m[b] = Math.Min(c + 1, 1_000_000); return; }
+        if (m.Count >= MaxNeighbors)
+        {
+            // Освобождаем место: выкидываем самого редкого соседа, если новый не хуже.
+            var weakest = m.MinBy(kv => kv.Value);
+            if (weakest.Value > 1) return;
+            m.Remove(weakest.Key);
+        }
+        m[b] = 1;
     }
+
+    /// <summary>
+    /// Нужно ли сейчас трогать процесс. Если рабочий набор почти не вырос с прошлого раза, сжимать нечего,
+    /// а вытеснение заставит его распаковывать своё же горячее (лишний CPU). settledBytes — набор после прошлого цикла.
+    /// </summary>
+    public static bool NeedsCompaction(long wsNow, long settledBytes) =>
+        settledBytes <= 0 || wsNow > settledBytes + Math.Max(8L << 20, settledBytes / 4);
 
     /// <summary>Регионы, которые стоит держать горячими: сами горячие + их частые «соседи» по группе.</summary>
     public HashSet<ulong> HotRegions(int maxRegions = 65536)
