@@ -9,7 +9,9 @@ public sealed class VmmStageException:Exception
 }
 
 // Owned WHP partition with one vCPU running a tiny 16-bit real-mode guest. Not firmware, not Windows.
-// The guest at GPA 0 executes: mov ax,[0]; inc ax; mov [2],ax; hlt  with DS = data page.
+// The guest at GPA 0 executes: mov ax,[0]; inc ax; mov [2],ax; out 0x80,al  with DS = data page.
+// The run ends with an I/O-port exit, not HLT: resuming after HLT requires writing WHvRegisterInternalActivityState,
+// which Windows 10 19045 (AMD) rejects with 0xC0350006 (HV access denied). RIP is reset before every run.
 [System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class WhpSyntheticVm:IDisposable
 {
@@ -34,7 +36,7 @@ public sealed class WhpSyntheticVm:IDisposable
             vm.At("gpa_map",()=>{vm.Backing=new WhpPageBacking(vm.partition,0,Pages);for(int p=0;p<Pages;p++)vm.Backing.Map(p);});
             vm.At("guest_image",()=>
             {
-                byte[] code=new byte[4096];new byte[]{0xA1,0,0,0x40,0xA3,2,0,0xF4}.CopyTo(code,0);vm.Backing.Write(0,code);
+                byte[] code=new byte[4096];new byte[]{0xA1,0,0,0x40,0xA3,2,0,0xE6,0x80}.CopyTo(code,0);vm.Backing.Write(0,code);
                 for(int p=FirstData;p<FirstData+DataPages;p++){byte[] data=new byte[4096];Array.Fill(data,Pattern(p));vm.Backing.Write(p,data);}
             });
             vm.At("vp_create",()=>{WhpNative.Check(WhpNative.WHvCreateVirtualProcessor(vm.partition,0,0));vm.vp=true;});
@@ -58,12 +60,12 @@ public sealed class WhpSyntheticVm:IDisposable
         if(page<FirstData||page>=FirstData+DataPages)throw new ArgumentOutOfRangeException(nameof(page));
         At("vp_reset",()=>
         {
-            // DS, RIP, RAX, InternalActivityState (clears HLT state from the previous run).
-            uint[] reset={0x15,0x10,0x00,0x80000005};var vals=new[]{WhpNative.RegisterValue.Segment((ushort)(page*256),0x93),WhpNative.RegisterValue.Scalar(0),WhpNative.RegisterValue.Scalar(0),WhpNative.RegisterValue.Scalar(0)};
-            WhpNative.Check(WhpNative.WHvSetVirtualProcessorRegisters(partition,0,reset,4,vals));
+            // DS, RIP, RAX only. The previous run ended at an I/O exit, so no activity state needs clearing.
+            uint[] reset={0x15,0x10,0x00};var vals=new[]{WhpNative.RegisterValue.Segment((ushort)(page*256),0x93),WhpNative.RegisterValue.Scalar(0),WhpNative.RegisterValue.Scalar(0)};
+            WhpNative.Check(WhpNative.WHvSetVirtualProcessorRegisters(partition,0,reset,3,vals));
         });
-        int faults=0;bool halted=false;
-        for(int n=0;n<8&&!halted;n++)
+        int faults=0;bool finished=false;
+        for(int n=0;n<8&&!finished;n++)
         {
             var exit=At("vp_run",()=>
             {
@@ -79,13 +81,13 @@ public sealed class WhpSyntheticVm:IDisposable
                 return e;
             });
             Exits++;
-            if(exit.Reason==WhpNative.ExitHalt){halted=true;break;}
+            if(exit.Reason==WhpNative.ExitIoPort){finished=true;break;}
             if(exit.Reason!=WhpNative.ExitMemoryAccess||!exit.GpaUnmapped||onUnmapped==null)
                 throw new VmmStageException("vp_exit_unhandled",new InvalidOperationException("Unhandled WHP exit 0x"+exit.Reason.ToString("X")));
             if(!At("pager_restore",()=>onUnmapped(exit.Gpa)))throw new VmmStageException("pager_restore",new InvalidOperationException("Unowned/resident GPA fault; no zero-page substitution"));
             faults++;
         }
-        if(!halted)throw new VmmStageException("guest_verify",new InvalidDataException("Guest did not halt"));
+        if(!finished)throw new VmmStageException("guest_verify",new InvalidDataException("Guest did not reach its end-of-run port write"));
         At("guest_verify",()=>
         {
             var rax=new WhpNative.RegisterValue[1];WhpNative.Check(WhpNative.WHvGetVirtualProcessorRegisters(partition,0,new uint[]{0},1,rax));

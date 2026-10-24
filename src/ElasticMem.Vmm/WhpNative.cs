@@ -27,7 +27,7 @@ public static class WhpNative
     }
     [DllImport("WinHvPlatform.dll")] public static extern int WHvGetCapability(uint code,out int value,uint size,out uint written);
     [DllImport("WinHvPlatform.dll",EntryPoint="WHvGetCapability")] static extern int WHvGetCapability64(uint code,out ulong value,uint size,out uint written);
-    public const uint ExitMemoryAccess=1,ExitHalt=8,ExitCanceled=0x2001;
+    public const uint ExitMemoryAccess=1,ExitIoPort=2,ExitHalt=8,ExitCanceled=0x2001;
     [DllImport("WinHvPlatform.dll")] public static extern int WHvCreatePartition(out IntPtr partition);
     [DllImport("WinHvPlatform.dll")] public static extern int WHvSetPartitionProperty(IntPtr partition,uint code,ref uint value,uint size);
     [DllImport("WinHvPlatform.dll")] public static extern int WHvSetupPartition(IntPtr partition);

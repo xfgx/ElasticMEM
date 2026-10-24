@@ -72,12 +72,12 @@ public static class WhpSyntheticPager
             if(vm.TeardownErrors.Count>0)throw new VmmStageException("teardown",new InvalidOperationException(string.Join(";",vm.TeardownErrors)));
             samples.Add(VmmMetrics.Capture("after_teardown"));
             durations.Sort();
-            double P(double q)=>durations.Count==0?double.NaN:durations[Math.Min(durations.Count-1,(int)Math.Ceiling(q*durations.Count)-1)];
+            double? P(double q)=>durations.Count==0?null:durations[Math.Min(durations.Count-1,(int)Math.Ceiling(q*durations.Count)-1)];
             return new{schema="elasticmem.whp.pager.synthetic.v2",status=failureHeld?"passed_injected_loss_kept_guest_paused":"passed_synthetic_guest_only",backend=BackendName(storeKind),
                 store_backend=storeKind==PagerStoreKind.Sys?"sys_kernel_xpress_paged_pool":"user_ntdll_xpress_process_heap",whp=availability,
                 windows_guest_booted=false,windows_guest_processes_tested=false,vcpu_count=1,device_io_workers=0,guest_pages=Pages,pages_evicted=evictions,pages_restored=restores,whp_exits=exits,cycles,
                 loss_injected=injectGetFailure,failed_guest_resume_blocked=failureHeld,clock_reference_scope="synthetic accesses and restored faults only; NOT complete working set",
-                phase_A_ms=a.Elapsed.TotalMilliseconds,phase_B_ms=b.Elapsed.TotalMilliseconds,pager_roundtrip_ms=new{count=durations.Count,p50=P(0.5),p95=P(0.95),max=durations.Count==0?double.NaN:durations[^1],all=durations},
+                phase_A_ms=a.Elapsed.TotalMilliseconds,phase_B_ms=b.Elapsed.TotalMilliseconds,pager_roundtrip_ms=new{count=durations.Count,p50=P(0.5),p95=P(0.95),max=durations.Count==0?(double?)null:durations[^1],all=durations},
                 snapshots=samples,store_capabilities=capabilities,store_resident_ledger=residentLedger,store_stored_ledger=storedLedger,
                 physical_ram_saved_bytes=(long?)null,physical_saving_evidence="not_confirmed; 64-page synthetic guest is below measurement noise; compare system_commit/available, not process RSS",
                 overhead=new{vmm="process working_set/private_commit/peak sampled",store=storeKind==PagerStoreKind.Sys?"SYS ledger (paged pool, not in process RSS; see kernel_paged_pool in snapshots)":"user ledger (process heap, included in private commit)",guest_windows="not booted",guest_agent="not running",mstsc="not running",whp_hypervisor="not measured"},

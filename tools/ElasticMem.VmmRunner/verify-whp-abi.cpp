@@ -14,5 +14,5 @@ static_assert(offsetof(WHV_MEMORY_ACCESS_CONTEXT, Gpa) == 24, "GPA ABI");
 static_assert(offsetof(WHV_RUN_VP_EXIT_CONTEXT, VpContext) + offsetof(WHV_VP_EXIT_CONTEXT, Rip) == 32, "RIP ABI");
 static_assert(WHvPartitionPropertyCodeProcessorCount == 0x1fff, "property ABI");
 static_assert(WHvRegisterInternalActivityState == 0x80000005, "activity ABI");
-static_assert(WHvRunVpExitReasonMemoryAccess == 1 && WHvRunVpExitReasonX64Halt == 8, "exit enums");
+static_assert(WHvRunVpExitReasonMemoryAccess == 1 && WHvRunVpExitReasonX64IoPortAccess == 2 && WHvRunVpExitReasonX64Halt == 8, "exit enums");
 int main() { std::puts("WHP SDK ABI PASS; NOT guest boot/paging test"); }

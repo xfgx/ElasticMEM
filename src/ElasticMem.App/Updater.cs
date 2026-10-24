@@ -259,6 +259,7 @@ public static class Updater
             }
             if (last != null) throw last;
             Log("Файл заменён.");
+            ApplyPayload(self, Path.GetDirectoryName(target)!, Log);
             var psi = new ProcessStartInfo(target) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(target)! };
             foreach (var a in rest) psi.ArgumentList.Add(a);
             psi.ArgumentList.Add("--updated"); psi.ArgumentList.Add(from);
@@ -273,6 +274,45 @@ public static class Updater
             try { if (File.Exists(target)) Process.Start(new ProcessStartInfo(target) { UseShellExecute = true }); } catch { }
             return true;
         }
+    }
+
+    /// <summary>
+    /// Кроме ElasticMem.exe пакет содержит vmm-runner\, backend\ и вспомогательные файлы. Prepare() распаковал zip в WorkDir\x_*;
+    /// находим ту распаковку, где ElasticMem.exe побайтно совпадает с этим (запущенным) exe, и копируем остальное рядом с target.
+    /// Ошибка копирования не откатывает уже заменённый exe, но пишется в update.log.
+    /// </summary>
+    private static void ApplyPayload(string self, string targetDir, Action<string> log)
+    {
+        try
+        {
+            if (!Directory.Exists(WorkDir)) { log("Пакет: папка распаковки не найдена, обновлён только ElasticMem.exe."); return; }
+            string selfHash = Sha256(self);
+            foreach (var dir in Directory.EnumerateDirectories(WorkDir, "x_*").OrderByDescending(Directory.GetLastWriteTimeUtc))
+            {
+                var exe = Directory.EnumerateFiles(dir, "ElasticMem.exe", SearchOption.AllDirectories).FirstOrDefault();
+                if (exe == null || !Sha256(exe).Equals(selfHash, StringComparison.OrdinalIgnoreCase)) continue;
+                string root = Path.GetDirectoryName(exe)!;int copied = 0, failed = 0;
+                void Copy(string src, string dst)
+                {
+                    for (int k = 0; k < 20; k++)
+                    {
+                        try { Directory.CreateDirectory(Path.GetDirectoryName(dst)!); File.Copy(src, dst, true); copied++; return; }
+                        catch (IOException) when (k < 19) { Thread.Sleep(500); }
+                        catch (Exception ex) { failed++; log("Пакет: не скопирован " + Path.GetRelativePath(root, src) + ": " + ex.GetType().Name); return; }
+                    }
+                }
+                foreach (var f in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                {
+                    string rel = Path.GetRelativePath(root, f);
+                    if (rel.Equals("ElasticMem.exe", StringComparison.OrdinalIgnoreCase) || rel.EndsWith(".bak", StringComparison.OrdinalIgnoreCase)) continue;
+                    Copy(f, Path.Combine(targetDir, rel));
+                }
+                log($"Пакет: скопировано файлов {copied}, ошибок {failed} (vmm-runner, backend и др.).");
+                return;
+            }
+            log("Пакет: распаковка с этим ElasticMem.exe не найдена, обновлён только ElasticMem.exe.");
+        }
+        catch (Exception ex) { log("Пакет: ошибка " + ex.GetType().Name + ": " + ex.Message); }
     }
 
     /// <summary>Убрать старые временные файлы обновлений (кроме текущего процесса).</summary>

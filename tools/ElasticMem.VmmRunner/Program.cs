@@ -6,7 +6,8 @@ using ElasticMem.Core.Backend.Vmm;
 using ElasticMem.DriverClient;
 using ElasticMem.Vmm;
 
-var options=new JsonSerializerOptions{WriteIndented=true};
+// Safety net: a NaN/Infinity metric must never turn a finished measurement into a serializer crash.
+var options=new JsonSerializerOptions{WriteIndented=true,NumberHandling=System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals};
 void Print(object o)=>Console.WriteLine(JsonSerializer.Serialize(o,options));
 const string Usage="Use: --probe | --selftest-user-store | --research-disposable synthetic|inject-store-loss [cycles 1..1024] [--store sys|user] | --research-disposable host-trim [rounds 1..32]. No Windows boot implemented.";
 
@@ -53,7 +54,7 @@ if(args.Length==1&&args[0]=="--probe")
 }
 if(args.Length==1&&args[0]=="--selftest-user-store")
 {
-    try{if(!OperatingSystem.IsWindows())throw new VmmStageException("platform",new PlatformNotSupportedException("requires_windows_x64"));Print(UserStoreSelfTest.Run());return 0;}
+    try{if(!OperatingSystem.IsWindows())throw new VmmStageException("platform",new PlatformNotSupportedException("requires_windows_x64"));var r=UserStoreSelfTest.Run();try{Print(r);}catch(Exception ex){throw new VmmStageException("serialize_result",ex);}return 0;}
     catch(Exception ex){Print(Failure("selftest-user-store","user_ntdll_xpress",ex));return 1;}
 }
 if(args.Length<2||args[0]!="--research-disposable"||args[1] is not ("synthetic" or "inject-store-loss" or "host-trim")){Console.Error.WriteLine(Usage);return 2;}
@@ -67,7 +68,7 @@ try
 {
     if(!OperatingSystem.IsWindows())throw new VmmStageException("platform",new PlatformNotSupportedException("requires_windows_x64"));
     object result=mode=="host-trim"?WhpHostTrimProbe.Run(count):WhpSyntheticPager.Run(count,store,injectGetFailure:mode=="inject-store-loss");
-    Print(result);return 0;
+    try{Print(result);}catch(Exception ex){throw new VmmStageException("serialize_result",ex);}return 0;
 }
 catch(Exception ex){Print(Failure(mode,backend,ex));return 1;}
 
@@ -101,7 +102,7 @@ static class UserStoreSelfTest
                 if(!store.Delete(key,receipt.Generation))mismatch++;
             }
             bool ok=mismatch==0&&(compressible?stored==128:rejected==128);if(!ok)failures++;
-            static double Median(List<double> x){if(x.Count==0)return double.NaN;x.Sort();return x[x.Count/2];}
+            static double? Median(List<double> x){if(x.Count==0)return null;x.Sort();return x[x.Count/2];}
             rows.Add(new{kind=name,pages=128,stored,rejected_not_beneficial=rejected,mismatches=mismatch,mean_payload_bytes=stored==0?0:payload/stored,put_us_median=Median(put),get_us_median=Median(get),ok});
         }
         var stats=store.Stats();
