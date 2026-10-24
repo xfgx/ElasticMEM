@@ -89,6 +89,7 @@ public sealed class MainForm : Form
         _tabs = tabs;
         tabs.TabPages.Add(new RamSaverTab(MakeMono()));
         tabs.TabPages.Add(new RealtimeCompressionTab(MakeMono(), () => _agent.Running || _anCts != null || _benchBusy || _accessBusy));
+        tabs.TabPages.Add(new CompressedHeapTab(MakeMono(), () => _agent.Running || _anCts != null || _benchBusy || _accessBusy));
         _appsTab = new AppsTab(MakeMono(), StartAgentForProfile, Path.Combine(dir, "reports"), () => _agent.Running);
         tabs.TabPages.Add(_appsTab);
         tabs.TabPages.Add(BuildAgentTab());
