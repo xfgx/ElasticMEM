@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using ElasticMem.Core;
+using Memo = ElasticMem.Core.RamSaverPolicy.Memo;
 
 namespace ElasticMem.App;
 
@@ -22,7 +24,7 @@ public sealed class RamSaverTab : TabPage
     {
         "System", "Idle", "Registry", "smss", "csrss", "wininit", "services", "lsass", "winlogon",
         "Memory Compression", "MemCompression", "MsMpEng", "dwm", "audiodg", "fontdrvhost", "LsaIso",
-        "Secure System", "vmmem", "vmmemWSL", "csrss.exe", "ElasticMem",
+        "Secure System", "vmmem", "vmmemWSL", "svchost", "ElasticMem",
     };
     // Известные игры с античитом: чтение/сжатие их памяти может встревожить защиту — не трогаем.
     static readonly HashSet<string> AntiCheat = new(StringComparer.OrdinalIgnoreCase)
@@ -35,7 +37,9 @@ public sealed class RamSaverTab : TabPage
     readonly Button _run;
     readonly CheckBox _skipForeground, _allUsers, _repeat;
     readonly Label _headline;
-    bool _busy;
+    bool _busy, _looping;
+    // Память о прошлом проходе для RamSaverPolicy: без неё повтор превращается в «карусель».
+    readonly Dictionary<int, Memo> _memo = new();
 
     public RamSaverTab(TextBox log) : base("Освободить память")
     {
@@ -45,8 +49,8 @@ public sealed class RamSaverTab : TabPage
         _skipForeground = new CheckBox { Text = "Не трогать активное окно", Checked = true, AutoSize = true };
         _allUsers = new CheckBox { Text = "Все пользователи (нужны права администратора)", Checked = false, AutoSize = true };
         _repeat = new CheckBox { Text = "Повторять каждые 60 секунд", Checked = false, AutoSize = true };
-        _run.Click += async (_, _) => await RunOnce();
-        _repeat.CheckedChanged += (_, _) => { if (_repeat.Checked) _ = Loop(); };
+        _run.Click += async (_, _) => await RunOnce(idleOnly: false);
+        _repeat.CheckedChanged += (_, _) => { if (_repeat.Checked && !_looping) _ = Loop(); };
 
         var stack = new VStack();
         stack.Add(Ui.L("Освобождает оперативную память штатными средствами Windows: холодные страницы приложений вытесняются и сжимаются встроенным Memory Compression. Работает на Windows 10 и новее, без драйвера, Hyper-V и активации Windows. Для своих приложений права администратора не нужны."));
@@ -70,14 +74,19 @@ public sealed class RamSaverTab : TabPage
 
     async Task Loop()
     {
-        while (_repeat.Checked && !IsDisposed)
+        _looping = true;
+        try
         {
-            if (!_busy) await RunOnce();
-            try { await Task.Delay(60_000); } catch { }
+            while (_repeat.Checked && !IsDisposed)
+            {
+                try { await Task.Delay(60_000); } catch { }
+                if (_repeat.Checked && !_busy && !IsDisposed) await RunOnce(idleOnly: true);
+            }
         }
+        finally { _looping = false; }
     }
 
-    async Task RunOnce()
+    async Task RunOnce(bool idleOnly)
     {
         if (_busy) return;
         _busy = true; _run.Enabled = false;
@@ -85,8 +94,9 @@ public sealed class RamSaverTab : TabPage
         {
             if (!OperatingSystem.IsWindows()) { Append("Только для Windows."); return; }
             bool skipFg = _skipForeground.Checked, allUsers = _allUsers.Checked;
-            var result = await Task.Run(() => TrimAll(skipFg, allUsers));
-            _headline.Text = $"Освобождено в доступную память: {Mib(result.freedToAvailable)}   ·   обработано приложений: {result.trimmed}";
+            var memo = _memo;
+            var result = await Task.Run(() => TrimAll(skipFg, allUsers, idleOnly, memo));
+            _headline.Text = (idleOnly ? "Фоновый проход: " : "") + $"освобождено в доступную память {Mib(result.freedToAvailable)}   ·   обработано приложений: {result.trimmed}";
             Append(result.text);
         }
         catch (Exception ex) { Append("Ошибка: " + ex.Message); }
@@ -95,7 +105,8 @@ public sealed class RamSaverTab : TabPage
 
     sealed record Result(long freedToAvailable, long inUseDrop, int trimmed, int skipped, string text);
 
-    static Result TrimAll(bool skipForeground, bool allUsers)
+    // Решение «сжимать ли» — в RamSaverPolicy (Core, покрыто тестами).
+    static Result TrimAll(bool skipForeground, bool allUsers, bool idleOnly, Dictionary<int, Memo> memo)
     {
         var sw = Stopwatch.StartNew();
         var before = Snapshot();
@@ -104,7 +115,8 @@ public sealed class RamSaverTab : TabPage
         string fgFamily = "";
         if (skipForeground && fgPid > 0) { try { using var p = Process.GetProcessById(fgPid); fgFamily = IdleTrimAgent.FamilyOf(p.ProcessName); } catch { } }
 
-        int trimmed = 0, skipped = 0; long perProcessDrop = 0;
+        int trimmed = 0, skipped = 0, active = 0, hot = 0; long perProcessDrop = 0;
+        var alive = new HashSet<int>();
         var top = new List<(string name, long drop)>();
         foreach (var p in Process.GetProcesses())
         {
@@ -124,7 +136,17 @@ public sealed class RamSaverTab : TabPage
                     var role = ProcRoles.Classify(Native.CommandLine(h));
                     if (ProcRoles.NeverTrim(role)) { skipped++; continue; }
                     long wsBefore = Native.TryGetMemInfo(h, out var a) ? (long)(ulong)a.WorkingSetSize : 0;
+                    long cpu = Native.GetProcessTimes(h, out _, out _, out long k, out long u) ? k + u : -1;
+                    alive.Add(p.Id);
+                    memo.TryGetValue(p.Id, out var m);
+                    switch (RamSaverPolicy.Decide(idleOnly, m, cpu, wsBefore))
+                    {
+                        case RamSaverPolicy.Decision.RecordBaseline: memo[p.Id] = new Memo { Cpu = cpu, WsBefore = wsBefore }; skipped++; continue;
+                        case RamSaverPolicy.Decision.SkipActive: m!.Cpu = cpu; active++; continue;
+                        case RamSaverPolicy.Decision.SkipHot: m!.Cpu = cpu; m.WsBefore = wsBefore; hot++; continue;
+                    }
                     if (!Native.K32EmptyWorkingSet(h)) { skipped++; continue; }
+                    memo[p.Id] = new Memo { Cpu = cpu, WsBefore = wsBefore };
                     long wsAfter = Native.TryGetMemInfo(h, out var b) ? (long)(ulong)b.WorkingSetSize : wsBefore;
                     long drop = wsBefore - wsAfter;
                     trimmed++; perProcessDrop += Math.Max(0, drop);
@@ -136,6 +158,7 @@ public sealed class RamSaverTab : TabPage
             finally { p.Dispose(); }
         }
 
+        foreach (var dead in memo.Keys.Where(k => !alive.Contains(k)).ToList()) memo.Remove(dead);
         System.Threading.Thread.Sleep(400); // дать диспетчеру памяти опубликовать изменения
         var after = Snapshot();
         long freed = (long)after.avail - (long)before.avail;
@@ -143,7 +166,7 @@ public sealed class RamSaverTab : TabPage
 
         var sb = new StringBuilder();
         sb.AppendLine($"== {DateTime.Now:HH:mm:ss}  за {sw.ElapsedMilliseconds} мс ==");
-        sb.AppendLine($"Обработано приложений: {trimmed}, пропущено: {skipped}");
+        sb.AppendLine($"Обработано приложений: {trimmed}, пропущено: {skipped}" + (idleOnly ? $", активных (не трогали): {active}, горячих (сразу возвращают память): {hot}" : ""));
         sb.AppendLine($"Сумма рабочего набора приложений: −{Mib(perProcessDrop)}");
         sb.AppendLine($"Доступно ОЗУ: было {Mib((long)before.avail)}, стало {Mib((long)after.avail)}  →  освобождено {Mib(freed)}");
         sb.AppendLine($"Занято ОЗУ: было {Mib((long)(before.total - before.avail))}, стало {Mib((long)(after.total - after.avail))}  →  −{Mib(inUseDrop)}");
