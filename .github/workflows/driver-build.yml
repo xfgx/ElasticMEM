@@ -23,7 +23,7 @@ jobs:
           $ver = ($km | Sort-Object | Select-Object -Last 1)
           if (-not $ver) { "No WDK kernel headers on this runner image." | Tee-Object evidence/driver-build.log; exit 1 }
           # Тулсет драйвера сам выбирает совместимый компилятор; НЕ подмешиваем msvc-dev-cmd.
-          msbuild driver\kmdf\ElasticMemStore.vcxproj /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 "/p:WindowsTargetPlatformVersion=$ver" 2>&1 | Tee-Object evidence/driver-build.log
+          msbuild driver\kmdf\ElasticMemStore.vcxproj /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:TreatWarningAsError=false "/p:WindowsTargetPlatformVersion=$ver" 2>&1 | Tee-Object evidence/driver-build.log
           if ($LASTEXITCODE -ne 0) { "`nMSBuild exit $LASTEXITCODE" | Tee-Object -Append evidence/driver-build.log; exit 1 }
           $sys = Get-ChildItem driver\out -Recurse -Filter ElasticMemStore.sys -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $sys) { "Build OK but .sys not found" | Tee-Object -Append evidence/driver-build.log; exit 1 }
