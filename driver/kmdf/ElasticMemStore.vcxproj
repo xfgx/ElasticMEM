@@ -12,7 +12,7 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <PropertyGroup><TargetName>ElasticMemStore</TargetName><OutDir>$(MSBuildProjectDirectory)\..\out\$(Configuration)\</OutDir><IntDir>$(MSBuildProjectDirectory)\..\obj\$(Configuration)\</IntDir><EnableInf2cat>false</EnableInf2cat><SignMode>Off</SignMode></PropertyGroup>
   <ItemDefinitionGroup>
-    <ClCompile><WarningLevel>Level4</WarningLevel><TreatWarningAsError>true</TreatWarningAsError><PreprocessorDefinitions>_WIN32_WINNT=0x0A00;NTDDI_VERSION=0x0A00000B;%(PreprocessorDefinitions)</PreprocessorDefinitions><CompileAs>CompileAsC</CompileAs><AdditionalIncludeDirectories>..\shared;..\core;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><BufferSecurityCheck>true</BufferSecurityCheck></ClCompile>
+    <ClCompile><WarningLevel>Level4</WarningLevel><TreatWarningAsError>true</TreatWarningAsError><DisableSpecificWarnings>4005;4083;%(DisableSpecificWarnings)</DisableSpecificWarnings><PreprocessorDefinitions>_WIN32_WINNT=0x0A00;NTDDI_VERSION=0x0A00000B;%(PreprocessorDefinitions)</PreprocessorDefinitions><CompileAs>CompileAsC</CompileAs><AdditionalIncludeDirectories>..\shared;..\core;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><BufferSecurityCheck>true</BufferSecurityCheck></ClCompile>
     <Link><AdditionalDependencies>ntoskrnl.lib;WdfDriverEntry.lib;WdfLdr.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
   </ItemDefinitionGroup>
   <ItemGroup><ClCompile Include="driver.c" /><ClCompile Include="..\core\em_store.c" /></ItemGroup>
