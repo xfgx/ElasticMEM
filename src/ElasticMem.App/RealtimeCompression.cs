@@ -14,7 +14,7 @@ public sealed class RealtimeCompressionTab : TabPage
 {
     readonly TextBox _log;
     readonly ComboBox _profile;
-    readonly Button _probe, _toggle;
+    readonly Button _probe, _toggle, _prewarm;
     readonly CheckBox _skipForeground;
     readonly Label _headline;
     readonly Func<bool> _busyElsewhere;
@@ -36,15 +36,17 @@ public sealed class RealtimeCompressionTab : TabPage
         foreach (var p in Profiles) _profile.Items.Add(p.name);
         _profile.SelectedIndex = 0;
         _probe = new Button { Text = "🔬 Проверить возможности", AutoSize = true };
+        _prewarm = new Button { Text = "🧪 Тест: распаковка заранее", AutoSize = true };
         _toggle = new Button { Text = "▶ Включить сжатие в реальном времени", AutoSize = true, Font = new Font(FontFamily.GenericSansSerif, 10, FontStyle.Bold) };
         _skipForeground = new CheckBox { Text = "Не трогать активное окно", Checked = true, AutoSize = true };
         _probe.Click += async (_, _) => await Probe();
+        _prewarm.Click += async (_, _) => await Prewarm();
         _toggle.Click += (_, _) => Toggle();
 
         var stack = new VStack();
         stack.Add(Ui.L("Экспериментально. Движок учится, к каким областям памяти приложение обращается, держит их горячими через PrefetchVirtualMemory, а остальное отдаёт встроенному сжатию Windows. Цель — чтобы под сжатием была бо́льшая часть памяти работающего приложения, а задержка возврата оставалась незаметной."));
         stack.Add(_headline);
-        stack.Add(Ui.Row(Ui.L("Приложение:"), _profile, _probe));
+        stack.Add(Ui.Row(Ui.L("Приложение:"), _profile, _probe, _prewarm));
         stack.Add(Ui.Row(_toggle, _skipForeground));
         stack.Add(Ui.Hint("«Проверить возможности» ничего надолго не меняет: один раз вытесняет и возвращает память выбранного приложения и замеряет, поддерживается ли prefetch, как быстро Windows сжимает и сколько памяти остаётся сжатой. Начните с неё."));
         stack.Add(_log, fill: true);
@@ -131,7 +133,7 @@ public sealed class RealtimeCompressionTab : TabPage
 
             System.Threading.Thread.Sleep(200);
             long wsAfterPf = Native.TryGetMemInfo(handle, out var m2) ? (long)(ulong)m2.WorkingSetSize : 0;
-            sb.AppendLine($"После prefetch горячих: рабочий набор {Mib(wsAfterPf)} (вернулось {Mib(wsAfterPf - wsAfterTrim)} из {Mib(wsBefore - wsAfterTrim)})");
+            sb.AppendLine($"После prefetch: рабочий набор {Mib(wsAfterPf)}. Внимание: по документации prefetch НЕ добавляет страницы в рабочий набор, поэтому эта цифра не показывает его эффект — используйте «🧪 Тест: распаковка заранее».");
             long store2 = IdleTrimAgent.CompressionStoreBytes();
             sb.AppendLine($"Осталось в сжатом хранилище: +{Mib(store2 - store0)} относительно старта — это холодная память, которая не мешает приложению.");
             sb.AppendLine("Вывод: " + (prefetch
@@ -139,6 +141,85 @@ public sealed class RealtimeCompressionTab : TabPage
                 : "prefetch недоступен; режим будет работать, но первая страница после сжатия распакуется по обращению."));
         }
         finally { Native.CloseHandle(handle); }
+        return sb.ToString();
+    }
+
+    async Task Prewarm()
+    {
+        if (_running || _busyElsewhere()) { Append("Занято другой операцией."); return; }
+        _prewarm.Enabled = false;
+        try
+        {
+            if (!OperatingSystem.IsWindows()) { Append("Только для Windows."); return; }
+            var pidSet = Pids(out _);
+            Append(await Task.Run(() => RunPrewarmTest(pidSet)));
+        }
+        catch (Exception ex) { Append("Ошибка: " + ex.Message); }
+        finally { _prewarm.Enabled = true; }
+    }
+
+    static double CpuMs(IntPtr h) => Native.GetProcessTimes(h, out _, out _, out long k, out long u) ? (k + u) / 10_000.0 : double.NaN;
+
+    /// <summary>
+    /// Главный вопрос для «распаковки по намерению»: вытаскивает ли PrefetchVirtualMemory страницы ИЗ СЖАТОГО
+    /// хранилища и кто платит процессором — мы или приложение. Рабочий набор тут бесполезен: по документации
+    /// prefetch НЕ добавляет страницы в рабочий набор. Поэтому меряем размер хранилища сжатия с контролем дрейфа
+    /// и процессорное время обоих процессов.
+    /// </summary>
+    static string RunPrewarmTest(HashSet<int> pids)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"== Тест «распаковка заранее» {DateTime.Now:HH:mm:ss} ==");
+        // Самый большой подходящий процесс приложения.
+        int target = 0; long best = 0;
+        foreach (int p in pids)
+        {
+            var h = Open(p); if (h == IntPtr.Zero) continue;
+            if (Native.TryGetMemInfo(h, out var mi) && (long)(ulong)mi.WorkingSetSize > best) { best = (long)(ulong)mi.WorkingSetSize; target = p; }
+            Native.CloseHandle(h);
+        }
+        if (target == 0 || best < (32L << 20)) { sb.AppendLine("Нет процесса приложения с рабочим набором ≥ 32 МиБ. Откройте несколько вкладок/чатов."); return sb.ToString(); }
+        IntPtr t = Open(target);
+        if (t == IntPtr.Zero) { sb.AppendLine("Нет доступа к процессу."); return sb.ToString(); }
+        using var self = Process.GetCurrentProcess();
+        IntPtr me = Native.OpenProcess(Native.PROCESS_QUERY_LIMITED_INFORMATION, false, self.Id);
+        try
+        {
+            using var p = Process.GetProcessById(target);
+            var regions = ResidentRegions.Capture(t);
+            if (regions == null || regions.Count < 64) { sb.AppendLine("Слишком мало приватных регионов."); return sb.ToString(); }
+            var entries = regions.Select(r => new Native.MEMORY_RANGE_ENTRY { VirtualAddress = (IntPtr)((long)(r << 16)), NumberOfBytes = (UIntPtr)RealtimeHotSet.RegionBytes }).ToArray();
+            sb.AppendLine($"Процесс: {p.ProcessName} (PID {target}), рабочий набор {Mib(best)}, приватных регионов {regions.Count} ({Mib(regions.Count * RealtimeHotSet.RegionBytes)} адресов)");
+
+            Native.K32EmptyWorkingSet(t);
+            System.Threading.Thread.Sleep(2500); // дать Windows сжать вытесненное
+            long sA = IdleTrimAgent.CompressionStoreBytes();
+            System.Threading.Thread.Sleep(1000); // контроль: как хранилище меняется само по себе
+            long sB = IdleTrimAgent.CompressionStoreBytes();
+            long drift = sB - sA;
+
+            double meCpu0 = CpuMs(me), tCpu0 = CpuMs(t);
+            var sw = Stopwatch.StartNew();
+            bool ok = Native.PrefetchVirtualMemory(t, (UIntPtr)entries.Length, entries, 0);
+            int err = ok ? 0 : System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+            long callMs = sw.ElapsedMilliseconds;
+            System.Threading.Thread.Sleep(1000);
+            long sC = IdleTrimAgent.CompressionStoreBytes();
+            double meCpu = CpuMs(me) - meCpu0, tCpu = CpuMs(t) - tCpu0;
+
+            long prefetchEffect = (sB - sC) + drift; // уменьшение хранилища за счёт prefetch, за вычетом собственного дрейфа
+            sb.AppendLine($"Хранилище сжатия: после вытеснения {Mib(sA)}, через 1 с без действий {Mib(sB)} (дрейф {(drift >= 0 ? "+" : "")}{Mib(drift)})");
+            sb.AppendLine($"PrefetchVirtualMemory: {(ok ? "OK" : "ошибка Win32 " + err)}, вызов {callMs} мс; через 1 с хранилище {Mib(sC)}");
+            sb.AppendLine($"Распаковано из хранилища благодаря prefetch (с поправкой на дрейф): ≈ {Mib(prefetchEffect)}");
+            sb.AppendLine($"Процессор за это время: ElasticMem {meCpu:F0} мс, {p.ProcessName} {tCpu:F0} мс");
+            string verdict =
+                prefetchEffect < (4L << 20) ? "prefetch НЕ распаковывает из сжатого хранилища заметно → «распаковка по намерению» через prefetch не сработает, нужен другой механизм."
+                : meCpu > tCpu ? "prefetch распаковывает из хранилища, и платит процессором ElasticMem, а не приложение → распаковку можно ПЕРЕНОСИТЬ с пути пользователя заранее. Идея жизнеспособна."
+                : "prefetch распаковывает из хранилища, но процессор списывается на приложение/систему → задержку спрятать можно, нагрузку на приложение — нет.";
+            sb.AppendLine("Вывод: " + verdict);
+            sb.AppendLine("Повторите тест 2–3 раза: цифры хранилища шумят из-за других программ.");
+        }
+        finally { Native.CloseHandle(t); if (me != IntPtr.Zero) Native.CloseHandle(me); }
         return sb.ToString();
     }
 
