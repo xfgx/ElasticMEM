@@ -1,0 +1,63 @@
+name: driver-build
+# Пытается собрать ElasticMemStore.sys НАТИВНО на Windows-раннере через WDK и выложить .sys артефактом.
+# Драйвер не подписывается и не загружается здесь — только сборка. Подпись/загрузка — только в вашей disposable VM.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['driver/**', '.github/workflows/driver-build.yml']
+permissions:
+  contents: read
+jobs:
+  build-driver:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Windows SDK + WDK (10.0.26100)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install windows-sdk-10-version-2000-all -y --no-progress 2>&1 | Out-Host
+          # WDK редистрибутив и VS-расширение (тип проекта Driver) с официальных ссылок Microsoft.
+          $wdk = "$env:RUNNER_TEMP\wdksetup.exe"
+          Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/?linkid=2272259' -OutFile $wdk
+          Start-Process -FilePath $wdk -ArgumentList '/quiet','/norestart','/features','+' -Wait
+          "WDK setup exit done" | Out-Host
+      - name: Locate WDK vsix and install into VS
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $vsix = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Vsix' -Recurse -Filter 'WDK.vsix' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($vsix) {
+            $installer = Get-ChildItem 'C:\Program Files*\Microsoft Visual Studio\2022\*\Common7\IDE\VSIXInstaller.exe' | Select-Object -First 1
+            & $installer.FullName /quiet /admin $vsix.FullName
+            "Installed WDK.vsix: $($vsix.FullName)" | Out-Host
+          } else { "WDK.vsix not found; driver project type may be unavailable" | Out-Host }
+      - uses: microsoft/setup-msbuild@v2
+      - name: Inventory WDK headers
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force evidence | Out-Null
+          $km = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Include\*\km' -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.Parent.Name }
+          "km_header_versions=$($km -join ',')" | Tee-Object evidence/wdk-inventory.txt
+      - name: Build driver (MSBuild + WDK)
+        id: build
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ver = (Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Include\*\km' -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.Parent.Name } | Sort-Object | Select-Object -Last 1)
+          if (-not $ver) { "No WDK kernel headers installed; cannot build driver on this runner." | Tee-Object evidence/driver-build.log; exit 1 }
+          msbuild driver\kmdf\ElasticMemStore.vcxproj /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 "/p:WindowsTargetPlatformVersion=$ver" 2>&1 | Tee-Object evidence/driver-build.log
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $sys = Get-ChildItem driver\out -Recurse -Filter ElasticMemStore.sys | Select-Object -First 1
+          if (-not $sys) { "Build succeeded but .sys not found" | Tee-Object -Append evidence/driver-build.log; exit 1 }
+          (Get-FileHash $sys.FullName -Algorithm SHA256).Hash | Tee-Object evidence/driver-sha256.txt
+          Copy-Item $sys.FullName evidence\ElasticMemStore.sys
+          "Built (UNSIGNED, not loadable without signing): $($sys.FullName)" | Tee-Object -Append evidence/driver-build.log
+      - name: Upload evidence (log + unsigned .sys if built)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: driver-build-evidence
+          path: evidence/
+          if-no-files-found: warn
