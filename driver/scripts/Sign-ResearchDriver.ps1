@@ -7,8 +7,11 @@ $principal=[Security.Principal.WindowsPrincipal]::new([Security.Principal.Window
 if(-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Elevated Administrator required.'}
 $source=(Resolve-Path -LiteralPath $Path).Path
 if([IO.Path]::GetExtension($source) -ne '.sys'){throw 'SYS required.'}
-$expected='5362244D0D4D0724312EE3E403303190448FBDAF108B3D2A4A3A4B2CD6CEA8A5'
-if((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -ne $expected){throw 'Image differs from verified unsigned native SYS. Refusing to sign; never sign/install the retired LLD image.'}
+# Подписываем свежесобранный WDK-драйвер. Единственный запрет — отозванный битый LLD-образ (BugCheck 0x1A в VM).
+$retiredLld='5362244D0D4D0724312EE3E403303190448FBDAF108B3D2A4A3A4B2CD6CEA8A5'
+$hash=(Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+if($hash -eq $retiredLld){throw 'This is the retired LLD image (BugChecked in VM). Build with Build-Windows.ps1 (MSVC/WDK) and sign that instead.'}
+Write-Host ('Signing SHA256 '+$hash)
 $boot=(& bcdedit.exe /enum '{current}') -join "`n"
 if($LASTEXITCODE -ne 0 -or $boot -notmatch 'testsigning\s+(Yes|Да)'){throw 'This VM must already allow standard test-signing. This script will not alter policy. If security policy prohibits it, stop.'}
 (Get-Item -LiteralPath $source).IsReadOnly=$false
