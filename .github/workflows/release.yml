@@ -1,0 +1,70 @@
+name: release
+# Builds the Windows preview on a native Windows runner and attaches it to a GitHub Release (prerelease).
+# Triggered by pushing a tag like v0.32.0. No driver binary is published: the SYS needs an approved signing path.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)build, e.g. v0.32.0'
+        required: true
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Tests (must pass before publishing)
+        shell: pwsh
+        run: |
+          dotnet run --project tests/ElasticMem.Tests -c Release 2>&1 | Tee-Object core-tests.log
+          if ($LASTEXITCODE -ne 0 -or -not (Select-String -Path core-tests.log -Pattern 'ALL TESTS PASSED' -Quiet)) { throw 'tests failed' }
+      - name: Publish app and VMM runner
+        shell: pwsh
+        run: |
+          $sha = git rev-parse HEAD
+          dotnet publish src/ElasticMem.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true "-p:SourceRevisionId=$sha" -o pkg/ElasticMem
+          if ($LASTEXITCODE -ne 0) { throw 'app publish failed' }
+          dotnet publish tools/ElasticMem.VmmRunner/ElasticMem.VmmRunner.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o pkg/ElasticMem/vmm-runner
+          if ($LASTEXITCODE -ne 0) { throw 'runner publish failed' }
+          Get-ChildItem pkg -Recurse -Filter *.pdb | Remove-Item
+      - name: Native smoke (no WHP/driver required)
+        shell: pwsh
+        run: |
+          ./pkg/ElasticMem/vmm-runner/ElasticMem.VmmRunner.exe --probe | Set-Content -Encoding UTF8 probe-ci.json
+          ./pkg/ElasticMem/vmm-runner/ElasticMem.VmmRunner.exe --selftest-user-store | Set-Content -Encoding UTF8 user-store-selftest-ci.json
+          if ($LASTEXITCODE -ne 0) { Get-Content user-store-selftest-ci.json; throw 'native user-store self-test failed' }
+          Get-Content probe-ci.json, user-store-selftest-ci.json
+      - name: Assemble package
+        shell: pwsh
+        run: |
+          $p = 'pkg/ElasticMem'
+          New-Item -ItemType Directory -Force "$p/backend" | Out-Null
+          Copy-Item -Recurse backend/windows, backend/tests "$p/backend/"
+          Copy-Item backend/VMM-032.md "$p/backend/"
+          Copy-Item probe-ci.json, user-store-selftest-ci.json "$p/backend/"
+          [IO.File]::WriteAllText("$p/ОТКРЫТЬ-BACKEND.cmd", "@echo off`r`nsetlocal DisableDelayedExpansion`r`nstart `"`" `"%~dp0ElasticMem.exe`" --backend-ui`r`n")
+          [IO.File]::WriteAllText("$p/НАЧНИТЕ-ЗДЕСЬ.txt", "$env:TAG`: НЕ готовый Windows VMM. Сначала: vmm-runner\ElasticMem.VmmRunner.exe --probe. Порядок проверок и Gate 0: backend\VMM-032.md. Ничего не устанавливается и не включается автоматически. Драйвер (.sys) в пакете отсутствует.`r`n", [Text.UTF8Encoding]::new($true))
+          $zip = "ElasticMem-$env:TAG-win-x64-preview.zip"
+          Compress-Archive -Path $p -DestinationPath $zip
+          (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() + "  $zip" | Set-Content -Encoding ASCII "$zip.sha256"
+          "ZIP=$zip" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ElasticMem ${{ env.TAG }} (research preview, NOT a working Windows VMM)
+          prerelease: true
+          body_path: backend/RELEASE-NOTES.md
+          files: |
+            ${{ env.ZIP }}
+            ${{ env.ZIP }}.sha256
