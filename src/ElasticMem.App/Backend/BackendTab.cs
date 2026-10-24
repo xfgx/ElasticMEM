@@ -85,17 +85,22 @@ internal sealed class BackendTab:TabPage
             status.Text+=" · Отчёт: "+run.DirectoryPath;
         });
         sysOnly.AddRange(new Control[]{sysCapacity,sysQuota});
-        async Task RunWhp(bool inject)
+        async Task RunWhp(string mode,string? store)
         {
             if(controller.Load()?.BackendKind!=VmBackendKind.Sys)throw new InvalidOperationException("Выберите профиль своего VMM, без fallback.");
-            if(!Confirm("Только disposable Windows x64 с доступным WHP и новым доверенным SYS. Выполняется маленький 16-bit guest: НЕ Windows/Chrome/Telegram. Никакие security/boot настройки не меняются. "+(inject?"Будет инъекция отказа GET для проверки запрета resume.":"Будет проверка native fault → SYS restore.")))return;
-            Show(await WhpRunnerController.Run(inject));status.Text+=" · Отчёт: "+WhpRunnerController.Reports;
+            string what=mode switch{"inject-store-loss"=>"Будет инъекция отказа GET для проверки запрета resume.","host-trim"=>"Проверка: может ли сама Windows вытеснить память WHP-гостя (EmptyWorkingSet своего процесса), без SYS.",_=>store=="user"?"Native fault → restore из user-mode XPRESS хранилища, SYS не нужен.":"Native fault → SYS restore (нужен новый подписанный SYS)."};
+            if(!Confirm("Только disposable Windows x64 с доступным WHP. Выполняется маленький 16-bit guest: НЕ Windows/Chrome/Telegram. Никакие security/boot настройки не меняются. "+what))return;
+            Show(await WhpRunnerController.Run(mode,store));status.Text+=" · Отчёт: "+WhpRunnerController.Reports;
         }
-        var whpTest=B("Свой VMM · WHP/SYS synthetic fault",()=>RunWhp(false));
-        var whpLoss=B("Свой VMM · инъекция отказа GET",()=>RunWhp(true));sysOnly.AddRange(new Control[]{whpTest,whpLoss});
+        var whpTest=B("Свой VMM · WHP/SYS synthetic fault",()=>RunWhp("synthetic","sys"));
+        var whpLoss=B("Свой VMM · инъекция отказа GET",()=>RunWhp("inject-store-loss","sys"));
+        var whpUser=B("Свой VMM · WHP + user-store (без SYS)",()=>RunWhp("synthetic","user"));
+        var whpTrim=B("Свой VMM · host-trim проверка",()=>RunWhp("host-trim",null));
+        sysOnly.AddRange(new Control[]{whpTest,whpLoss,whpUser,whpTrim});
         var missingDevices=new Button{Text="UEFI / устройства / migration — не реализовано",Enabled=false,AutoSize=true};
         var exportWhp=B("ZIP WHP/SYS отчётов",()=>{string zip=ResearchRun.ExportLogs(WhpRunnerController.Reports,Path.Combine(AppSettings.Dir,"ElasticMem-whp-sys-"+DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")+".zip"),false);status.Text=zip;Process.Start(new ProcessStartInfo("explorer.exe",Path.GetDirectoryName(zip)!){UseShellExecute=true});return Task.CompletedTask;});
         stack.Add(Ui.Row(whpTest,whpLoss,exportWhp,missingDevices));
+        stack.Add(Ui.Row(whpUser,whpTrim));
         stack.Add(Ui.Row(Ui.L("SYS slots"),sysCapacity,Ui.L("Session quota MiB"),sysQuota,sysTest));
         hypervOnly.AddRange(new Control[]{host,collection,min,startup,max,buffer,auto,credential,memory,start,stop,compression,publish});
         var refresh=B("Обновить процессы / память",RefreshBackend);

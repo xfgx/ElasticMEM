@@ -36,6 +36,7 @@ public sealed class WhpPageBacking:IVmPageBacking,IDisposable
         // The custom VMM maps initial pages explicitly after construction under its barrier.
     }
     IntPtr Address(int page){ObjectDisposedException.ThrowIf(disposed,this);if((uint)page>=(uint)pages)throw new ArgumentOutOfRangeException(nameof(page));return IntPtr.Add(memory,checked(page*4096));}
+    public IntPtr HostAddress(int page)=>Address(page);
     ulong Gpa(int page)=>checked(guestBase+(ulong)page*4096);
     public byte[] Read(int page){var a=Address(page);if(!committed[page])throw new InvalidOperationException("Page decommitted");var b=new byte[4096];Marshal.Copy(a,b,0,4096);return b;}
     public void Write(int page,byte[] bytes){var a=Address(page);if(!committed[page]||bytes.Length!=4096)throw new ArgumentException("Committed 4096-byte page required");Marshal.Copy(bytes,0,a,4096);}
