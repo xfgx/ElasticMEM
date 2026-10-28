@@ -25,6 +25,7 @@ fn main() {
     let hot_mib: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(48);
     let warm_mib: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(32);
     let secs: u64 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(40);
+    let idle_ms: u64 = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(1000);
 
     let pages = total_mib * 1024 * 1024 / PAGE;
     let hot_pages = hot_mib * 1024 * 1024 / PAGE;
@@ -108,9 +109,10 @@ fn main() {
         let evicted = evicted.clone();
         std::thread::spawn(move || {
             while !stop.load(Ordering::Relaxed) {
-                let n = arena.compact(2048);
+                // Порция проб ограничена: всплеск попаданий за проход не больше ~1024 VirtualProtect.
+                let (_, n) = arena.compact(1024, idle_ms);
                 evicted.fetch_add(n as u64, Ordering::Relaxed);
-                std::thread::sleep(Duration::from_millis(50));
+                std::thread::sleep(Duration::from_millis(100));
             }
         })
     };
@@ -210,8 +212,10 @@ fn main() {
         }
     );
     println!(
-        "ENGINE faults={} decompressed={} evictions={} evicted_by_compactor={}",
+        "ENGINE faults={} probe_hits={} probing_mib={:.1} decompressed={} evictions={} evicted_by_compactor={}",
         st.faults,
+        st.probe_hits,
+        (st.probing_pages * PAGE) as f64 / 1048576.0,
         st.decompressed,
         st.evictions,
         evicted.load(Ordering::Relaxed)

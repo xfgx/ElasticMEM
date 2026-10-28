@@ -9,7 +9,7 @@
 //!  * слот хранилища освобождается только после успешной распаковки в страницу.
 
 use crate::codec::PageCodec;
-use crate::core::{Fault, State, Table};
+use crate::core::{State, Table};
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -30,6 +30,7 @@ extern "system" {
     fn VirtualAlloc(addr: *mut u8, size: usize, typ: u32, prot: u32) -> *mut u8;
     fn VirtualFree(addr: *mut u8, size: usize, typ: u32) -> i32;
     fn VirtualProtect(addr: *mut u8, size: usize, prot: u32, old: *mut u32) -> i32;
+    fn GetTickCount64() -> u64;
     fn AddVectoredExceptionHandler(first: u32, handler: usize) -> *mut core::ffi::c_void;
     fn RemoveVectoredExceptionHandler(handle: *mut core::ffi::c_void) -> u32;
 }
@@ -83,6 +84,8 @@ pub struct Stats {
     pub compressed_pages: usize,
     pub zero_pages: usize,
     pub pinned_pages: usize,
+    pub probing_pages: usize,
+    pub probe_hits: u64,
     pub store_bytes: u64,
     pub payload_bytes: u64,
     pub faults: u64,
@@ -143,41 +146,52 @@ impl Arena {
         unsafe { &*self.inner }
     }
 
-    /// Вернуть в сжатое состояние до `max_pages` самых холодных резидентных страниц и освободить их память.
-    pub fn compact(&self, max_pages: usize) -> usize {
-        let mut cold = Vec::new();
+    /// Один проход компактора. Две стадии, как accessed-бит в ядре:
+    ///  1. проба: до `max_probe` резидентных страниц (чей срок подошёл) ставим PAGE_NOACCESS, байты остаются на месте —
+    ///     если приложение их тронет, отказ стоит лишь VirtualProtect (без распаковки), и страница помечается горячей;
+    ///  2. сжатие: страницы, которые пробыли в пробе дольше `idle_ms` нетронутыми, сжимаем и освобождаем физику.
+    /// Замок арены берётся на окно сканирования и на одну страницу, никогда на всю порцию — отказы приложения
+    /// не ждут компактор дольше одной операции над страницей.
+    pub fn compact(&self, max_probe: usize, idle_ms: u64) -> (usize, usize) {
+        const WINDOW: usize = 8192;
+        let now = unsafe { GetTickCount64() };
+        let pages = self.bytes / PAGE;
+        let (mut probe, mut idle) = (Vec::new(), Vec::new());
+        let mut from = 0;
+        while from < pages {
+            let inner = self.inner().lock().unwrap();
+            inner.table.candidates(from, from + WINDOW, now, idle_ms, &mut probe, max_probe, &mut idle);
+            drop(inner);
+            from += WINDOW;
+        }
         let mut scratch = [0u8; PAGE];
-        let mut done = 0;
-        let guard = self.inner().lock().unwrap();
-        let mut inner = guard;
-        inner.table.choose_cold(max_pages, &mut cold);
-        for &p in &cold {
-            if inner.table.state(p) != State::Resident {
+        let mut old = 0u32;
+        let mut compressed = 0;
+        for &p in &idle {
+            let mut inner = self.inner().lock().unwrap();
+            if inner.table.state(p) != State::Probing {
                 continue;
             }
             let va = unsafe { inner.base.add(p * PAGE) };
-            // 1. Защитить от записи: любая запись теперь отказывает и встаёт на этот же замок.
-            let mut old = 0u32;
-            unsafe {
-                VirtualProtect(va, PAGE, PAGE_READONLY, &mut old);
-            }
-            // 2. Прочитать актуальные байты (чтения под READONLY не отказывают) и сжать.
+            unsafe { VirtualProtect(va, PAGE, PAGE_READONLY, &mut old) };
             let src = unsafe { std::slice::from_raw_parts(va, PAGE) };
-            let freed = inner.table.evict(p, src, &mut scratch);
-            if freed {
-                // 3. Освободить физическую страницу; следующий доступ даст отказ и распаковку.
-                unsafe {
-                    VirtualFree(va, PAGE, MEM_DECOMMIT);
-                }
-                done += 1;
+            if inner.table.evict(p, src, &mut scratch) {
+                unsafe { VirtualFree(va, PAGE, MEM_DECOMMIT) };
+                compressed += 1;
             } else {
-                // Несжимаемая/квота: вернуть запись.
-                unsafe {
-                    VirtualProtect(va, PAGE, PAGE_READWRITE, &mut old);
-                }
+                unsafe { VirtualProtect(va, PAGE, PAGE_READWRITE, &mut old) };
             }
         }
-        done
+        let mut probed = 0;
+        for &p in &probe {
+            let mut inner = self.inner().lock().unwrap();
+            if inner.table.begin_probe(p, now) {
+                let va = unsafe { inner.base.add(p * PAGE) };
+                unsafe { VirtualProtect(va, PAGE, PAGE_NOACCESS, &mut old) };
+                probed += 1;
+            }
+        }
+        (probed, compressed)
     }
 
     pub fn stats(&self) -> Stats {
@@ -189,6 +203,8 @@ impl Arena {
             compressed_pages: t.compressed,
             zero_pages: t.zero,
             pinned_pages: t.pinned,
+            probing_pages: t.probing,
+            probe_hits: t.probe_hits,
             store_bytes: t.store_bytes(),
             payload_bytes: t.payload_bytes(),
             faults: t.faults,
@@ -273,16 +289,26 @@ unsafe extern "system" fn veh_handler(info: *mut ExceptionPointers) -> i32 {
         return EXCEPTION_CONTINUE_SEARCH;
     }
     let va = inner.base.add(p * PAGE);
+    let now = GetTickCount64();
     match inner.table.state(p) {
         State::Resident | State::Pinned => return EXCEPTION_CONTINUE_EXECUTION, // уже вернули
+        State::Probing => {
+            // Попадание в пробу: байты на месте, просто вернуть доступ.
+            let mut old = 0u32;
+            if VirtualProtect(va, PAGE, PAGE_READWRITE, &mut old) == 0 {
+                return EXCEPTION_CONTINUE_SEARCH;
+            }
+            let dst = std::slice::from_raw_parts_mut(va, PAGE);
+            inner.table.on_fault(p, dst, now);
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
         _ => {}
     }
-    // Закоммитить физическую страницу под запись, затем заполнить.
+    // Сжата/нулевая: закоммитить физическую страницу под запись, затем заполнить.
     if VirtualAlloc(va, PAGE, MEM_COMMIT, PAGE_READWRITE).is_null() {
         return EXCEPTION_CONTINUE_SEARCH;
     }
     let dst = std::slice::from_raw_parts_mut(va, PAGE);
-    match inner.table.on_fault(p, dst) {
-        Fault::Filled { .. } | Fault::AlreadyResident => EXCEPTION_CONTINUE_EXECUTION,
-    }
+    inner.table.on_fault(p, dst, now);
+    EXCEPTION_CONTINUE_EXECUTION
 }

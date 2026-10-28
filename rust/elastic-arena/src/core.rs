@@ -7,6 +7,7 @@ use crate::codec::{Packed, PageCodec, PAGE};
 pub enum State {
     Zero,       // страница целиком нулевая (payload не хранится)
     Resident,   // живые байты у вызывающего (страница закоммичена)
+    Probing,    // байты на месте, но страница PAGE_NOACCESS: ждём, тронут ли её (эмуляция accessed-бита)
     Compressed, // сжатая копия лежит в хранилище, физическая страница освобождена
     Pinned,     // несжимаема / нет квоты — оставлена резидентной
 }
@@ -85,6 +86,11 @@ pub struct Table {
     stamp: Vec<u64>,
     clock: u64,
     store: Store,
+    next_probe: Vec<u64>, // мс: раньше этого времени страницу не пробовать (горячая, экспоненциальная пауза)
+    backoff: Vec<u32>,    // мс
+    probe_at: Vec<u64>,   // мс: когда страница перешла в Probing
+    pub probing: usize,
+    pub probe_hits: u64,
     pub resident: usize,
     pub compressed: usize,
     pub zero: usize,
@@ -99,6 +105,13 @@ pub enum Fault {
     Filled { decompressed: bool },
     /// Страница уже резидентна — ничего делать не нужно.
     AlreadyResident,
+    /// Попадание в пробу: байты на месте, вызывающий должен лишь вернуть PAGE_READWRITE.
+    ProbeHit,
+}
+
+/// Пауза перед повторной пробой страницы, которую тронули: 2 с, ×2, до 2 мин.
+fn grow(b: u32) -> u32 {
+    if b < 1000 { 2000 } else { (b.saturating_mul(2)).min(120_000) }
 }
 
 impl Table {
@@ -116,6 +129,11 @@ impl Table {
             stamp: vec![0; pages],
             clock: 0,
             store: Store::new(quota_bytes),
+            next_probe: vec![0; pages],
+            backoff: vec![0; pages],
+            probe_at: vec![0; pages],
+            probing: 0,
+            probe_hits: 0,
             resident: 0,
             compressed: 0,
             zero: pages,
@@ -140,9 +158,20 @@ impl Table {
     }
 
     /// Обработать отказ доступа к странице `p`: заполнить `dst` (ровно 4096) её содержимым.
-    pub fn on_fault(&mut self, p: usize, dst: &mut [u8]) -> Fault {
+    pub fn on_fault(&mut self, p: usize, dst: &mut [u8], now: u64) -> Fault {
         match self.state[p] {
             State::Resident | State::Pinned => Fault::AlreadyResident,
+            State::Probing => {
+                // Страницу тронули во время пробы — она горячая. Распаковка не нужна.
+                self.state[p] = State::Resident;
+                self.probing -= 1;
+                self.resident += 1;
+                self.probe_hits += 1;
+                self.backoff[p] = grow(self.backoff[p]);
+                self.next_probe[p] = now + self.backoff[p] as u64;
+                self.stamp[p] = self.tick();
+                Fault::ProbeHit
+            }
             State::Zero => {
                 dst[..PAGE].iter_mut().for_each(|b| *b = 0);
                 self.state[p] = State::Resident;
@@ -175,6 +204,9 @@ impl Table {
                 self.stamp[p] = self.tick();
                 self.faults += 1;
                 self.decompressed += 1;
+                // Сжатую страницу всё же тронули: тёплая — не пробовать сразу снова.
+                self.backoff[p] = grow(self.backoff[p]);
+                self.next_probe[p] = now + self.backoff[p] as u64;
                 Fault::Filled { decompressed: true }
             }
         }
@@ -183,8 +215,15 @@ impl Table {
     /// Вытеснить резидентную страницу `p`, сжав её байты `src` (ровно 4096). Возвращает true, если
     /// физическую страницу можно освободить (Zero/Compressed). Pinned/переполнение квоты оставляют резидентной.
     pub fn evict(&mut self, p: usize, src: &[u8], scratch: &mut [u8]) -> bool {
-        if self.state[p] != State::Resident {
-            return false;
+        match self.state[p] {
+            State::Resident => {}
+            State::Probing => {
+                // считаем как резидентную для единообразия переходов ниже
+                self.probing -= 1;
+                self.resident += 1;
+                self.state[p] = State::Resident;
+            }
+            _ => return false,
         }
         match self.codec.compress(&src[..PAGE], scratch) {
             Packed::Zero => {
@@ -236,6 +275,29 @@ impl Table {
         }
         out.sort_unstable_by_key(|&i| self.stamp[i]);
         out.truncate(count);
+    }
+
+    /// Начать пробу: Resident -> Probing (вызывающий ставит PAGE_NOACCESS). true, если переход выполнен.
+    pub fn begin_probe(&mut self, p: usize, now: u64) -> bool {
+        if self.state[p] != State::Resident || now < self.next_probe[p] {
+            return false;
+        }
+        self.state[p] = State::Probing;
+        self.resident -= 1;
+        self.probing += 1;
+        self.probe_at[p] = now;
+        true
+    }
+
+    /// Собрать кандидатов в окне [from, to): пробовать (Resident, срок подошёл) и сжимать (Probing дольше idle_ms).
+    pub fn candidates(&self, from: usize, to: usize, now: u64, idle_ms: u64, probe: &mut Vec<usize>, max_probe: usize, idle: &mut Vec<usize>) {
+        for p in from..to.min(self.state.len()) {
+            match self.state[p] {
+                State::Resident if probe.len() < max_probe && now >= self.next_probe[p] => probe.push(p),
+                State::Probing if now >= self.probe_at[p] + idle_ms => idle.push(p),
+                _ => {}
+            }
+        }
     }
 
     fn tick(&mut self) -> u64 {

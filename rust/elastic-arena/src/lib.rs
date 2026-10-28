@@ -25,7 +25,7 @@ pub use codec::Xpress;
 #[cfg(test)]
 mod tests {
     use crate::codec::{Packed, PageCodec, Rle, PAGE};
-    use crate::core::{Fault, State, Table};
+    use crate::core::{State, Table};
 
     fn mk_page(seed: u64, kind: u8) -> [u8; PAGE] {
         let mut p = [0u8; PAGE];
@@ -95,7 +95,7 @@ mod tests {
         // Сделать все страницы резидентными (эмулируем первое обращение из Zero + запись реальных байт).
         let mut buf = [0u8; PAGE];
         for p in 0..pages {
-            t.on_fault(p, &mut buf);
+            t.on_fault(p, &mut buf, 0);
             // «приложение» записало свои байты
         }
         // Вытеснить все.
@@ -115,14 +115,14 @@ mod tests {
                 continue;
             }
             let mut page = [0u8; PAGE];
-            t.on_fault(p, &mut page);
+            t.on_fault(p, &mut page, 0);
             assert_eq!(page, shadow[p], "page {p} corrupted after evict/fault");
         }
         // Повторный цикл с изменением данных между вытеснениями.
         for p in 0..pages {
             // вернуть страницу в резидент, изменить байты, снова вытеснить
             let mut page = [0u8; PAGE];
-            t.on_fault(p, &mut page);
+            t.on_fault(p, &mut page, 0);
             shadow[p] = mk_page(p as u64 + 777, ((p + 1) % 4) as u8);
             t.evict(p, &shadow[p], &mut scratch);
         }
@@ -131,9 +131,34 @@ mod tests {
                 continue;
             }
             let mut page = [0u8; PAGE];
-            t.on_fault(p, &mut page);
+            t.on_fault(p, &mut page, 0);
             assert_eq!(page, shadow[p], "page {p} corrupted after second cycle");
         }
+    }
+
+    // Проба: тронутая страница становится горячей и не пробуется до истечения паузы; нетронутая сжимается.
+    #[test]
+    fn probe_marks_hot_and_idle_compresses() {
+        use crate::core::Fault;
+        let pages = 8;
+        let mut t = Table::new(Box::new(Rle), pages, pages * PAGE);
+        let mut buf = [0u8; PAGE];
+        for p in 0..pages { t.on_fault(p, &mut buf, 0); }
+        assert!(t.begin_probe(0, 100));
+        assert!(t.begin_probe(1, 100));
+        assert!(matches!(t.on_fault(0, &mut buf, 150), Fault::ProbeHit));
+        assert_eq!(t.state(0), State::Resident);
+        assert!(!t.begin_probe(0, 500), "hot page must wait for backoff");
+        assert!(t.begin_probe(0, 150 + 2000));
+        let (mut pr, mut idle) = (Vec::new(), Vec::new());
+        t.candidates(0, pages, 100 + 1500, 1000, &mut pr, 16, &mut idle);
+        assert!(idle.contains(&1), "untouched probed page is idle");
+        let pg = mk_page(1, 3);
+        let mut scratch = [0u8; PAGE];
+        assert!(t.evict(1, &pg, &mut scratch));
+        let mut back = [0u8; PAGE];
+        t.on_fault(1, &mut back, 3000);
+        assert_eq!(back, pg);
     }
 
     #[test]
@@ -144,7 +169,7 @@ mod tests {
         let mut buf = [0u8; PAGE];
         let pg: Vec<[u8; PAGE]> = (0..pages).map(|i| mk_page(i as u64, 3)).collect();
         for p in 0..pages {
-            t.on_fault(p, &mut buf);
+            t.on_fault(p, &mut buf, 0);
         }
         let mut scratch = [0u8; PAGE];
         for p in 0..pages {
@@ -154,7 +179,7 @@ mod tests {
         for p in 0..pages {
             let mut page = [0u8; PAGE];
             if t.state(p) == State::Compressed || t.state(p) == State::Zero {
-                t.on_fault(p, &mut page);
+                t.on_fault(p, &mut page, 0);
                 assert_eq!(page, pg[p]);
             }
         }
