@@ -1,0 +1,12 @@
+
+Caption                : Microsoft Windows Server 2025 Datacenter
+Version                : 10.0.26100
+TotalVisibleMemorySize : 8383228
+
+
+nproc=2
+
+MemoryCompression : False
+
+
+Enable-MMAgent -MemoryCompression: ok (effective after reboot)

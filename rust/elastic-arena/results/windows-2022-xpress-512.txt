@@ -1,0 +1,5 @@
+OS windows arena total_mib=512 hot_mib=48 warm_mib=32 secs=40 codec=xpress pages=131072
+FRAMES n=2396 p50_ms=0.307 p99_ms=2.067 p999_ms=24.743 max_ms=60.623 over16ms=5 over50ms=1
+MEM resident_mib=71.0 compressed_mib=324.8 zero_mib=0.0 pinned_mib=116.2 store_mib=94.7 payload_mib=81.9 ratio=0.292
+ENGINE faults=149144 probe_hits=63378 probing_mib=0.0 decompressed=18072 evictions=101216 evicted_by_compactor=101216
+LOSSLESS mismatched_pages=0 first_bad_page=-1 verdict=PASS

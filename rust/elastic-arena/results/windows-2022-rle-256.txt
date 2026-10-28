@@ -1,0 +1,5 @@
+OS windows arena total_mib=256 hot_mib=32 warm_mib=24 secs=25 codec=rle pages=65536
+FRAMES n=1499 p50_ms=0.142 p99_ms=1.875 p999_ms=17.826 max_ms=31.253 over16ms=2 over50ms=0
+MEM resident_mib=41.1 compressed_mib=100.4 zero_mib=0.0 pinned_mib=111.8 store_mib=47.1 payload_mib=41.5 ratio=0.469
+ENGINE faults=73865 probe_hits=35294 probing_mib=2.7 decompressed=8329 evictions=34029 evicted_by_compactor=34029
+LOSSLESS mismatched_pages=0 first_bad_page=-1 verdict=PASS
