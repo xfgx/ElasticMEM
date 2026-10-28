@@ -44,6 +44,15 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: "active-trim-${{ matrix.os }}", path: out/ }
+      - name: Package user test kit (Windows 10/11)
+        if: matrix.os == 'windows-2022'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force kit | Out-Null
+          Copy-Item probe.exe, research/active-trim/ТЕСТ-АКТИВНОЕ-СЖАТИЕ.cmd, research/active-trim/user-test.ps1, research/active-trim/README.md kit/
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'windows-2022'
+        with: { name: "ElasticMem-active-test-kit", path: kit/ }
   commit:
     needs: probe
     if: always()

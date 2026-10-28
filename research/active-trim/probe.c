@@ -113,7 +113,7 @@ static NTSTATUS evict_range(HANDLE h, uint8_t* addr, size_t bytes) {
 static long long unix_ms(void) { FILETIME f; GetSystemTimeAsFileTime(&f); ULARGE_INTEGER u; u.LowPart = f.dwLowDateTime; u.HighPart = f.dwHighDateTime; return (long long)(u.QuadPart / 10000ull) - 11644473600000ll; }
 static double proc_cpu(HANDLE h) { FILETIME a, b, k, u, z = {0, 0}; GetProcessTimes(h, &a, &b, &k, &u); return ft_ms(z, k) + ft_ms(z, u); }
 
-typedef struct { double nextProbe; float backoff; uint8_t out, everHot, pick; } Pg;
+typedef struct { double nextProbe, outAt; float backoff; uint8_t out, everHot, pick; } Pg;
 typedef struct { uint8_t* base; size_t n, off; } Rg;
 typedef struct {
     DWORD pid; HANDLE h; Rg* rg; size_t nrg, N; Pg* pg; uint8_t* valid; PSAPI_WORKING_SET_EX_INFORMATION* ws;
@@ -164,13 +164,19 @@ static void on_return(Proc* p, size_t i, double t) {
     g->nextProbe = t + g->backoff * (0.75 + 0.5 * (double)(xr() % 1000) / 1000.0);
 }
 
-// Быстрая проверка: какие из вытесненных страниц вернулись.
+// Быстрая проверка (250 мс) только недавно вытесненных (< 3 с): именно они чаще всего «горячие ошибки».
+// Старые вытесненные страницы проверяет полный опрос — так CPU агента не растёт с объёмом сжатого.
 static void proc_check(Proc* p, double t) {
     if (!p->nOut) return;
     for (size_t k = 0; k < p->nOut; k++) p->q[k].VirtualAddress = p->ws[p->out[k]].VirtualAddress;
     if (!QueryWorkingSetEx(p->h, p->q, (DWORD)(p->nOut * sizeof(*p->q)))) return;
     size_t w = 0;
-    for (size_t k = 0; k < p->nOut; k++) { if (p->q[k].VirtualAttributes.Valid) on_return(p, p->out[k], t); else p->out[w++] = p->out[k]; }
+    for (size_t k = 0; k < p->nOut; k++) {
+        Pg* g = &p->pg[p->out[k]];
+        if (!g->out) continue;
+        if (p->q[k].VirtualAttributes.Valid) on_return(p, p->out[k], t);
+        else if (t - g->outAt < 3000) p->out[w++] = p->out[k];
+    }
     p->nOut = w;
 }
 
@@ -181,7 +187,11 @@ static void proc_check(Proc* p, double t) {
 static void proc_refresh(Proc* p, int act) {
     if (!p->N || !QueryWorkingSetEx(p->h, p->ws, (DWORD)(p->N * sizeof(*p->ws)))) return;
     size_t res = 0;
-    for (size_t i = 0; i < p->N; i++) { PSAPI_WORKING_SET_EX_BLOCK b = p->ws[i].VirtualAttributes; res += b.Valid; p->valid[i] = (uint8_t)(b.Valid && !b.Locked && !b.LargePage && !b.Shared); }
+    double t = now_ms();
+    for (size_t i = 0; i < p->N; i++) {
+        PSAPI_WORKING_SET_EX_BLOCK b = p->ws[i].VirtualAttributes; res += b.Valid; p->valid[i] = (uint8_t)(b.Valid && !b.Locked && !b.LargePage && !b.Shared);
+        if (act && b.Valid && p->pg[i].out) on_return(p, i, t); // вернулась давно вытесненная
+    }
     p->resident = res;
     if (!act) return;
     if (p->probedU >= 64) {
@@ -207,15 +217,32 @@ static void proc_evict(Proc* p, double t, int hotBudget) {
         size_t i = p->rg[r].off, end = i + p->rg[r].n;
         while (i < end) {
             if (!p->pg[i].pick) { i++; continue; }
-            size_t j = i; while (j < end && p->pg[j].pick) { p->pg[j].pick = 0; p->pg[j].out = 1; p->out[p->nOut++] = (uint32_t)j; j++; }
+            size_t j = i; while (j < end && p->pg[j].pick) { p->pg[j].pick = 0; p->pg[j].out = 1; p->pg[j].outAt = t; if (p->nOut < p->capOut) p->out[p->nOut++] = (uint32_t)j; j++; }
             evict_range(p->h, (uint8_t*)p->ws[i].VirtualAddress, (j - i) * PAGE); p->evicted += j - i; i = j;
         }
     }
 }
 
+// Размер хранилища сжатия Windows = рабочий набор процесса «Memory Compression» (как в IdleTrimAgent).
+static long long store_bytes(void) {
+    typedef NTSTATUS (NTAPI *QSI)(ULONG, PVOID, ULONG, PULONG);
+    static QSI q; if (!q) q = (QSI)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQuerySystemInformation");
+    ULONG cap = 1 << 20, need = 0; uint8_t* buf = NULL; NTSTATUS st;
+    for (;;) { buf = (uint8_t*)realloc(buf, cap); st = q(5 /*SystemProcessInformation*/, buf, cap, &need); if (st != (NTSTATUS)0xC0000004) break; cap = need + (1 << 16); }
+    long long r = -1;
+    if (st >= 0) for (uint8_t* e = buf;; ) {
+        // x64 SYSTEM_PROCESS_INFORMATION: ImageName @0x38, WorkingSetSize @0x90
+        typedef struct { USHORT Length, MaximumLength; PWSTR Buffer; } US; US* name = (US*)(e + 0x38); ULONG next = *(ULONG*)e;
+        if (name->Buffer && (!_wcsnicmp(name->Buffer, L"MemCompression", 14) || !_wcsnicmp(name->Buffer, L"Memory Compression", 18))) { r = (long long)*(SIZE_T*)(e + 0x90); break; }
+        if (!next) break; e += next;
+    }
+    free(buf); return r;
+}
+
 static void sysline(const char* tag) {
     PERFORMANCE_INFORMATION pi = { sizeof(pi) }; GetPerformanceInfo(&pi, sizeof(pi));
-    printf("SYS %s avail_mib=%llu commit_mib=%llu\n", tag, (unsigned long long)pi.PhysicalAvailable * pi.PageSize >> 20, (unsigned long long)pi.CommitTotal * pi.PageSize >> 20);
+    long long sb = store_bytes();
+    printf("SYS %s avail_mib=%llu commit_mib=%llu compression_store_mib=%lld\n", tag, (unsigned long long)pi.PhysicalAvailable * pi.PageSize >> 20, (unsigned long long)pi.CommitTotal * pi.PageSize >> 20, sb < 0 ? -1 : sb >> 20);
 }
 
 // Цена возврата страницы в своём процессе сразу и после паузы.
@@ -332,14 +359,14 @@ static int run_realapp(const char* exe, int baseSec, int actSec) {
         int sec = ph ? actSec : baseSec; double t0 = now_ms(), lastPass = 0, lastChk = 0, lastScan = t0, lastRep = t0, halfAt = t0 + sec * 500.0; int half = 0;
         double cpu0 = 0, cpuH = 0; for (int i = 0; i < np; i++) { cpu0 += proc_cpu(ps[i].h); ps[i].evicted = ps[i].refaults = ps[i].refHot = ps[i].hotProbes = 0; }
         double selfH = 0; double resSum = 0; int resN = 0; long long ev2 = 0, rf2 = 0, rh2 = 0;
-        PERFORMANCE_INFORMATION pi0 = { sizeof(pi0) }; GetPerformanceInfo(&pi0, sizeof(pi0));
+        PERFORMANCE_INFORMATION pi0 = { sizeof(pi0) }; GetPerformanceInfo(&pi0, sizeof(pi0)); long long st0 = store_bytes();
         printf("REAL PHASE_START %s unix_ms=%lld\n", phn[ph], unix_ms()); fflush(stdout);
         while (now_ms() - t0 < sec * 1000.0) {
             double t = now_ms();
             if (!half && t >= halfAt) { half = 1; cpuH = 0; for (int i = 0; i < np; i++) { cpuH += proc_cpu(ps[i].h); ev2 += ps[i].evicted; rf2 += ps[i].refaults; rh2 += ps[i].refHot; } selfH = proc_cpu(GetCurrentProcess()); printf("REAL HALF %s unix_ms=%lld\n", phn[ph], unix_ms()); }
             if (ph == 1 && t - lastChk >= 250) { for (int i = 0; i < np; i++) { proc_check(&ps[i], t); proc_evict(&ps[i], t, 4); } lastChk = t; }
             if (t - lastScan > 15000) { for (int i = 0; i < np; i++) proc_scan(&ps[i]); lastScan = t; }
-            if (t - lastPass >= 2000) {
+            if (t - lastPass >= (ph == 1 && t - t0 > 30000 ? 4000 : 2000)) {
                 lastPass = t; size_t r = 0; for (int i = 0; i < np; i++) { proc_refresh(&ps[i], ph == 1); r += ps[i].resident; }
                 if (half) { resSum += r / 256.0; resN++; }
                 if (t - lastRep >= 15000) { long long ev = 0, rf = 0; tr = 0; for (int i = 0; i < np; i++) { ev += ps[i].evicted; rf += ps[i].refaults; tr += ps[i].N; }
@@ -352,10 +379,11 @@ static int run_realapp(const char* exe, int baseSec, int actSec) {
         double sec2 = sec / 2.0;
         PERFORMANCE_INFORMATION pi1 = { sizeof(pi1) }; GetPerformanceInfo(&pi1, sizeof(pi1));
         printf("REAL PHASE_END %s unix_ms=%lld\n", phn[ph], unix_ms());
-        printf("REAL PHASE %s sec=%d [2nd half] resident_private_mib=%.1f of tracked %.1f | evicted_per_s=%.0f refaults_per_s=%.0f (hot %.0f) | app_cpu_pct=%.1f agent_cpu_pct=%.1f (of one core) | sys_avail_delta_mib=%lld\n",
+        printf("REAL PHASE %s sec=%d [2nd half] resident_private_mib=%.1f of tracked %.1f | evicted_per_s=%.0f refaults_per_s=%.0f (hot %.0f) | app_cpu_pct=%.1f agent_cpu_pct=%.1f (of one core) | sys_avail_delta_mib=%lld compression_store_delta_mib=%lld (store now %lld)\n",
             phn[ph], sec, resN ? resSum / resN : 0, tr / 256.0, (ev - ev2) / sec2, (rf - rf2) / sec2, (rh - rh2) / sec2,
             (cpu - cpuH) / (sec2 * 10), (proc_cpu(GetCurrentProcess()) - selfH) / (sec2 * 10),
-            ((long long)pi1.PhysicalAvailable - (long long)pi0.PhysicalAvailable) * (long long)pi0.PageSize >> 20);
+            ((long long)pi1.PhysicalAvailable - (long long)pi0.PhysicalAvailable) * (long long)pi0.PageSize >> 20,
+            st0 < 0 ? -1 : (store_bytes() - st0) >> 20, store_bytes() >> 20);
         fflush(stdout);
     }
     return 0;
