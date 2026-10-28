@@ -1,0 +1,9 @@
+[package]
+name = "hooktarget"
+version = "0.1.0"
+edition = "2021"
+description = "Synthetic 'foreign app' that allocates via VirtualAlloc and runs a 60 Hz loop; used to prove the hook end-to-end."
+
+[[bin]]
+name = "hooktarget"
+path = "src/main.rs"

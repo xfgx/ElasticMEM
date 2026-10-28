@@ -22,6 +22,12 @@ pub use arena::{Arena, Stats};
 #[cfg(windows)]
 pub use codec::Xpress;
 
+// Перехват аллокатора чужого процесса и точка входа внедряемой DLL.
+#[cfg(windows)]
+pub mod hook;
+#[cfg(windows)]
+mod dllmain;
+
 #[cfg(test)]
 mod tests {
     use crate::codec::{Packed, PageCodec, Rle, PAGE};

@@ -27,9 +27,11 @@ jobs:
           New-Item -ItemType Directory -Force out | Out-Null
           cargo test --release --manifest-path rust/Cargo.toml -p elastic-arena 2>&1 | Tee-Object "out/${{ matrix.os }}-tests.txt"
           if ($LASTEXITCODE -ne 0) { throw "unit tests failed" }
-      - name: Build example
+      - name: Build workspace (lib + example + launcher + target)
         shell: pwsh
-        run: cargo build --release --manifest-path rust/Cargo.toml -p elastic-arena --example arena-bench
+        run: |
+          cargo build --release --manifest-path rust/Cargo.toml --example arena-bench
+          cargo build --release --manifest-path rust/Cargo.toml --bins
       - name: Environment (memory compression state)
         shell: pwsh
         run: |
@@ -56,6 +58,18 @@ jobs:
           $env:EM_CODEC = "rle"
           & "rust/target/release/examples/arena-bench.exe" 256 32 24 25 2>&1 | Tee-Object "out/${{ matrix.os }}-rle-256.txt"
           if ($LASTEXITCODE -ne 0) { throw "lossless check failed (rle)" }
+      - name: Injection + allocator-hook PoC (XPRESS, foreign process)
+        shell: pwsh
+        run: |
+          $dll = "rust/target/release/elastic_arena.dll"
+          $rep = "out/${{ matrix.os }}-hook-report.txt"
+          & "rust/target/release/em-launch.exe" $dll $rep 8 1000 -- "rust/target/release/hooktarget.exe" 512 48 30 2>&1 | Tee-Object "out/${{ matrix.os }}-hook.txt"
+          $code = $LASTEXITCODE
+          Get-Content $rep | Tee-Object -Append "out/${{ matrix.os }}-hook.txt"
+          if ($code -ne 0) { throw "hook PoC target failed (exit $code)" }
+          if (-not (Select-String -Path "out/${{ matrix.os }}-hook.txt" -Pattern 'LOSSLESS verdict=PASS' -Quiet)) { throw "not lossless" }
+          if (-not (Select-String -Path $rep -Pattern 'served_allocs=[1-9]' -Quiet)) { throw "hook did not serve the allocation" }
+          if (-not (Select-String -Path "out/${{ matrix.os }}-hook.txt" -Pattern 'dll_injected=1' -Quiet)) { throw "dll not injected" }
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: "elastic-arena-${{ matrix.os }}", path: out/ }

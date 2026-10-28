@@ -18,5 +18,13 @@ cargo build --release --manifest-path rust/Cargo.toml -p elastic-arena --example
 rust/target/release/examples/arena-bench.exe 512 48 32 40                     # Windows: 512 МиБ, 40 с
 ```
 
-Что это **не** делает: не перехватывает память чужого процесса. Прозрачно управляются только страницы,
-выделенные через арену. Как подключить существующее приложение — см. `DESIGN.md` и его ограничения.
+## Внедрение в чужой процесс (лаунчер)
+
+```
+cargo build --release --manifest-path rust/Cargo.toml --bins
+em-launch elastic_arena.dll report.txt 8 1000 -- hooktarget.exe 512 48 30
+```
+
+`em-launch` запускает цель, внедряет `elastic_arena.dll` и патчит IAT её главного модуля, перенаправляя
+крупные `VirtualAlloc` в сжатую арену. `hooktarget` — синтетическое приложение для сквозной проверки
+(внедрение → перехват → сжатие буфера → сверка без потерь). Подробности и ограничения — в `DESIGN.md`.

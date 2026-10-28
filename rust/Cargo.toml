@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["elastic-arena"]
+members = ["elastic-arena", "launcher", "hooktarget"]
 
 [profile.release]
 opt-level = 3

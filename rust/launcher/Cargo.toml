@@ -1,0 +1,9 @@
+[package]
+name = "em-launch"
+version = "0.1.0"
+edition = "2021"
+description = "Launch a target process, inject elastic_arena.dll, hook its allocator, print the arena report."
+
+[[bin]]
+name = "em-launch"
+path = "src/main.rs"
