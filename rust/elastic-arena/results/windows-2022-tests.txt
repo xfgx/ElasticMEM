@@ -1,5 +1,5 @@
    Compiling elastic-arena v0.1.0 (D:\a\ElasticMEM\ElasticMEM\rust\elastic-arena)
-    Finished `release` profile [optimized] target(s) in 33.56s
+    Finished `release` profile [optimized] target(s) in 29.43s
      Running unittests src\lib.rs (rust\target\release\deps\elastic_arena-60d5f037fe246ba9.exe)
 
 running 5 tests

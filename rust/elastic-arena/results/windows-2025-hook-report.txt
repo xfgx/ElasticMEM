@@ -1,0 +1,12 @@
+hook_installed=1
+patched_iat_entries=1
+served_allocs=1
+passed_allocs=0
+regions=1
+logical_mib=512.0
+resident_mib=509.8
+compressed_mib=2.2
+store_mib=0.9
+physical_mib=510.7
+saved_pct=0.3
+last_compacted_pages=570
