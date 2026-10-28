@@ -1,6 +1,6 @@
 # Запускает настоящий браузер (Edge/Chrome headless) с «активной» страницей и несколькими реальными сайтами,
 # прогоняет probe.exe realapp (baseline, затем постраничное вытеснение) и читает время кадров через CDP.
-param([string]$Probe = '.\probe.exe', [int]$BaseSec = 40, [int]$ActSec = 90, [int]$Method = 1, [string]$Out = 'realapp.txt')
+param([string]$Probe = '.\probe.exe', [int]$BaseSec = 40, [int]$ActSec = 120, [int]$Method = 1, [string]$Out = 'realapp.txt')
 $ErrorActionPreference = 'Continue'
 $cands = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Google\Chrome\Application\chrome.exe")
 $browser = $cands | Where-Object { Test-Path $_ } | Select-Object -First 1
