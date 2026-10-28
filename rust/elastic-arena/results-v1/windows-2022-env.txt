@@ -1,0 +1,12 @@
+
+Caption                : Microsoft Windows Server 2022 Datacenter
+Version                : 10.0.20348
+TotalVisibleMemorySize : 8383228
+
+
+nproc=2
+
+MemoryCompression : False
+
+
+Enable-MMAgent -MemoryCompression: ok (effective after reboot)
