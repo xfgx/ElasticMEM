@@ -1,0 +1,63 @@
+name: active-trim-probe
+# Исследование: постраничное сжатие памяти АКТИВНЫХ приложений без VM и драйвера.
+# Только user-mode API, ничего не устанавливается и защита не ослабляется. Результаты коммитятся обратно в ветку.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['research/active-trim/*.c', 'research/active-trim/*.ps1', 'research/active-trim/*.html', '.github/workflows/active-trim-probe.yml']
+permissions:
+  contents: write
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with: { arch: x64 }
+      - name: Build probe
+        shell: cmd
+        run: cl /nologo /O2 /W3 research\active-trim\probe.c /Fe:probe.exe psapi.lib winmm.lib advapi32.lib
+      - name: Environment (memory compression state)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          $o = "out/${{ matrix.os }}-env.txt"
+          (Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, TotalVisibleMemorySize, FreePhysicalMemory | Format-List | Out-String) | Tee-Object $o
+          "nproc=$env:NUMBER_OF_PROCESSORS" | Tee-Object -Append $o
+          try { (Get-MMAgent | Format-List | Out-String) | Tee-Object -Append $o } catch { "Get-MMAgent: $_" | Tee-Object -Append $o }
+          "MemCompression process: " + ((Get-Process -Name 'Memory Compression' -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { [int]($_.WorkingSet64/1MB) }) ?? 'none') | Tee-Object -Append $o
+          try { Enable-MMAgent -MemoryCompression -ErrorAction Stop; "Enable-MMAgent -MemoryCompression: ok (effective after reboot)" | Tee-Object -Append $o } catch { "Enable-MMAgent: $_" | Tee-Object -Append $o }
+      - name: Synthetic active app (1 GiB, hot 96 MiB, warm 64 MiB)
+        shell: pwsh
+        run: ./probe.exe 1024 96 64 25 2>&1 | Tee-Object "out/${{ matrix.os }}-synthetic.txt"
+      - name: Real browser (headless) — baseline vs page-precise
+        shell: pwsh
+        run: |
+          Copy-Item probe.exe research/active-trim/
+          pwsh -NoProfile -File research/active-trim/run-realapp.ps1 -Probe research/active-trim/probe.exe -Out "out/${{ matrix.os }}-realapp.txt"
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: "active-trim-${{ matrix.os }}", path: out/ }
+  commit:
+    needs: probe
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dl }
+      - name: Commit results back to the branch
+        run: |
+          mkdir -p research/active-trim/results
+          find dl -type f -name '*.txt' -exec cp {} research/active-trim/results/ \;
+          echo "run: ${{ github.run_id }} sha: ${{ github.sha }}" > research/active-trim/results/RUN.txt
+          git config user.name "active-trim-probe"; git config user.email "actions@users.noreply.github.com"
+          git add research/active-trim/results
+          git commit -m "active-trim: results of run ${{ github.run_id }}" || exit 0
+          git push origin HEAD:${{ github.ref_name }}
