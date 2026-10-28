@@ -1,0 +1,78 @@
+name: elastic-arena
+# Прозрачно-сжатая арена (Rust) на настоящей Windows: тесты ядра + стенд реального времени с
+# параллельным компактором. Проверяет сжатие работающего "приложения" БЕЗ ПОТЕРЬ (арена == тень) и
+# меряет время кадров и степень сжатия XPRESS. Ничего не устанавливает, защита не ослабляется.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['rust/**', '.github/workflows/elastic-arena.yml']
+permissions:
+  contents: write
+jobs:
+  arena:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        shell: pwsh
+        run: rustup show; rustc --version
+      - name: Core unit tests (lossless state machine + codec roundtrip)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          cargo test --release --manifest-path rust/Cargo.toml -p elastic-arena 2>&1 | Tee-Object "out/${{ matrix.os }}-tests.txt"
+          if ($LASTEXITCODE -ne 0) { throw "unit tests failed" }
+      - name: Build example
+        shell: pwsh
+        run: cargo build --release --manifest-path rust/Cargo.toml -p elastic-arena --example arena-bench
+      - name: Environment (memory compression state)
+        shell: pwsh
+        run: |
+          $o = "out/${{ matrix.os }}-env.txt"
+          (Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, TotalVisibleMemorySize | Format-List | Out-String) | Tee-Object $o
+          "nproc=$env:NUMBER_OF_PROCESSORS" | Tee-Object -Append $o
+          try { (Get-MMAgent | Select-Object MemoryCompression | Format-List | Out-String) | Tee-Object -Append $o } catch { "Get-MMAgent: $_" | Tee-Object -Append $o }
+          try { Enable-MMAgent -MemoryCompression -ErrorAction Stop; "Enable-MMAgent -MemoryCompression: ok (effective after reboot)" | Tee-Object -Append $o } catch { "Enable-MMAgent: $_" | Tee-Object -Append $o }
+      - name: Real-time arena bench (XPRESS, 512 MiB app)
+        shell: pwsh
+        run: |
+          $e = "rust/target/release/examples/arena-bench.exe"
+          & $e 512 48 32 40 2>&1 | Tee-Object "out/${{ matrix.os }}-xpress-512.txt"
+          if ($LASTEXITCODE -ne 0) { throw "lossless check failed (xpress 512)" }
+      - name: Real-time arena bench (XPRESS, 1024 MiB app)
+        shell: pwsh
+        run: |
+          $e = "rust/target/release/examples/arena-bench.exe"
+          & $e 1024 96 64 40 2>&1 | Tee-Object "out/${{ matrix.os }}-xpress-1024.txt"
+          if ($LASTEXITCODE -ne 0) { throw "lossless check failed (xpress 1024)" }
+      - name: Cross-check lossless with second codec (RLE)
+        shell: pwsh
+        run: |
+          $env:EM_CODEC = "rle"
+          & "rust/target/release/examples/arena-bench.exe" 256 32 24 25 2>&1 | Tee-Object "out/${{ matrix.os }}-rle-256.txt"
+          if ($LASTEXITCODE -ne 0) { throw "lossless check failed (rle)" }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: "elastic-arena-${{ matrix.os }}", path: out/ }
+  commit:
+    needs: arena
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dl }
+      - name: Commit results back
+        run: |
+          mkdir -p rust/elastic-arena/results; rm -f rust/elastic-arena/results/*.txt
+          find dl -type f -name '*.txt' -exec cp {} rust/elastic-arena/results/ \;
+          echo "run: ${{ github.run_id }} sha: ${{ github.sha }}" > rust/elastic-arena/results/RUN.txt
+          git config user.name "elastic-arena"; git config user.email "actions@users.noreply.github.com"
+          git add rust/elastic-arena/results
+          git commit -m "elastic-arena: results of run ${{ github.run_id }}" || exit 0
+          git push origin HEAD:${{ github.ref_name }}

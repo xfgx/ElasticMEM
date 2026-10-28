@@ -1,0 +1,13 @@
+[package]
+name = "elastic-arena"
+version = "0.1.0"
+edition = "2021"
+description = "Transparent compressed memory arena for Windows: fault-driven per-page XPRESS, lossless, real-time."
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[[example]]
+name = "arena-bench"
+path = "examples/arena_bench.rs"
+
