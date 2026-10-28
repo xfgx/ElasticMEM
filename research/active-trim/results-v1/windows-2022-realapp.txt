@@ -1,0 +1,75 @@
+REAL browser=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
+
+   Id WS_MiB Private_MiB
+   -- ------ -----------
+ 6656    362         328
+ 9748    231         177
+ 1404    176         120
+ 2752    163          65
+ 2388    159          62
+ 2660    155          61
+ 2672    154          60
+ 4788    151          60
+10416    131          88
+ 8464    104          53
+ 8868     44          19
+ 8080     43          18
+
+
+REAL exe=msedge.exe processes=37
+REAL pid=4788 wswatch=1 tracked_private_mib=46.6 regions=546
+REAL pid=2660 wswatch=1 tracked_private_mib=47.6 regions=569
+REAL pid=2388 wswatch=1 tracked_private_mib=48.5 regions=575
+REAL pid=2752 wswatch=1 tracked_private_mib=51.4 regions=600
+REAL pid=2672 wswatch=1 tracked_private_mib=46.3 regions=571
+REAL pid=2856 wswatch=1 tracked_private_mib=0.7 regions=13
+REAL pid=2612 wswatch=1 tracked_private_mib=0.7 regions=14
+REAL pid=2940 wswatch=1 tracked_private_mib=0.7 regions=14
+REAL pid=5052 wswatch=1 tracked_private_mib=0.7 regions=12
+REAL pid=3760 wswatch=1 tracked_private_mib=0.6 regions=11
+REAL pid=8080 wswatch=1 tracked_private_mib=10.9 regions=202
+REAL pid=6440 wswatch=1 tracked_private_mib=8.8 regions=88
+REAL pid=5996 wswatch=1 tracked_private_mib=1.2 regions=34
+REAL pid=6004 wswatch=1 tracked_private_mib=5.3 regions=92
+REAL pid=3528 wswatch=1 tracked_private_mib=7.7 regions=70
+REAL pid=5776 wswatch=1 tracked_private_mib=1.1 regions=32
+REAL pid=6656 wswatch=1 tracked_private_mib=315.6 regions=323
+REAL pid=1404 wswatch=1 tracked_private_mib=101.2 regions=668
+REAL pid=5916 wswatch=1 tracked_private_mib=6.9 regions=76
+REAL pid=6308 wswatch=1 tracked_private_mib=7.0 regions=80
+REAL pid=7032 wswatch=1 tracked_private_mib=8.1 regions=139
+REAL pid=4808 wswatch=1 tracked_private_mib=8.1 regions=76
+REAL pid=8404 wswatch=1 tracked_private_mib=1.2 regions=35
+REAL pid=8464 wswatch=1 tracked_private_mib=37.3 regions=287
+REAL pid=8868 wswatch=1 tracked_private_mib=11.3 regions=170
+REAL pid=8880 wswatch=1 tracked_private_mib=12.5 regions=77
+REAL pid=6348 wswatch=1 tracked_private_mib=7.2 regions=79
+REAL pid=8756 wswatch=1 tracked_private_mib=1.2 regions=35
+REAL pid=9748 wswatch=1 tracked_private_mib=158.6 regions=622
+REAL pid=9992 wswatch=1 tracked_private_mib=6.3 regions=113
+REAL pid=10000 wswatch=1 tracked_private_mib=7.9 regions=74
+REAL pid=10416 wswatch=1 tracked_private_mib=71.6 regions=356
+REAL pid=10424 wswatch=1 tracked_private_mib=4.9 regions=34
+REAL pid=10840 wswatch=1 tracked_private_mib=6.9 regions=77
+REAL pid=12048 wswatch=1 tracked_private_mib=8.5 regions=91
+REAL pid=12192 wswatch=1 tracked_private_mib=6.9 regions=78
+REAL pid=9644 wswatch=1 tracked_private_mib=1.1 regions=27
+REAL PHASE_START baseline unix_ms=1793173716144
+REAL tick phase=baseline t=10s resident_private_mib=976.9 tracked_mib=1021.0 evicted=0 refaults=0
+REAL tick phase=baseline t=21s resident_private_mib=946.2 tracked_mib=989.4 evicted=0 refaults=0
+REAL tick phase=baseline t=31s resident_private_mib=942.0 tracked_mib=986.0 evicted=0 refaults=0
+REAL PHASE_END baseline unix_ms=1793173756258
+REAL PHASE baseline sec=40 resident_private_mib_avg_2nd_half=936.2 tracked_mib=986.0 evicted_pages=0 refaults=0 refaults_per_s=0.0 missed=0 wsrecords=15170 app_cpu_ms=1078 agent_cpu_ms=984 sys_avail_delta_mib=124
+REAL PHASE_START page_precise unix_ms=1793173756261
+REAL tick phase=page_precise t=11s resident_private_mib=112.2 tracked_mib=983.6 evicted=270809 refaults=58075
+REAL tick phase=page_precise t=21s resident_private_mib=127.4 tracked_mib=977.0 evicted=301531 refaults=91626
+REAL tick phase=page_precise t=31s resident_private_mib=146.8 tracked_mib=970.8 evicted=323816 refaults=113697
+REAL tick phase=page_precise t=42s resident_private_mib=129.8 tracked_mib=969.4 evicted=353295 refaults=141182
+REAL tick phase=page_precise t=52s resident_private_mib=139.0 tracked_mib=974.7 evicted=364260 refaults=152460
+REAL tick phase=page_precise t=62s resident_private_mib=127.8 tracked_mib=976.3 evicted=378818 refaults=162951
+REAL tick phase=page_precise t=73s resident_private_mib=119.1 tracked_mib=973.7 evicted=396408 refaults=179021
+REAL tick phase=page_precise t=83s resident_private_mib=121.4 tracked_mib=973.8 evicted=406337 refaults=189006
+REAL PHASE_END page_precise unix_ms=1793173846302
+REAL PHASE page_precise sec=90 resident_private_mib_avg_2nd_half=125.4 tracked_mib=973.8 evicted_pages=410812 refaults=193844 refaults_per_s=2153.8 missed=65857 wsrecords=224520 app_cpu_ms=2047 agent_cpu_ms=3375 sys_avail_delta_mib=703
+REAL FRAMES baseline {"frames":1200,"fps":59.8,"work_p50":0.2,"work_p99":0.4,"work_max":12.6,"gap_p50":16.7,"gap_p99":16.8,"gap_max":16.8,"jank_gt_50ms":0}
+REAL FRAMES page_precise {"frames":2674,"fps":59.4,"work_p50":0.2,"work_p99":0.4,"work_max":4,"gap_p50":16.7,"gap_p99":16.8,"gap_max":16.8,"jank_gt_50ms":0}

@@ -1,0 +1,33 @@
+OS 10.0.20348 total=1024 hot=96 warm=64 phase_s=40
+TARGET BASE 0000020E00000000 SIZE 1073741824 HOT 24576 WARM 16384
+
+OPEN rights=QUERY_INFORMATION|VM_OPERATION|SET_QUOTA handle=ok
+API VmRemoveFromWorkingSet(foreign) status=0x00000000 resident_after=0 of 16 call_us=67.6
+API PrefetchVirtualMemory(foreign)=1 resident_after=0 of 16
+API VmPagePriority(foreign) status=0x00000000
+API NtUnlockVirtualMemory(foreign) status=0xc000002a resident_after=0 of 16 call_us=8.4
+API InitializeProcessForWsWatch=0 (v2 не использует: в v1 терялось ~70% записей)
+REFAULT_COST wait_ms=0 evict_status=0x00000000 us_per_page=0.69 pages=16384
+REFAULT_COST wait_ms=3000 evict_status=0x00000000 us_per_page=0.93 pages=16384
+REFAULT_COST wait_ms=15000 evict_status=0x00000000 us_per_page=0.82 pages=16384
+SYS baseline avail_mib=4948 commit_mib=3251
+PHASE baseline sec=20 [2nd half] resident_mib hot=96.0 warm=64.0 cold=863.9 total=1023.9 of 1024 | pagefaults_per_s=0 | evicted_per_s=0 refaults_per_s=0 (of them hot=0) budgetU=2048 | target_cpu_ms=0 agent_cpu_ms=31 (whole phase)
+SYS baseline avail_mib=4951 commit_mib=3242
+SYS empty_ws_every_2s avail_mib=4953 commit_mib=3239
+PHASE empty_ws_every_2s sec=40 [2nd half] resident_mib hot=50.4 warm=0.0 cold=0.0 total=50.4 of 1024 | pagefaults_per_s=16412 | evicted_per_s=0 refaults_per_s=0 (of them hot=0) budgetU=2048 | target_cpu_ms=2875 agent_cpu_ms=1438 (whole phase)
+SYS empty_ws_every_2s avail_mib=5620 commit_mib=3225
+SYS page_precise_v2 avail_mib=5621 commit_mib=3225
+PHASE page_precise_v2 sec=80 [2nd half] resident_mib hot=96.0 warm=63.9 cold=0.0 total=159.9 of 1024 | pagefaults_per_s=31 | evicted_per_s=31 refaults_per_s=31 (of them hot=31) budgetU=12779 | target_cpu_ms=406 agent_cpu_ms=922 (whole phase)
+SYS page_precise_v2 avail_mib=5862 commit_mib=3177
+SYS baseline_after avail_mib=5862 commit_mib=3177
+PHASE baseline_after sec=20 [2nd half] resident_mib hot=96.0 warm=64.0 cold=0.0 total=160.0 of 1024 | pagefaults_per_s=0 | evicted_per_s=0 refaults_per_s=0 (of them hot=0) budgetU=12779 | target_cpu_ms=16 agent_cpu_ms=62 (whole phase)
+SYS baseline_after avail_mib=5869 commit_mib=3166
+FRAMES legend: phase=2k -> 1st half of phase k, 2k+1 -> 2nd half (steady state)
+TARGET FRAMES phase=0 n=1711 mean_ms=0.478 p50_ms=0.419 p99_ms=1.578 p999_ms=2.997 max_ms=3.093 over16ms=0
+TARGET FRAMES phase=1 n=600 mean_ms=0.454 p50_ms=0.434 p99_ms=0.650 p999_ms=0.812 max_ms=0.812 over16ms=0
+TARGET FRAMES phase=2 n=1157 mean_ms=2.621 p50_ms=1.809 p99_ms=38.714 p999_ms=115.059 max_ms=121.311 over16ms=22
+TARGET FRAMES phase=3 n=1142 mean_ms=2.619 p50_ms=1.696 p99_ms=39.265 p999_ms=124.166 max_ms=130.110 over16ms=21
+TARGET FRAMES phase=4 n=2397 mean_ms=0.690 p50_ms=0.451 p99_ms=2.799 p999_ms=19.417 max_ms=38.325 over16ms=3
+TARGET FRAMES phase=5 n=2401 mean_ms=0.477 p50_ms=0.455 p99_ms=0.792 p999_ms=1.028 max_ms=1.173 over16ms=0
+TARGET FRAMES phase=6 n=601 mean_ms=0.518 p50_ms=0.505 p99_ms=0.847 p999_ms=1.070 max_ms=1.070 over16ms=0
+TARGET FRAMES phase=7 n=601 mean_ms=0.460 p50_ms=0.442 p99_ms=0.678 p999_ms=0.849 max_ms=0.849 over16ms=0

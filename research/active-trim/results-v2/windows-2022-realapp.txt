@@ -1,0 +1,38 @@
+REAL browser=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
+
+  Id WS_MiB Private_MiB
+  -- ------ -----------
+6432    365         330
+9448    235         181
+8160    171         117
+4104    164          66
+7224    159          64
+3360    157          64
+4108    157          62
+7064    150          57
+2888    125          81
+8252    102          52
+8288     45          19
+6188     44          19
+
+
+REAL exe=msedge.exe processes=37 tracked_private_mib=1078.3 method=1
+REAL PHASE_START baseline unix_ms=1793174525187
+REAL tick baseline t=16s resident_mib=961.9 tracked_mib=1020.6 evicted=0 refaults=0
+REAL HALF baseline unix_ms=1793174545229
+REAL tick baseline t=33s resident_mib=930.5 tracked_mib=989.2 evicted=0 refaults=0
+REAL PHASE_END baseline unix_ms=1793174565234
+REAL PHASE baseline sec=40 [2nd half] resident_private_mib=936.2 of tracked 989.2 | evicted_per_s=0 refaults_per_s=0 (hot 0) | app_cpu_pct=2.5 agent_cpu_pct=1.4 (of one core) | sys_avail_delta_mib=135
+REAL PHASE_START page_precise unix_ms=1793174565236
+REAL tick page_precise t=16s resident_mib=157.1 tracked_mib=980.7 evicted=241264 refaults=41436
+REAL tick page_precise t=32s resident_mib=165.5 tracked_mib=974.0 evicted=249285 refaults=50880
+REAL tick page_precise t=49s resident_mib=183.8 tracked_mib=974.3 evicted=255078 refaults=60567
+REAL HALF page_precise unix_ms=1793174625251
+REAL tick page_precise t=65s resident_mib=179.7 tracked_mib=977.6 evicted=262252 refaults=65439
+REAL tick page_precise t=81s resident_mib=174.3 tracked_mib=980.0 evicted=267075 refaults=68334
+REAL tick page_precise t=97s resident_mib=188.4 tracked_mib=975.1 evicted=272222 refaults=76851
+REAL tick page_precise t=113s resident_mib=187.3 tracked_mib=979.0 evicted=276417 refaults=80027
+REAL PHASE_END page_precise unix_ms=1793174685277
+REAL PHASE page_precise sec=120 [2nd half] resident_private_mib=182.3 of tracked 979.0 | evicted_per_s=313 refaults_per_s=285 (hot 172) | app_cpu_pct=1.2 agent_cpu_pct=7.5 (of one core) | sys_avail_delta_mib=730
+REAL FRAMES baseline {"frames":1200,"fps":59.9,"work_p50":0.2,"work_p99":0.3,"work_max":12,"gap_p50":16.7,"gap_p99":16.8,"gap_max":16.8,"jank_gt_50ms":0}
+REAL FRAMES page_precise {"frames":3572,"fps":59.5,"work_p50":0.2,"work_p99":0.3,"work_max":0.4,"gap_p50":16.7,"gap_p99":16.8,"gap_max":16.8,"jank_gt_50ms":0}

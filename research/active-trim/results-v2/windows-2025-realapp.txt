@@ -1,0 +1,41 @@
+REAL browser=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
+
+   Id WS_MiB Private_MiB
+   -- ------ -----------
+ 8116    368         331
+11108    247         197
+ 1872    168          63
+ 4836    167          63
+  744    162          60
+ 6920    160          58
+ 8024    156          55
+ 5608    153         106
+ 2100    127          79
+ 1756    100          49
+10148     46          18
+ 7372     45          18
+
+
+REAL open pid=12056 failed err=87
+REAL open pid=7864 failed err=87
+REAL open pid=10900 failed err=87
+REAL exe=msedge.exe processes=39 tracked_private_mib=1060.3 method=1
+REAL PHASE_START baseline unix_ms=1793174530651
+REAL tick baseline t=16s resident_mib=936.3 tracked_mib=980.8 evicted=0 refaults=0
+REAL HALF baseline unix_ms=1793174550652
+REAL tick baseline t=32s resident_mib=899.5 tracked_mib=950.2 evicted=0 refaults=0
+REAL PHASE_END baseline unix_ms=1793174570679
+REAL PHASE baseline sec=40 [2nd half] resident_private_mib=903.7 of tracked 950.2 | evicted_per_s=0 refaults_per_s=0 (hot 0) | app_cpu_pct=8.4 agent_cpu_pct=1.5 (of one core) | sys_avail_delta_mib=118
+REAL PHASE_START page_precise unix_ms=1793174570679
+REAL tick page_precise t=16s resident_mib=150.5 tracked_mib=944.0 evicted=232426 refaults=40365
+REAL tick page_precise t=33s resident_mib=166.8 tracked_mib=938.4 evicted=240940 refaults=51598
+REAL tick page_precise t=49s resident_mib=201.2 tracked_mib=934.0 evicted=252018 refaults=68549
+REAL HALF page_precise unix_ms=1793174630703
+REAL tick page_precise t=65s resident_mib=194.4 tracked_mib=935.6 evicted=261007 refaults=74296
+REAL tick page_precise t=81s resident_mib=190.3 tracked_mib=942.8 evicted=268538 refaults=78247
+REAL tick page_precise t=98s resident_mib=226.5 tracked_mib=938.3 evicted=274541 refaults=89155
+REAL tick page_precise t=114s resident_mib=203.2 tracked_mib=935.7 evicted=284753 refaults=92763
+REAL PHASE_END page_precise unix_ms=1793174690684
+REAL PHASE page_precise sec=120 [2nd half] resident_private_mib=201.4 of tracked 935.7 | evicted_per_s=492 refaults_per_s=363 (hot 174) | app_cpu_pct=8.1 agent_cpu_pct=7.0 (of one core) | sys_avail_delta_mib=680
+REAL FRAMES baseline {"frames":1199,"fps":59.9,"work_p50":0.2,"work_p99":0.4,"work_max":2.2,"gap_p50":16.7,"gap_p99":16.8,"gap_max":16.8,"jank_gt_50ms":0}
+REAL FRAMES page_precise {"frames":3596,"fps":59.9,"work_p50":0.2,"work_p99":0.3,"work_max":0.4,"gap_p50":16.7,"gap_p99":16.8,"gap_max":33.3,"jank_gt_50ms":0}
