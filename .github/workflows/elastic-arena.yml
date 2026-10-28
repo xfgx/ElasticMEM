@@ -70,6 +70,7 @@ jobs:
           if ($code -ne 0) { throw "hook PoC target failed (exit $code)" }
           if (-not (Select-String -Path "out/${{ matrix.os }}-hook.txt" -Pattern 'LOSSLESS verdict=PASS' -Quiet)) { throw "not lossless" }
           if (-not (Select-String -Path $rep -Pattern 'served_allocs=[1-9]' -Quiet)) { throw "hook did not serve the allocation" }
+          if (-not (Select-String -Path $rep -Pattern 'peak_compressed_mib=([1-9]|\d\d)' -Quiet)) { throw "hooked region was never compressed" }
           if (-not (Select-String -Path "out/${{ matrix.os }}-hook.txt" -Pattern 'dll_injected=1' -Quiet)) { throw "dll not injected" }
       - uses: actions/upload-artifact@v4
         if: always()

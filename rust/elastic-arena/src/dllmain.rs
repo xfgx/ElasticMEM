@@ -8,7 +8,7 @@
 
 use crate::hook;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 const DLL_PROCESS_ATTACH: u32 = 1;
 
@@ -24,6 +24,8 @@ extern "system" {
 }
 
 static PATCHED: AtomicUsize = AtomicUsize::new(0);
+static PEAK_COMPRESSED: AtomicU64 = AtomicU64::new(0); // МиБ×10, пик за всё время
+static PEAK_SAVED: AtomicU64 = AtomicU64::new(0);      // % ×10 при пике
 
 unsafe extern "system" fn worker(_: *mut c_void) -> u32 {
     let idle_ms: u64 = std::env::var("EM_ARENA_IDLE_MS")
@@ -36,13 +38,15 @@ unsafe extern "system" fn worker(_: *mut c_void) -> u32 {
         if let Some(ref path) = report {
             let (regions, logical, resident, comp, store, served, passed) = hook::summary();
             let physical = resident + store;
-            let saved = if logical > 0.0 {
-                100.0 * (1.0 - physical / logical)
-            } else {
-                0.0
-            };
+            let saved = if logical > 0.0 { 100.0 * (1.0 - physical / logical) } else { 0.0 };
+            // Пик сжатия за весь прогон: финальная сверка в приложении распаковывает всё обратно,
+            // поэтому мгновенный снимок в конце занижает экономию. Пик отражает установившийся режим.
+            if (comp * 10.0) as u64 > PEAK_COMPRESSED.load(Ordering::Relaxed) {
+                PEAK_COMPRESSED.store((comp * 10.0) as u64, Ordering::Relaxed);
+                PEAK_SAVED.store((saved.max(0.0) * 10.0) as u64, Ordering::Relaxed);
+            }
             let text = format!(
-                "hook_installed=1\npatched_iat_entries={}\nserved_allocs={}\npassed_allocs={}\nregions={}\nlogical_mib={:.1}\nresident_mib={:.1}\ncompressed_mib={:.1}\nstore_mib={:.1}\nphysical_mib={:.1}\nsaved_pct={:.1}\nlast_compacted_pages={}\n",
+                "hook_installed=1\npatched_iat_entries={}\nserved_allocs={}\npassed_allocs={}\nregions={}\nlogical_mib={:.1}\nresident_mib={:.1}\ncompressed_mib={:.1}\nstore_mib={:.1}\nphysical_mib={:.1}\nsaved_pct={:.1}\npeak_compressed_mib={:.1}\npeak_saved_pct={:.1}\nlast_compacted_pages={}\n",
                 PATCHED.load(Ordering::Relaxed),
                 served,
                 passed,
@@ -53,6 +57,8 @@ unsafe extern "system" fn worker(_: *mut c_void) -> u32 {
                 store,
                 physical,
                 saved,
+                PEAK_COMPRESSED.load(Ordering::Relaxed) as f64 / 10.0,
+                PEAK_SAVED.load(Ordering::Relaxed) as f64 / 10.0,
                 compressed
             );
             let _ = std::fs::write(path, text);
