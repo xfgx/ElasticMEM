@@ -1,0 +1,20 @@
+
+Caption                : Microsoft Windows Server 2022 Datacenter
+Version                : 10.0.20348
+TotalVisibleMemorySize : 8383228
+FreePhysicalMemory     : 5989148
+
+
+nproc=2
+
+ApplicationLaunchPrefetching : False
+ApplicationPreLaunch         : False
+MaxOperationAPIFiles         : 256
+MemoryCompression            : False
+OperationAPI                 : False
+PageCombining                : False
+PSComputerName               : 
+
+
+MemCompression process: none
+Enable-MMAgent -MemoryCompression: ok (effective after reboot)
