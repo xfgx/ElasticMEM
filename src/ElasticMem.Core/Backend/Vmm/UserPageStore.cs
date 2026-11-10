@@ -16,10 +16,17 @@ public sealed class PageNotBeneficialException : IOException
 
 public sealed record UserStoreStats(int Pages, long PayloadBytes, long LedgerBytes, long QuotaBytes, long Puts, long Gets, long Deletes, long RejectedNotBeneficial);
 
+/// <summary>Общий интерфейс хранилища сжатых страниц (per-page либо с дедупликацией) для CompressedPageTable.</summary>
+public interface IUserPageStore : IVmCompressedStore, IDisposable
+{
+    string CodecName { get; }
+    UserStoreStats Stats();
+}
+
 // User-mode counterpart of the SYS em_store semantics: compressed-only, per-key generation, CRC check,
 // quota on payload+24 bytes per entry (same ledger rule as the driver). Payload lives in the VMM process
 // native heap, so it IS charged to the process private commit; nothing is hidden in kernel pool.
-public sealed unsafe class UserPageStore : IVmCompressedStore, IDisposable
+public sealed unsafe class UserPageStore : IUserPageStore
 {
     public const int PageBytes = 4096, EntryOverheadBytes = 24;
     struct Entry { public IntPtr Data; public int Size; public uint Crc; public ulong Generation; }

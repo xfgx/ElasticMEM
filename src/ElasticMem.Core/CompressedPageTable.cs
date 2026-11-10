@@ -10,20 +10,26 @@ public sealed class CompressedPageTable : IDisposable
     public enum PageState : byte { Zero, Resident, Compressed, Pinned }
     public const int PageBytes = 4096;
 
-    readonly UserPageStore _store;
+    readonly IUserPageStore _store;
     readonly PageState[] _state;
     readonly ulong[] _generation;
     readonly long[] _stamp;      // «часы доступа» для LRU: когда страница в последний раз становилась резидентной
     long _clock;
     public int PageCount { get; }
+    public bool Dedup { get; }
     public int Resident { get; private set; }
     public int Compressed { get; private set; }
     public int Pinned { get; private set; }
 
-    public CompressedPageTable(IPageCodec codec, int pages, long quotaBytes)
+    public CompressedPageTable(IPageCodec codec, int pages, long quotaBytes) : this(codec, pages, quotaBytes, false) { }
+
+    /// <summary>Если dedup=true, одинаковые страницы хранятся один раз (content-addressed), что реально
+    /// сокращает память своей кучи сверх обычного per-page сжатия.</summary>
+    public CompressedPageTable(IPageCodec codec, int pages, long quotaBytes, bool dedup)
     {
         if (pages is < 1 or > 1048576) throw new ArgumentOutOfRangeException(nameof(pages));
-        _store = new UserPageStore(codec, pages, quotaBytes);
+        Dedup = dedup;
+        _store = dedup ? new DedupPageStore(codec, pages, quotaBytes) : new UserPageStore(codec, pages, quotaBytes);
         _state = new PageState[pages]; _generation = new ulong[pages]; _stamp = new long[pages];
         PageCount = pages;
     }
@@ -88,6 +94,7 @@ public sealed class CompressedPageTable : IDisposable
     public void Touch(int page) { if (_state[Check(page)] is PageState.Resident) _stamp[page] = ++_clock; }
 
     public UserStoreStats StoreStats() => _store.Stats();
+    public (int LiveKeys, int UniquePages)? DedupInfo() => _store is DedupPageStore d ? d.DedupInfo() : null;
     public long LogicalBytes => (long)PageCount * PageBytes;
     public long ResidentBytes => (long)Resident * PageBytes + (long)Pinned * PageBytes;
     public void Dispose() => _store.Dispose();
