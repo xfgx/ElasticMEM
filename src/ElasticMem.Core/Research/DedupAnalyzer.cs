@@ -23,19 +23,24 @@ public static class DedupAnalyzer
             $"экономия {SavingVsPerPagePct,6:0.00}%";
     }
 
-    public sealed record Report(int Pages, long RawBytes, long WholePageDuplicateBytes, List<Result> Results);
+    public sealed record Report(int Pages, long RawBytes, long WholePageDuplicateBytes,
+        long ZeroPageBytes, long NonZeroDuplicateBytes, List<Result> Results);
 
     public static Report Measure(IReadOnlyList<byte[]> pages)
     {
         long raw = (long)pages.Count * PageBytes;
         long perPage = 0;
         var seenPages = new HashSet<string>();
-        long wholeDup = 0;
+        var seenNonZero = new HashSet<string>();
+        long wholeDup = 0, zeroBytes = 0, nonZeroDup = 0;
         foreach (var p in pages)
         {
             perPage += Deflate(p);
+            bool zero = true; foreach (byte b in p) if (b != 0) { zero = false; break; }
             string k = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(p));
             if (!seenPages.Add(k)) wholeDup += PageBytes;
+            if (zero) { zeroBytes += PageBytes; continue; } // Windows уже разделяет нулевую страницу — исключаем
+            if (!seenNonZero.Add(k)) nonZeroDup += PageBytes; // одинаковая НЕнулевая приватная страница между процессами
         }
 
         var results = new List<Result>
@@ -46,7 +51,7 @@ public static class DedupAnalyzer
             FixedChunk(pages, 64, perPage),
             ContentDefined(pages, perPage),
         };
-        return new Report(pages.Count, raw, wholeDup, results);
+        return new Report(pages.Count, raw, wholeDup, zeroBytes, nonZeroDup, results);
     }
 
     static Result FixedChunk(IReadOnlyList<byte[]> pages, int chunk, long perPage)
@@ -107,16 +112,28 @@ public static class DedupAnalyzer
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"Страниц: {r.Pages} ({r.RawBytes / 1048576.0:0.0} МиБ). Полных дубликатов страниц: {r.WholePageDuplicateBytes / 1048576.0:0.0} МиБ.");
+        sb.AppendLine();
+        sb.AppendLine("── Модель A: дедуп как добавка к сжатию холодного tier ──");
         sb.AppendLine("Гранулярность     | уникальных | per-page сжатие → дедуп+сжатие | экономия сверх per-page");
         foreach (var x in r.Results) sb.AppendLine("  " + x);
         var best = r.Results.MaxBy(x => x.SavingVsPerPagePct)!;
+        sb.AppendLine($"Лучшее: {best.Chunking} — дедуп убирает {best.SavingVsPerPagePct:0.0}% сверх per-page сжатия.");
+        sb.AppendLine(best.SavingVsPerPagePct >= 15
+            ? "  → потолок есть: дедуп-store поверх сжатия оправдан."
+            : "  → низкий потолок: дубликаты и так дёшевы для сжатия, дедуп поверх сжатия смысла почти не даёт.");
+
+        // Модель B: разделение одинаковых физических страниц (KSM/CoW) — без сжатия, на ГОРЯЧЕЙ памяти.
+        double nonZeroPct = r.RawBytes > 0 ? (double)r.NonZeroDuplicateBytes / r.RawBytes * 100 : 0;
         sb.AppendLine();
-        sb.AppendLine($"Лучшее: {best.Chunking} — дедуп убирает {best.SavingVsPerPagePct:0.0}% сверх того, что даёт обычное per-page сжатие.");
-        sb.AppendLine(best.SavingVsPerPagePct >= 20
-            ? "Вывод: высокий кросс-процессный потолок — есть смысл делать user-mode дедуп-store (и оценивать CoW-драйвер)."
-            : best.SavingVsPerPagePct >= 5
-                ? "Вывод: умеренный потолок — дедуп-store своей памяти оправдан; системный CoW сомнителен."
-                : "Вывод: низкий потолок на этих данных — дедуп почти не даёт сверх per-page сжатия.");
+        sb.AppendLine("── Модель B: разделение одинаковых страниц (KSM/CoW), без сжатия, горячая RAM ──");
+        sb.AppendLine($"Нулевых страниц: {r.ZeroPageBytes / 1048576.0:0.0} МиБ — Windows их уже разделяет, не считаем.");
+        sb.AppendLine($"Одинаковых НЕнулевых приватных страниц между процессами: {r.NonZeroDuplicateBytes / 1048576.0:0.0} МиБ = {nonZeroPct:0.0}% собранного.");
+        sb.AppendLine($"  → столько физической RAM вернуло бы CoW-разделение страниц — без распаковки, на горячей памяти.");
+        sb.AppendLine(nonZeroPct >= 15
+            ? "  → ВЫСОКИЙ потолок page-sharing: CoW-разделение (аналог KSM) стоит оценивать всерьёз — это то, чего Windows не делает."
+            : nonZeroPct >= 7
+                ? "  → умеренный потолок page-sharing: возможно оправдано, нужно учесть стоимость сканирования/хеширования."
+                : "  → низкий потолок page-sharing на этих данных: одинаковых ненулевых приватных страниц мало.");
         return sb.ToString();
     }
 
