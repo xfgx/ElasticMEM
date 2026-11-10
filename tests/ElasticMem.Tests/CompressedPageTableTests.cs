@@ -88,6 +88,31 @@ static class CompressedPageTableTests
         var zero = new byte[P]; var fb = new byte[P]; t3.OnFault(0, fb); // Zero -> Resident (нули)
         C(t3.Evict(0, zero) == 0 && t3.State(0) == CompressedPageTable.PageState.Zero, "all-zero page costs no storage");
 
+        // 8. Дедуп-режим: одинаковые страницы хранятся один раз → реальная экономия памяти своей кучи.
+        {
+            const int M = 64;
+            var same = new byte[P]; for (int k = 0; k < P; k++) same[k] = (byte)(k / 256); // сжимаемая, одинаковая
+            using var plain = new CompressedPageTable(codec, M, 64L << 20, dedup: false);
+            using var dedup = new CompressedPageTable(codec, M, 64L << 20, dedup: true);
+            foreach (var tbl in new[] { plain, dedup })
+                for (int p = 0; p < M; p++) { var b = new byte[P]; tbl.OnFault(p, b); same.CopyTo(b.AsSpan()); tbl.Touch(p); tbl.Evict(p, b); }
+            C(plain.Compressed == M && dedup.Compressed == M, "dedup+plain compressed all identical pages");
+            long plainLedger = plain.StoreStats().LedgerBytes, dedupLedger = dedup.StoreStats().LedgerBytes;
+            C(dedupLedger * 4 < plainLedger, $"dedup ledger {dedupLedger} far below per-page {plainLedger}");
+            var info = dedup.DedupInfo();
+            C(info is { UniquePages: 1, LiveKeys: M }, "dedup collapses identical pages to one unique");
+            bool okAll = true; for (int p = 0; p < M; p++) { var b = new byte[P]; dedup.OnFault(p, b); if (!b.AsSpan().SequenceEqual(same)) okAll = false; dedup.Touch(p); dedup.Evict(p, b); }
+            C(okAll, "dedup restores identical pages correctly");
+
+            using var dd = new CompressedPageTable(codec, 4, 8L << 20, dedup: true);
+            var pa = new byte[P]; for (int k = 0; k < P; k++) pa[k] = (byte)(k / 256);
+            var pb = new byte[P]; for (int k = 0; k < P; k++) pb[k] = (byte)(k / 256 + 1);
+            var a = new byte[P]; dd.OnFault(0, a); pa.CopyTo(a.AsSpan()); dd.Touch(0); dd.Evict(0, a);
+            var b2 = new byte[P]; dd.OnFault(1, b2); pb.CopyTo(b2.AsSpan()); dd.Touch(1); dd.Evict(1, b2);
+            var g0 = new byte[P]; dd.OnFault(0, g0); var g1 = new byte[P]; dd.OnFault(1, g1);
+            C(g0.AsSpan().SequenceEqual(pa) && g1.AsSpan().SequenceEqual(pb), "dedup keeps distinct pages distinct");
+        }
+
         Console.WriteLine($"COMPRESSED PAGETABLE {checks} checks; pure engine, NOT native VEH/VirtualProtect");
         return fails;
     }

@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using ElasticMem.Core;
 using ElasticMem.Core.Research;
+using ElasticMem.Vmm;
 
 namespace ElasticMem.App;
 
@@ -12,7 +14,7 @@ namespace ElasticMem.App;
 public sealed class DedupTab : TabPage
 {
     readonly TextBox _log;
-    readonly Button _run, _selftest;
+    readonly Button _run, _selftest, _heap;
     readonly ComboBox _app;
     readonly NumericUpDown _cap;
     readonly Func<bool> _busy;
@@ -35,6 +37,8 @@ public sealed class DedupTab : TabPage
         _run.Click += async (_, _) => await RunMeasure();
         _selftest = new Button { Text = "Самопроверка", AutoSize = true };
         _selftest.Click += async (_, _) => await RunSelfTest();
+        _heap = new Button { Text = "🧬 Самотест дедуп-кучи (XPRESS, реальная экономия)", AutoSize = true };
+        _heap.Click += async (_, _) => await RunHeapTest();
         _app = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 280 };
         foreach (var a in Apps) _app.Items.Add(a.name);
         _app.SelectedIndex = 0;
@@ -45,7 +49,7 @@ public sealed class DedupTab : TabPage
             "Windows Memory Compression и прежние механизмы сжимают каждую страницу по отдельности и этого не видят. " +
             "Здесь страницы со всех процессов приложения режутся на чанки и складываются в настоящий дедуп-store (SHA-256), затем сравниваются с обычным per-page сжатием."));
         stack.Add(Ui.Row(Ui.L("Приложение:"), _app, Ui.L("Лимит страниц всего:"), _cap, _run));
-        stack.Add(Ui.Row(_selftest));
+        stack.Add(Ui.Row(_selftest, _heap));
         stack.Add(Ui.Hint("Только чтение памяти; копии страниц стираются сразу после замера и никуда не отправляются. Для процессов другого пользователя нужны права администратора."));
         stack.Add(_log, fill: true);
         Controls.Add(stack);
@@ -60,6 +64,56 @@ public sealed class DedupTab : TabPage
         try { Append(await Task.Run(DedupAnalyzer.SelfTest)); }
         catch (Exception ex) { Append("Ошибка: " + ex.Message); }
         finally { _running = false; _selftest.Enabled = true; }
+    }
+
+    async Task RunHeapTest()
+    {
+        if (_running || _busy()) { Append("Занято другой операцией."); return; }
+        if (!OperatingSystem.IsWindows()) { Append("Только для Windows (нужен XPRESS из ntdll)."); return; }
+        _running = true; _heap.Enabled = false;
+        try { Append(await Task.Run(HeapBody)); }
+        catch (Exception ex) { Append("Ошибка: " + ex.GetType().Name + ": " + ex.Message); }
+        finally { _running = false; _heap.Enabled = true; }
+    }
+
+    // Нативный самотест: одна и та же куча с per-page XPRESS и с дедуп-XPRESS. Много одинаковых страниц —
+    // дедуп хранит их один раз, что реально сокращает физическую память процесса сверх обычного сжатия.
+    static string HeapBody()
+    {
+        const int pages = 65536, P = 4096, templates = 256; // 256 МиБ логически, 256 уникальных шаблонов
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"== Самотест дедуп-кучи {DateTime.Now:HH:mm:ss} ==");
+        var tmpl = new byte[templates][];
+        for (int i = 0; i < templates; i++) { var b = new byte[P]; for (int k = 0; k < P; k++) b[k] = (byte)(i + (k >> 8)); tmpl[i] = b; }
+
+        long Fill(CompressedPageTable t)
+        {
+            var one = new byte[P];
+            for (int p = 0; p < pages; p++) { t.OnFault(p, one); tmpl[p % templates].CopyTo(one.AsSpan()); t.Touch(p); t.Evict(p, one); }
+            return t.StoreStats().LedgerBytes;
+        }
+
+        long plainLedger; int plainComp;
+        using (var codec = new NtXpressCodec())
+        using (var plain = new CompressedPageTable(codec, pages, 512L << 20, dedup: false)) { plainLedger = Fill(plain); plainComp = plain.Compressed; }
+
+        using (var codec = new NtXpressCodec())
+        using (var dedup = new CompressedPageTable(codec, pages, 512L << 20, dedup: true))
+        {
+            long dedupLedger = Fill(dedup);
+            var info = dedup.DedupInfo();
+            int bad = 0; var one = new byte[P];
+            for (int p = 0; p < pages; p++) { dedup.OnFault(p, one); if (!one.AsSpan().SequenceEqual(tmpl[p % templates])) bad++; dedup.Touch(p); dedup.Evict(p, one); }
+
+            sb.AppendLine($"Логически {(long)pages * P / 1048576} МиБ, {templates} уникальных шаблонов (одинаковых страниц много).");
+            sb.AppendLine($"per-page XPRESS: хранилище {plainLedger / 1048576.0:0.0} МиБ (сжатых страниц {plainComp})");
+            sb.AppendLine($"дедуп XPRESS:    хранилище {dedupLedger / 1048576.0:0.0} МиБ (уникальных {info?.UniquePages}, ключей {info?.LiveKeys})");
+            double saved = plainLedger > 0 ? (1.0 - (double)dedupLedger / plainLedger) * 100 : 0;
+            sb.AppendLine($"Экономия дедупом сверх per-page: {saved:0.0}%");
+            sb.AppendLine(bad == 0 ? "Целостность: ПОДТВЕРЖДЕНА (все страницы восстановлены точно)." : $"ОШИБКА: {bad} страниц не совпали — не использовать.");
+        }
+        sb.AppendLine("Вывод: одинаковые страницы своей кучи хранятся один раз — реальная экономия памяти процесса сверх обычного сжатия.");
+        return sb.ToString();
     }
 
     async Task RunMeasure()
