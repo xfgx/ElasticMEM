@@ -180,6 +180,7 @@ public sealed class MainForm : Form
         var inner = new TabControl { Dock = DockStyle.Fill };
         inner.TabPages.Add(new CompressedHeapTab(MakeMono(), () => _agent.Running || _anCts != null || _benchBusy));
         inner.TabPages.Add(new DedupTab(MakeMono(), () => _agent.Running || _anCts != null || _benchBusy));
+        inner.TabPages.Add(new ProofTab(MakeMono(), () => _agent.Running || _anCts != null || _benchBusy));
         inner.TabPages.Add(BuildAnalyzeTab());
         inner.TabPages.Add(BuildBenchTab());
         tp.Controls.Add(inner);
