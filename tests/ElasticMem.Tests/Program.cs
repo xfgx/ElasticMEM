@@ -94,4 +94,21 @@ if (args.Contains("--access"))
     var r = ElasticMem.Core.Access.AccessBench.Run(log: Console.WriteLine, costs: k);
     Console.WriteLine(ElasticMem.Core.Access.AccessBench.Format(r, k));
 }
+int dedupIdx = Array.IndexOf(args, "--dedup-ceiling");
+if (dedupIdx >= 0)
+{
+    if (dedupIdx + 1 < args.Length && Directory.Exists(args[dedupIdx + 1]))
+    {
+        var pages = new List<byte[]>();
+        foreach (var f in Directory.EnumerateFiles(args[dedupIdx + 1], "*.bin", SearchOption.AllDirectories))
+        {
+            var bytes = File.ReadAllBytes(f);
+            for (int o = 0; o + ElasticMem.Core.Research.DedupAnalyzer.PageBytes <= bytes.Length; o += ElasticMem.Core.Research.DedupAnalyzer.PageBytes)
+                pages.Add(bytes.AsSpan(o, ElasticMem.Core.Research.DedupAnalyzer.PageBytes).ToArray());
+        }
+        Console.WriteLine($"DEDUP CEILING: {pages.Count} страниц из {args[dedupIdx + 1]}");
+        Console.WriteLine(ElasticMem.Core.Research.DedupAnalyzer.Format(ElasticMem.Core.Research.DedupAnalyzer.Measure(pages)));
+    }
+    else Console.WriteLine(ElasticMem.Core.Research.DedupAnalyzer.SelfTest());
+}
 return fails == 0 ? 0 : 1;
