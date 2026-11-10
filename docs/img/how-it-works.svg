@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="300" viewBox="0 0 1000 300" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="12" markerHeight="12" refX="8" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#64748b"/>
+    </marker>
+    <linearGradient id="g2" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#34d399"/>
+    </linearGradient>
+  </defs>
+  <rect width="1000" height="300" rx="14" fill="#f8fafc"/>
+  <text x="30" y="40" fill="#0f172a" font-size="22" font-weight="700">Как освобождается память</text>
+
+  <!-- 1 app -->
+  <rect x="30" y="80" width="200" height="150" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="130" y="108" text-anchor="middle" fill="#0f172a" font-size="16" font-weight="600">Приложение</text>
+  <g>
+    <rect x="52" y="124" width="156" height="18" rx="4" fill="#e2e8f0"/><rect x="52" y="124" width="150" height="18" rx="4" fill="#94a3b8"/>
+    <rect x="52" y="150" width="156" height="18" rx="4" fill="#e2e8f0"/><rect x="52" y="150" width="120" height="18" rx="4" fill="#94a3b8"/>
+    <rect x="52" y="176" width="156" height="18" rx="4" fill="#e2e8f0"/><rect x="52" y="176" width="140" height="18" rx="4" fill="#94a3b8"/>
+  </g>
+  <text x="130" y="218" text-anchor="middle" fill="#64748b" font-size="13">горячие + холодные страницы</text>
+
+  <!-- arrow -->
+  <line x1="236" y1="155" x2="320" y2="155" stroke="#64748b" stroke-width="2.5" marker-end="url(#arr)"/>
+  <text x="278" y="146" text-anchor="middle" fill="#0f172a" font-size="12">EmptyWorkingSet</text>
+
+  <!-- 2 windows MC -->
+  <rect x="330" y="80" width="220" height="150" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="440" y="108" text-anchor="middle" fill="#0f172a" font-size="16" font-weight="600">Windows Memory</text>
+  <text x="440" y="128" text-anchor="middle" fill="#0f172a" font-size="16" font-weight="600">Compression</text>
+  <g>
+    <rect x="352" y="146" width="80" height="60" rx="8" fill="url(#g2)" opacity="0.85"/>
+    <text x="392" y="182" text-anchor="middle" fill="#064e3b" font-size="13" font-weight="700">сжато</text>
+    <rect x="446" y="146" width="82" height="60" rx="8" fill="#e2e8f0"/>
+    <text x="487" y="178" text-anchor="middle" fill="#475569" font-size="12">список</text>
+    <text x="487" y="194" text-anchor="middle" fill="#475569" font-size="12">ожидания</text>
+  </g>
+
+  <!-- arrow -->
+  <line x1="556" y1="155" x2="640" y2="155" stroke="#64748b" stroke-width="2.5" marker-end="url(#arr)"/>
+
+  <!-- 3 free ram -->
+  <rect x="650" y="80" width="320" height="150" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="810" y="108" text-anchor="middle" fill="#0f172a" font-size="16" font-weight="600">Свободная ОЗУ</text>
+  <rect x="672" y="130" width="276" height="34" rx="6" fill="#e2e8f0"/>
+  <rect x="672" y="130" width="150" height="34" rx="6" fill="url(#g2)"/>
+  <text x="810" y="196" text-anchor="middle" fill="#15803d" font-size="14" font-weight="600">сразу доступна другим программам</text>
+  <text x="810" y="216" text-anchor="middle" fill="#64748b" font-size="12">при возврате Windows распакует страницы (soft fault)</text>
+
+  <text x="30" y="276" fill="#64748b" font-size="13">Приложение само ничего не сжимает и не перехватывает записи — оно лишь подсказывает Windows, какие страницы остыли.</text>
+</svg>
