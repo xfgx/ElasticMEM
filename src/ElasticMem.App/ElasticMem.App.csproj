@@ -16,7 +16,6 @@
     <Product>ElasticMem — эластичное сжатие памяти</Product>
     <SatelliteResourceLanguages>ru;en</SatelliteResourceLanguages>
   </PropertyGroup>
-  <ItemGroup><Compile Include="../ElasticMem.Vmm/NtXpressCodec.cs" Link="Vmm/NtXpressCodec.cs" /></ItemGroup>
   <ItemGroup><ProjectReference Include="../ElasticMem.Core/ElasticMem.Core.csproj" /></ItemGroup>
   <ItemGroup><AssemblyMetadata Include="CodeCommit" Value="$(SourceRevisionId)" /><AssemblyMetadata Include="SourceDirty" Value="$(SourceDirty)" /><AssemblyMetadata Include="BuildLayout" Value="single-file=$(PublishSingleFile);self-contained=$(SelfContained);rid=$(RuntimeIdentifier)" /></ItemGroup>
 </Project>
