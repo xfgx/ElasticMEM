@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="220" viewBox="0 0 1000 220" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#155e63"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#34d399"/>
+    </linearGradient>
+  </defs>
+  <rect width="1000" height="220" rx="18" fill="url(#bg)"/>
+  <!-- memory cells motif -->
+  <g opacity="0.9">
+    <rect x="60" y="150" width="120" height="26" rx="5" fill="#1e293b"/>
+    <rect x="60" y="150" width="120" height="26" rx="5" fill="url(#bar)" opacity="0.25"/>
+    <rect x="60" y="150" width="42" height="26" rx="5" fill="url(#bar)"/>
+    <rect x="196" y="150" width="120" height="26" rx="5" fill="#1e293b"/>
+    <rect x="196" y="150" width="34" height="26" rx="5" fill="url(#bar)"/>
+    <rect x="332" y="150" width="120" height="26" rx="5" fill="#1e293b"/>
+    <rect x="332" y="150" width="70" height="26" rx="5" fill="url(#bar)"/>
+  </g>
+  <text x="60" y="92" fill="#ffffff" font-size="58" font-weight="700" letter-spacing="-1">ElasticMem</text>
+  <text x="62" y="128" fill="#9fe8d8" font-size="23" font-weight="500">Эластичное сжатие памяти для Windows</text>
+  <g transform="translate(720,44)">
+    <rect x="0" y="0" width="220" height="132" rx="12" fill="#0b1220" opacity="0.55"/>
+    <text x="20" y="40" fill="#e2e8f0" font-size="18" font-weight="600">Одна кнопка</text>
+    <text x="20" y="70" fill="#94a3b8" font-size="15">освободить ОЗУ</text>
+    <text x="20" y="104" fill="#34d399" font-size="15">без драйвера · без Hyper-V</text>
+    <text x="20" y="124" fill="#34d399" font-size="15">без админа для своих программ</text>
+  </g>
+</svg>

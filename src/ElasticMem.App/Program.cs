@@ -1,4 +1,3 @@
-using ElasticMem.App.Research;
 namespace ElasticMem.App;
 
 internal static class Program
@@ -6,12 +5,11 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
-        void Crash(Exception ex){try{var folder=Path.Combine(ResearchJobs.Root,"diagnostics");Directory.CreateDirectory(folder);File.AppendAllText(Path.Combine(folder,"crash.log"),DateTime.UtcNow.ToString("O")+"\n"+ex+"\n");}catch{}}
+        void Crash(Exception ex){try{var folder=Path.Combine(AppSettings.Dir,"diagnostics");Directory.CreateDirectory(folder);File.AppendAllText(Path.Combine(folder,"crash.log"),DateTime.UtcNow.ToString("O")+"\n"+ex+"\n");}catch{}}
         AppDomain.CurrentDomain.UnhandledException += (_, e) => { if(e.ExceptionObject is Exception ex)Crash(ex); };
-        Application.ThreadException += (_, e) => { Crash(e.Exception); MessageBox.Show("Ошибка записана в локальный crash.log. Экспортируйте логи из лаборатории.","ElasticMem"); };
+        Application.ThreadException += (_, e) => { Crash(e.Exception); MessageBox.Show("Ошибка записана в локальный crash.log.","ElasticMem"); };
         TaskScheduler.UnobservedTaskException += (_,e) => { Crash(e.Exception); e.SetObserved(); };
         if (Updater.TryWriteVersion(args)) return;
-        if (ResearchCli.TryRun(args)) return;
         ApplicationConfiguration.Initialize();
         if (Updater.TryApply(args)) return;
         if (Cli.TryRun(args)) return;
@@ -20,8 +18,6 @@ internal static class Program
         {
             switch (args[i].ToLowerInvariant())
             {
-                case "--backend-agent": opts.BackendPanel=true;opts.Tray=true;break;
-                case "--backend-ui": opts.BackendPanel=true;break;
                 case "--agent": opts.StartAgent = true; break;
                 case "--all": opts.All = true; break;
                 case "--process": if (i + 1 < args.Length) { opts.Process = args[++i]; opts.All = false; } break;
@@ -30,15 +26,13 @@ internal static class Program
                 case "--updated": opts.UpdatedFrom = i + 1 < args.Length ? args[++i] : "?"; break;
             }
         }
-        if(opts.BackendPanel)opts.StartAgent=false; // Backend mode must not start the legacy host trim agent.
-        using var singleton=args.Contains("--backend-agent")?new System.Threading.Mutex(false,"Local\\ElasticMem.BackendAgent."+System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value):null;
-        bool held=false;try{if(singleton!=null){held=singleton.WaitOne(0);if(!held)return;}Application.Run(new MainForm(opts));}finally{if(held)singleton!.ReleaseMutex();}
+        Application.Run(new MainForm(opts));
     }
 }
 
 public sealed class StartupOptions
 {
-    public bool StartAgent, Tray, All = true, BackendPanel;
+    public bool StartAgent, Tray, All = true;
     public string Process = "";
     public string? UpdatedFrom;
     public string[] RawArgs = Array.Empty<string>();
