@@ -16,12 +16,7 @@
     <Product>ElasticMem — эластичное сжатие памяти</Product>
     <SatelliteResourceLanguages>ru;en</SatelliteResourceLanguages>
   </PropertyGroup>
-  <ItemGroup><Compile Include="../ElasticMem.Vmm/*.cs" Link="Vmm/%(Filename)%(Extension)" /><Compile Include="../../driver/client/KernelPageStore.cs" Link="Driver/KernelPageStore.cs" /><Compile Include="../../driver/client/PagerSmoke.cs" Link="Driver/PagerSmoke.cs" /><Compile Include="../../driver/client/KernelSmoke.cs" Link="Driver/KernelSmoke.cs" /></ItemGroup>
-  <ItemGroup><EmbeddedResource Include="../../backend/VMM-031.md" LogicalName="ElasticMem.Backend.VmmInstructions" /><EmbeddedResource Include="../../backend/AUTO-VM-029.md" LogicalName="ElasticMem.Backend.AutoVmInstructions" /><EmbeddedResource Include="../../backend/SYS-TYPES-030.md" LogicalName="ElasticMem.Backend.SysTypesInstructions" /><EmbeddedResource Include="../../backend/SYS-028.md" LogicalName="ElasticMem.Backend.SysInstructions" /><EmbeddedResource Include="../../backend/windows/CreateVm.ps1" LogicalName="ElasticMem.Backend.CreateVm" /><EmbeddedResource Include="../../backend/windows/Worker.ps1" LogicalName="ElasticMem.Backend.Worker" /><EmbeddedResource Include="../../backend/УСТАНОВКА-WINDOWS.md" LogicalName="ElasticMem.Backend.Instructions" /></ItemGroup>
-  <ItemGroup><EmbeddedResource Include="../../windows-check/ПОЛНАЯ-ИНСТРУКЦИЯ.md" LogicalName="ElasticMem.FullInstructions" /></ItemGroup>
+  <ItemGroup><Compile Include="../ElasticMem.Vmm/NtXpressCodec.cs" Link="Vmm/NtXpressCodec.cs" /></ItemGroup>
   <ItemGroup><ProjectReference Include="../ElasticMem.Core/ElasticMem.Core.csproj" /></ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="Vortice.Direct3D12" Version="3.8.3" />
-  </ItemGroup>
   <ItemGroup><AssemblyMetadata Include="CodeCommit" Value="$(SourceRevisionId)" /><AssemblyMetadata Include="SourceDirty" Value="$(SourceDirty)" /><AssemblyMetadata Include="BuildLayout" Value="single-file=$(PublishSingleFile);self-contained=$(SelfContained);rid=$(RuntimeIdentifier)" /></ItemGroup>
 </Project>
