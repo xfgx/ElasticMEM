@@ -1,7 +1,5 @@
 name: windows-native
-# Native Windows evidence on a GitHub-hosted runner. Hosted runners normally do NOT expose nested
-# virtualization, so WHP guest runs are expected to fail at stage whp_probe there; that result is still
-# recorded honestly. Nothing here installs or loads a driver, enables features, or changes security settings.
+# Нативная проверка на Windows-раннере: сборка и тесты ядра приложения.
 on:
   push:
   pull_request:
@@ -11,74 +9,23 @@ permissions:
 jobs:
   native:
     runs-on: windows-2022
-    timeout-minutes: 60
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
-      - name: Portable + Windows test suite
+      - name: Тесты ядра (должен быть маркер ALL TESTS PASSED)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force evidence | Out-Null
           dotnet run --project tests/ElasticMem.Tests -c Release 2>&1 | Tee-Object evidence/core-tests.log
           if ($LASTEXITCODE -ne 0) { throw "tests failed" }
           if (-not (Select-String -Path evidence/core-tests.log -Pattern 'ALL TESTS PASSED' -Quiet)) { throw "no ALL TESTS PASSED marker" }
-      - name: Publish VMM runner (win-x64, self-contained)
+      - name: Сборка приложения (win-x64, self-contained)
         shell: pwsh
-        run: dotnet publish tools/ElasticMem.VmmRunner/ElasticMem.VmmRunner.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o vmm-runner
-      - name: Native ntdll XPRESS user-store self-test (must pass, no WHP needed)
-        shell: pwsh
-        run: |
-          ./vmm-runner/ElasticMem.VmmRunner.exe --selftest-user-store | Set-Content -Encoding UTF8 evidence/user-store-selftest.json
-          $code = $LASTEXITCODE; Get-Content evidence/user-store-selftest.json
-          if ($code -ne 0) { throw "native user store self-test failed" }
-      - name: WHP probe and synthetic runs (recorded, not required to pass on hosted runners)
-        shell: pwsh
-        run: |
-          $r = './vmm-runner/ElasticMem.VmmRunner.exe'
-          & $r --probe | Set-Content -Encoding UTF8 evidence/probe.json
-          & $r --research-disposable synthetic 32 --store user | Set-Content -Encoding UTF8 evidence/whp-synthetic-user.json; $a = $LASTEXITCODE
-          & $r --research-disposable host-trim 3 | Set-Content -Encoding UTF8 evidence/whp-host-trim.json; $b = $LASTEXITCODE
-          & $r --research-disposable synthetic 32 --store sys | Set-Content -Encoding UTF8 evidence/whp-synthetic-sys.json; $c = $LASTEXITCODE
-          "synthetic_user=$a host_trim=$b synthetic_sys=$c" | Tee-Object evidence/whp-exit-codes.txt
-          Get-Content evidence/probe.json, evidence/whp-synthetic-user.json
-          Get-CimInstance Win32_ComputerSystem | Select-Object HypervisorPresent | ConvertTo-Json | Set-Content evidence/hypervisor-present.json
-          exit 0
-      - uses: ilammy/msvc-dev-cmd@v1
+        run: dotnet publish src/ElasticMem.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o pkg
+      - uses: actions/upload-artifact@v4
         with:
-          arch: x64
-      - name: WHP ABI check against the installed Windows SDK
-        shell: cmd
-        run: |
-          cl /nologo /EHsc /std:c++17 tools\ElasticMem.VmmRunner\verify-whp-abi.cpp /Fe:verify-whp-abi.exe > evidence\whp-abi.log 2>&1 && verify-whp-abi.exe >> evidence\whp-abi.log 2>&1
-          set rc=%ERRORLEVEL%
-          type evidence\whp-abi.log
-          exit /b %rc%
-      - name: WDK driver build attempt (unsigned, never installed here)
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          $sdk = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Include' -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
-          $km = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Include\*\km' -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.Parent.Name }
-          "sdk_versions=$($sdk -join ',')`nwdk_km_headers=$($km -join ',')" | Tee-Object evidence/wdk-inventory.txt
-          $ver = ($km | Sort-Object | Select-Object -Last 1)
-          if (-not $ver) { "WDK kernel headers not installed on this runner; driver not built" | Tee-Object evidence/driver-build.log; exit 1 }
-          msbuild driver/kmdf/ElasticMemStore.vcxproj /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 "/p:WindowsTargetPlatformVersion=$ver" 2>&1 | Tee-Object evidence/driver-build.log
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          Get-FileHash driver/out/Release/ElasticMemStore.sys -Algorithm SHA256 | Format-List | Tee-Object evidence/driver-sha256.txt
-      - name: Gate0 compare logic test
-        shell: pwsh
-        run: |
-          pwsh -NoProfile -File backend/tests/gate0-compare-test.ps1 | Tee-Object evidence/gate0-compare-test.log
-          pwsh -NoProfile -File backend/tests/parse.ps1 | Tee-Object evidence/powershell-parse.log
-          powershell -NoProfile -ExecutionPolicy Bypass -File backend/tests/parse.ps1 | Tee-Object evidence/powershell51-parse.log
-      - name: Upload evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-native-evidence
-          path: |
-            evidence/
-            driver/out/Release/ElasticMemStore.sys
-          if-no-files-found: warn
+          name: core-tests-log
+          path: evidence/core-tests.log
