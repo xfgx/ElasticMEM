@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="200" viewBox="0 0 1000 200" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1e1b4b"/><stop offset="1" stop-color="#0f766e"/>
+    </linearGradient>
+  </defs>
+  <rect width="1000" height="200" rx="18" fill="url(#bg)"/>
+  <text x="56" y="86" fill="#ffffff" font-size="50" font-weight="700" letter-spacing="-1">ElasticMem · research</text>
+  <text x="58" y="122" fill="#a5b4fc" font-size="21">Эксперименты по сжатию памяти — честный статус, без «готово»</text>
+  <text x="58" y="156" fill="#5eead4" font-size="15">ceiling-first · нативные замеры отдельно · ничего не выдаём за экономию RAM без доказательства</text>
+</svg>

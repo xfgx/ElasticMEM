@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="420" viewBox="0 0 1000 420" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="a" markerWidth="12" markerHeight="12" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#64748b"/></marker>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#2dd4bf"/></linearGradient>
+  </defs>
+  <rect width="1000" height="420" rx="14" fill="#f8fafc"/>
+  <text x="30" y="40" fill="#0f172a" font-size="22" font-weight="700">Идея: content-addressed cold tier — сначала дедуп, потом сжатие</text>
+
+  <!-- processes -->
+  <text x="40" y="78" fill="#0f172a" font-size="14" font-weight="600">Процессы (renderer'ы браузера, Electron-приложения)</text>
+  <g>
+    <!-- proc A -->
+    <rect x="40" y="92" width="150" height="104" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="115" y="112" text-anchor="middle" fill="#334155" font-size="12">процесс A</text>
+    <rect x="56" y="122" width="54" height="22" rx="4" fill="#93c5fd"/><rect x="118" y="122" width="54" height="22" rx="4" fill="#fca5a5"/>
+    <rect x="56" y="150" width="54" height="22" rx="4" fill="#86efac"/><rect x="118" y="150" width="54" height="22" rx="4" fill="#93c5fd"/>
+    <!-- proc B -->
+    <rect x="40" y="210" width="150" height="104" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="115" y="230" text-anchor="middle" fill="#334155" font-size="12">процесс B</text>
+    <rect x="56" y="240" width="54" height="22" rx="4" fill="#93c5fd"/><rect x="118" y="240" width="54" height="22" rx="4" fill="#fca5a5"/>
+    <rect x="56" y="268" width="54" height="22" rx="4" fill="#fcd34d"/><rect x="118" y="268" width="54" height="22" rx="4" fill="#86efac"/>
+  </g>
+  <text x="40" y="344" fill="#64748b" font-size="12">одинаковые цвета = одинаковый контент (дубликаты между процессами)</text>
+
+  <line x1="196" y1="203" x2="270" y2="203" stroke="#64748b" stroke-width="2.5" marker-end="url(#a)"/>
+  <text x="233" y="194" text-anchor="middle" fill="#0f172a" font-size="12">чанки</text>
+
+  <!-- content-addressed store -->
+  <rect x="280" y="110" width="340" height="190" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="450" y="134" text-anchor="middle" fill="#0f172a" font-size="15" font-weight="600">Контент-адресуемое хранилище</text>
+  <text x="450" y="154" text-anchor="middle" fill="#64748b" font-size="12">уникальный чанк хранится один раз (сжатым) + refcount</text>
+  <g>
+    <rect x="300" y="168" width="70" height="30" rx="5" fill="#93c5fd"/><text x="335" y="188" text-anchor="middle" font-size="11" fill="#0b2545">×3</text>
+    <rect x="384" y="168" width="70" height="30" rx="5" fill="#fca5a5"/><text x="419" y="188" text-anchor="middle" font-size="11" fill="#5b1a1a">×2</text>
+    <rect x="468" y="168" width="70" height="30" rx="5" fill="#86efac"/><text x="503" y="188" text-anchor="middle" font-size="11" fill="#14532d">×2</text>
+    <rect x="552" y="168" width="50" height="30" rx="5" fill="#fcd34d"/><text x="577" y="188" text-anchor="middle" font-size="11" fill="#5b4708">×1</text>
+  </g>
+  <text x="300" y="232" fill="#334155" font-size="12">дедуп убирает то, что per-page сжатие не видит:</text>
+  <text x="300" y="252" fill="#334155" font-size="12">избыточность МЕЖДУ страницами и процессами.</text>
+  <text x="300" y="282" fill="#0f766e" font-size="12">Windows этого не делает → выигрыш нельзя «съесть» host-trim'ом.</text>
+
+  <line x1="626" y1="203" x2="700" y2="203" stroke="#64748b" stroke-width="2.5" marker-end="url(#a)"/>
+
+  <!-- comparison -->
+  <text x="720" y="134" fill="#0f172a" font-size="14" font-weight="600">Объём холодного tier</text>
+  <text x="720" y="172" fill="#64748b" font-size="12">per-page сжатие (Windows)</text>
+  <rect x="720" y="178" width="250" height="26" rx="5" fill="#e2e8f0"/><rect x="720" y="178" width="250" height="26" rx="5" fill="#94a3b8"/>
+  <text x="720" y="232" fill="#64748b" font-size="12">дедуп → сжатие (идея)</text>
+  <rect x="720" y="238" width="250" height="26" rx="5" fill="#e2e8f0"/><rect x="720" y="238" width="150" height="26" rx="5" fill="url(#g)"/>
+  <text x="720" y="292" fill="#15803d" font-size="13" font-weight="600">меньше при высокой кросс-процессной</text>
+  <text x="720" y="310" fill="#15803d" font-size="13" font-weight="600">избыточности</text>
+
+  <text x="30" y="392" fill="#64748b" font-size="12">Проверяется ceiling-first в user mode (чтение копий страниц) — без драйвера. План: docs/dedup-cold-tier.md.</text>
+</svg>
