@@ -68,6 +68,7 @@ fails += PageStoreSampleTests.Run();
 fails += BackendTests.Run() + VmBackendTests.Run() + VmCreationTests.Run();
 fails += VmProviderTests.Run() + UserStoreTests.Run() + RamSaverPolicyTests.Run() + RealtimeHotSetTests.Run() + CompressedPageTableTests.Run() + CodecBakeoffTests.Run();
 fails += DedupStoreTests.Run();
+fails += CompressionProofTests.Run();
 try { Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(ElasticMem.Core.Research.ResearchSelfTest.Run())); } catch (Exception ex) { Check(false, "research selftest: " + ex); }
 Console.WriteLine(fails == 0 ? "ALL TESTS PASSED" : $"{fails} FAILURES");
 

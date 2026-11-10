@@ -8,11 +8,36 @@ public sealed record CodecInput(int Pid,long StartTicks,ulong[] Addresses,byte[]
 public interface IPageCodec:IDisposable { string Name{get;} byte[] Encode(byte[] src); byte[] Decode(byte[] src,int length); }
 public sealed class PortablePageCodec:IPageCodec
 {
-    readonly string _kind; readonly Compressor? _c;readonly Decompressor? _d;
+    readonly string _kind; readonly Compressor? _c;readonly Decompressor? _d; readonly System.IO.Compression.CompressionLevel _deflateLevel;
     public string Name{get;}
-    public PortablePageCodec(string kind,byte[]? dictionary=null){_kind=kind;Name=kind+(dictionary!=null?"-dictionary":"");if(kind=="zstd1"){_c=new(1);_d=new();if(dictionary!=null){_c.LoadDictionary(dictionary);_d.LoadDictionary(dictionary);}}else if(kind!="lz4")throw new ArgumentException("codec");}
-    public byte[] Encode(byte[] b){if(_c!=null)return _c.Wrap(b).ToArray();var d=new byte[LZ4Codec.MaximumOutputSize(b.Length)];int n=LZ4Codec.Encode(b,0,b.Length,d,0,d.Length);if(n<=0)throw new InvalidDataException("LZ4 encode");return d[..n];}
-    public byte[] Decode(byte[] b,int length){if(_d!=null){var d=_d.Unwrap(b,length).ToArray();if(d.Length!=length)throw new InvalidDataException("zstd length");return d;}var x=new byte[length];if(LZ4Codec.Decode(b,0,b.Length,x,0,length)!=length)throw new InvalidDataException("LZ4 length");return x;}
+    // kind: lz4 | zstd1 | deflate (Optimal) | deflate-fast (Fastest) | deflate-max (SmallestSize)
+    public PortablePageCodec(string kind,byte[]? dictionary=null)
+    {
+        _kind=kind;Name=kind+(dictionary!=null?"-dictionary":"");
+        if(kind=="zstd1"){_c=new(1);_d=new();if(dictionary!=null){_c.LoadDictionary(dictionary);_d.LoadDictionary(dictionary);}}
+        else if(kind=="deflate")_deflateLevel=System.IO.Compression.CompressionLevel.Optimal;
+        else if(kind=="deflate-fast")_deflateLevel=System.IO.Compression.CompressionLevel.Fastest;
+        else if(kind=="deflate-max")_deflateLevel=System.IO.Compression.CompressionLevel.SmallestSize;
+        else if(kind!="lz4")throw new ArgumentException("codec");
+    }
+    bool IsDeflate=>_kind.StartsWith("deflate",StringComparison.Ordinal);
+    public byte[] Encode(byte[] b)
+    {
+        if(_c!=null)return _c.Wrap(b).ToArray();
+        if(IsDeflate){using var ms=new MemoryStream(b.Length);using(var ds=new System.IO.Compression.DeflateStream(ms,_deflateLevel,true))ds.Write(b,0,b.Length);return ms.ToArray();}
+        var d=new byte[LZ4Codec.MaximumOutputSize(b.Length)];int n=LZ4Codec.Encode(b,0,b.Length,d,0,d.Length);if(n<=0)throw new InvalidDataException("LZ4 encode");return d[..n];
+    }
+    public byte[] Decode(byte[] b,int length)
+    {
+        if(_d!=null){var d=_d.Unwrap(b,length).ToArray();if(d.Length!=length)throw new InvalidDataException("zstd length");return d;}
+        if(IsDeflate)
+        {
+            var x=new byte[length];using var ms=new MemoryStream(b,false);using var ds=new System.IO.Compression.DeflateStream(ms,System.IO.Compression.CompressionMode.Decompress);
+            int read=0;while(read<length){int n=ds.Read(x,read,length-read);if(n==0)break;read+=n;}
+            if(read!=length||ds.ReadByte()!=-1)throw new InvalidDataException("deflate length");return x;
+        }
+        var y=new byte[length];if(LZ4Codec.Decode(b,0,b.Length,y,0,length)!=length)throw new InvalidDataException("LZ4 length");return y;
+    }
     public void Dispose(){_c?.Dispose();_d?.Dispose();}
 }
 public sealed class WindowsXpressCodec:IPageCodec

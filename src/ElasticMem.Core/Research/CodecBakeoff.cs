@@ -77,6 +77,9 @@ public static class CodecBakeoff
             }
             using (var c = new PortablePageCodec("lz4")) rows.Add(Measure("lz4 4K", c, 1, "самый быстрый"));
             using (var c = new PortablePageCodec("zstd1")) rows.Add(Measure("zstd-1 4K", c, 1, "без словаря"));
+            using (var c = new PortablePageCodec("deflate-fast")) rows.Add(Measure("deflate-fast 4K", c, 1, "Deflate Fastest, по странице"));
+            using (var c = new PortablePageCodec("deflate")) rows.Add(Measure("deflate 4K", c, 1, "Deflate Optimal, по странице"));
+            using (var c = new PortablePageCodec("deflate-max")) rows.Add(Measure("deflate-max 4K", c, 1, "Deflate SmallestSize, по странице"));
             byte[]? dict = null; string? dictErr = null;
             try { dict = DictBuilder.TrainFromBuffer(train, 65536); } catch (Exception ex) { dictErr = ex.GetType().Name; }
             if (dict != null) using (var c = new PortablePageCodec("zstd1", dict)) rows.Add(Measure("zstd-1 4K + словарь", c, 1, "словарь из страниц этого же приложения — у Windows такого нет"));
