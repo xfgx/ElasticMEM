@@ -1,0 +1,15 @@
+msedge processes=40 private_mib=1070
+PAGESTAT_RUN sources_pids=40 names=["msedge"] dump=false raw=false synthetic=None private_only=false snapshots=2 interval_ms=30000 max_mib=4096 cas_codec=xpress
+pid 10516: The parameter is incorrect. (os error 87)
+pid 11508: The parameter is incorrect. (os error 87)
+pid 11864: The parameter is incorrect. (os error 87)
+pid 12272: The parameter is incorrect. (os error 87)
+PAGESTAT snap=1 sources=36 pages=569331 resident_mib=2223.9 zero_pct=1.7 dup_pct=61.5 dup_cross_pct=60.7 lz4_mib=1193.0 lz4_ratio=0.536 xpress_mib=1116.9 xpress_ratio=0.502 cas_mib=327.6 cas_ratio=0.147 cas_payload_mib=286.4 cas_meta_mib=28.2 cas_segments_mib=299.3 cas_dedup=350176 cas_delta=12003 cas_full=195995 cas_incompressible=1379 cas_errors=0 cas_lossless=PASS
+GATE0 snap=1 best_plain=xpress best_plain_mib=1116.9 cas_mib=327.6 cas_gain_vs_best_plain_pct=70.7 cas_payload_gain_vs_best_plain_pct=74.4
+pid 10516: The parameter is incorrect. (os error 87)
+pid 11508: The parameter is incorrect. (os error 87)
+pid 11864: The parameter is incorrect. (os error 87)
+pid 12272: The parameter is incorrect. (os error 87)
+PAGESTAT snap=2 sources=36 pages=503208 resident_mib=1965.7 zero_pct=1.2 dup_pct=63.7 dup_cross_pct=63.1 lz4_mib=1118.4 lz4_ratio=0.569 xpress_mib=1049.5 xpress_ratio=0.534 cas_mib=297.4 cas_ratio=0.151 cas_payload_mib=257.5 cas_meta_mib=28.2 cas_segments_mib=269.1 cas_dedup=320404 cas_delta=8657 cas_full=166777 cas_incompressible=1319 cas_errors=0 cas_lossless=PASS
+GATE0 snap=2 best_plain=xpress best_plain_mib=1049.5 cas_mib=297.4 cas_gain_vs_best_plain_pct=71.7 cas_payload_gain_vs_best_plain_pct=75.5
+TEMPORAL snap=2 matched_pages=497556 unchanged_pct=93.1 changed_pages=34398 changed_plain_lz4_mib=44.83 changed_xor_prev_lz4_mib=16.53 xor_gain_pct=63.1

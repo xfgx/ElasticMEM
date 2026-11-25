@@ -1,0 +1,5 @@
+PAGESTAT_RUN sources_pids=68 names=["svchost"] dump=false raw=false synthetic=None private_only=false snapshots=1 interval_ms=30000 max_mib=1024 cas_codec=xpress
+pid 4372: Access is denied. (os error 5)
+pid 6676: Access is denied. (os error 5)
+PAGESTAT snap=1 sources=66 pages=197098 resident_mib=769.9 zero_pct=1.2 dup_pct=67.0 dup_cross_pct=66.9 lz4_mib=415.4 lz4_ratio=0.540 xpress_mib=389.7 xpress_ratio=0.506 cas_mib=97.6 cas_ratio=0.127 cas_payload_mib=84.5 cas_meta_mib=7.9 cas_segments_mib=89.8 cas_dedup=132154 cas_delta=4116 cas_full=58331 cas_incompressible=90 cas_errors=0 cas_lossless=PASS
+GATE0 snap=1 best_plain=xpress best_plain_mib=389.7 cas_mib=97.6 cas_gain_vs_best_plain_pct=74.9 cas_payload_gain_vs_best_plain_pct=78.3

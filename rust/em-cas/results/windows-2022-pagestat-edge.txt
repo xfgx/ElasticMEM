@@ -1,0 +1,7 @@
+msedge processes=36 private_mib=1029
+PAGESTAT_RUN sources_pids=36 names=["msedge"] dump=false raw=false synthetic=None private_only=false snapshots=2 interval_ms=30000 max_mib=4096 cas_codec=xpress
+PAGESTAT snap=1 sources=36 pages=530738 resident_mib=2073.2 zero_pct=1.6 dup_pct=60.6 dup_cross_pct=59.9 lz4_mib=1103.4 lz4_ratio=0.532 xpress_mib=1033.7 xpress_ratio=0.499 cas_mib=311.1 cas_ratio=0.150 cas_payload_mib=270.7 cas_meta_mib=28.2 cas_segments_mib=282.9 cas_dedup=321698 cas_delta=11523 cas_full=187693 cas_incompressible=1240 cas_errors=0 cas_lossless=PASS
+GATE0 snap=1 best_plain=xpress best_plain_mib=1033.7 cas_mib=311.1 cas_gain_vs_best_plain_pct=69.9 cas_payload_gain_vs_best_plain_pct=73.8
+PAGESTAT snap=2 sources=36 pages=501270 resident_mib=1958.1 zero_pct=1.3 dup_pct=60.4 dup_cross_pct=59.7 lz4_mib=1064.6 lz4_ratio=0.544 xpress_mib=998.3 xpress_ratio=0.510 cas_mib=303.3 cas_ratio=0.155 cas_payload_mib=263.1 cas_meta_mib=28.2 cas_segments_mib=275.1 cas_dedup=302953 cas_delta=10370 cas_full=180137 cas_incompressible=1237 cas_errors=0 cas_lossless=PASS
+GATE0 snap=2 best_plain=xpress best_plain_mib=998.3 cas_mib=303.3 cas_gain_vs_best_plain_pct=69.6 cas_payload_gain_vs_best_plain_pct=73.6
+TEMPORAL snap=2 matched_pages=498283 unchanged_pct=93.4 changed_pages=33126 changed_plain_lz4_mib=42.64 changed_xor_prev_lz4_mib=14.92 xor_gain_pct=65.0

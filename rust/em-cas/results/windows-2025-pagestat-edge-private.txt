@@ -1,0 +1,3 @@
+PAGESTAT_RUN sources_pids=41 names=["msedge"] dump=false raw=false synthetic=None private_only=true snapshots=1 interval_ms=30000 max_mib=4096 cas_codec=xpress
+PAGESTAT snap=1 sources=41 pages=123235 resident_mib=481.4 zero_pct=2.7 dup_pct=4.1 dup_cross_pct=2.2 lz4_mib=158.4 lz4_ratio=0.329 xpress_mib=144.1 xpress_ratio=0.299 cas_mib=158.9 cas_ratio=0.330 cas_payload_mib=136.0 cas_meta_mib=15.8 cas_segments_mib=143.2 cas_dedup=5033 cas_delta=3777 cas_full=110766 cas_incompressible=380 cas_errors=0 cas_lossless=PASS
+GATE0 snap=1 best_plain=xpress best_plain_mib=144.1 cas_mib=158.9 cas_gain_vs_best_plain_pct=-10.3 cas_payload_gain_vs_best_plain_pct=5.6

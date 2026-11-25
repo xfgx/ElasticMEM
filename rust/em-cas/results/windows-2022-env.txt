@@ -1,0 +1,7 @@
+
+Caption                : Microsoft Windows Server 2022 Datacenter
+Version                : 10.0.20348
+TotalVisibleMemorySize : 16771836
+
+
+nproc=4
