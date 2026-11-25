@@ -16,6 +16,7 @@ param(
   [switch]$Ghost,
   [int]$RdpPort = 13389,
   [string]$Cpu = 'host',
+  [ValidateSet('on', 'off')][string]$Irqchip = 'on',
   [switch]$Headless,
   [switch]$ResetOverlay
 )
@@ -45,7 +46,7 @@ $proxyInQemu = Join-Path (Split-Path $Qemu) 'WinHvPlatform.dll'
 if ($Mode -eq 'pager') { Copy-Item $Proxy $proxyInQemu -Force } elseif (Test-Path $proxyInQemu) { Remove-Item $proxyInQemu -Force }
 
 $fwd = "user,id=n0,hostfwd=tcp:127.0.0.1:" + $RdpPort + "-:3389"
-$qa = @('-name', 'ElasticMem-guest', '-accel', 'whpx', '-cpu', $Cpu, '-smp', "$Cpus", '-m', "$MemoryMiB",
+$qa = @('-name', 'ElasticMem-guest', '-accel', "whpx,kernel-irqchip=$Irqchip", '-cpu', $Cpu, '-smp', "$Cpus", '-m', "$MemoryMiB",
   '-rtc', 'base=localtime', '-usb', '-device', 'usb-tablet',
   '-drive', "file=$overlay,if=none,id=d0,cache=writeback", '-device', 'ahci,id=ahci', '-device', 'ide-hd,drive=d0,bus=ahci.0',
   '-netdev', $fwd, '-device', 'e1000e,netdev=n0')
@@ -80,7 +81,7 @@ $p.Id | Set-Content (Join-Path $Work 'qemu.pid')
 Start-Sleep -Seconds 5
 if ($p.HasExited) {
   Get-Content (Join-Path $Work 'qemu-err.txt') | Out-Host
-  throw "QEMU завершился сразу (код $($p.ExitCode)). Частые причины: не включён компонент «Платформа низкоуровневой оболочки Windows» (HypervisorPlatform); попробуйте -Cpu max; для ВМ поколения 1 — -Firmware bios. Если падает только в режиме pager — пришлите em-pager.log и qemu-err.txt."
+  throw "QEMU завершился сразу (код $($p.ExitCode)). Частые причины: не включён компонент «Платформа низкоуровневой оболочки Windows» (HypervisorPlatform); попробуйте -Cpu max; при «Failed to enable nested virtualization» — -Irqchip off; для ВМ поколения 1 — -Firmware bios. Если падает только в режиме pager — пришлите em-pager.log и qemu-err.txt."
 }
 Write-Host "QEMU запущен (PID $($p.Id)), режим $Mode. RDP гостя: 127.0.0.1:$RdpPort"
 Write-Host "Первая загрузка на новом «железе» может идти дольше обычного. Окно приложения: Open-App.ps1"

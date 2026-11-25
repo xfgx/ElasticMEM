@@ -31,7 +31,8 @@ qemu/SOURCE.txt). Пейджер подключается через прокс�
    Отчёты сохраняются на рабочий стол. Пришлите их.
 
 Параметры Start-Guest.ps1: -MemoryMiB 4096 -Cpus 2 -Mode plain|pager -Codec xpress|lz4 -Cluster 16 -IdleMs 2000 -Ghost
--Firmware uefi|bios -Cpu host|max -Headless.
+-Firmware uefi|bios -Cpu host|max -Irqchip on|off -Headless. Если QEMU пишет «Failed to enable nested virtualization»,
+запустите с -Irqchip off (APIC в QEMU вместо гипервизора — медленнее, но работает).
 
 ## Как устроен пейджер (дорожка 2)
 
