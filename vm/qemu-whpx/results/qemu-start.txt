@@ -1,0 +1,4 @@
+tcg_alive_after_10s=True
+D:\a\ElasticMEM\ElasticMEM\kit\qemu\qemu-system-x86_64.exe: -accel whpx: WHPX: Failed to enable nested virtualization, hr=80370302
+D:\a\ElasticMEM\ElasticMEM\kit\qemu\qemu-system-x86_64.exe: -accel whpx: failed to initialize whpx: Invalid argument
+EM_WHP_PROXY loaded real_whp=ok pager_enabled=true
