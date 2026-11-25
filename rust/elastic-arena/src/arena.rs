@@ -9,7 +9,7 @@
 //!  * слот хранилища освобождается только после успешной распаковки в страницу.
 
 use crate::codec::PageCodec;
-use crate::core::{State, Table};
+use crate::core::{Fault, State, Table};
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -91,6 +91,7 @@ pub struct Stats {
     pub faults: u64,
     pub decompressed: u64,
     pub evictions: u64,
+    pub cas: Option<em_cas::CasStats>,
 }
 
 impl Arena {
@@ -100,13 +101,23 @@ impl Arena {
         pages: usize,
         quota_bytes: usize,
     ) -> std::io::Result<Arena> {
+        Self::with_table(Table::new(codec, pages, quota_bytes), pages)
+    }
+
+    /// Арена поверх content-addressed хранилища em-cas (zero / dedup / XOR-delta / временна́я дельта).
+    /// `ghost_pages` — сколько прошлых версий страниц держать базами временно́й дельты (0 — выкл).
+    pub fn new_cas(store: em_cas::CasStore, pages: usize, ghost_pages: usize) -> std::io::Result<Arena> {
+        Self::with_table(Table::new_cas(store, pages, ghost_pages), pages)
+    }
+
+    fn with_table(table: Table, pages: usize) -> std::io::Result<Arena> {
         let bytes = pages * PAGE;
         let base = unsafe { VirtualAlloc(std::ptr::null_mut(), bytes, MEM_RESERVE, PAGE_NOACCESS) };
         if base.is_null() {
             return Err(std::io::Error::last_os_error());
         }
         let inner = Box::into_raw(Box::new(Mutex::new(Inner {
-            table: Table::new(codec, pages, quota_bytes),
+            table,
             base,
             pages,
         })));
@@ -191,6 +202,8 @@ impl Arena {
                 probed += 1;
             }
         }
+        // хранилище: перенести payload'ы из полупустых сегментов, пустые вернуть ОС
+        self.inner().lock().unwrap().table.maintain(2048);
         (probed, compressed)
     }
 
@@ -210,6 +223,7 @@ impl Arena {
             faults: t.faults,
             decompressed: t.decompressed,
             evictions: t.evictions,
+            cas: t.cas_stats(),
         }
     }
 }
@@ -304,11 +318,19 @@ unsafe extern "system" fn veh_handler(info: *mut ExceptionPointers) -> i32 {
         }
         _ => {}
     }
-    // Сжата/нулевая: закоммитить физическую страницу под запись, затем заполнить.
+    // Сжата/нулевая: сперва распаковать в буфер на стеке, потом закоммитить и скопировать. Свежезакоммиченная
+    // страница сразу доступна всем потокам (demand-zero), поэтому окно «закоммичена, но пуста» должно быть
+    // как можно короче (одна копия 4 КиБ вместо распаковки). Полностью окно закрывает только остановка
+    // остальных потоков — так делает em-pager для гостевой памяти.
+    let mut tmp = [0u8; PAGE];
+    if let Fault::Corrupt = inner.table.on_fault(p, &mut tmp, now) {
+        // Fail-closed: страницу нельзя восстановить без потерь — исключение уходит дальше, процесс падает,
+        // а не продолжает работу с неверными байтами.
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
     if VirtualAlloc(va, PAGE, MEM_COMMIT, PAGE_READWRITE).is_null() {
         return EXCEPTION_CONTINUE_SEARCH;
     }
-    let dst = std::slice::from_raw_parts_mut(va, PAGE);
-    inner.table.on_fault(p, dst, now);
+    std::ptr::copy_nonoverlapping(tmp.as_ptr(), va, PAGE);
     EXCEPTION_CONTINUE_EXECUTION
 }

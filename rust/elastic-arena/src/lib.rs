@@ -167,6 +167,39 @@ mod tests {
         assert_eq!(back, pg);
     }
 
+    // Таблица поверх em-cas: дубликаты, почти-дубликаты, повторные циклы с правками (временна́я дельта), без потерь.
+    #[test]
+    fn cas_table_evict_fault_is_lossless() {
+        use em_cas::{CasStore, Config, Lz4};
+        let pages = 512;
+        let mut t = Table::new_cas(CasStore::new(Box::new(Lz4), Config::default()), pages, 128);
+        let mut shadow: Vec<[u8; PAGE]> = (0..pages).map(|i| mk_page(i as u64 % 64, (i % 4) as u8)).collect();
+        for p in (0..pages).step_by(7) {
+            shadow[p][100] ^= 0x11; // почти-дубликаты
+        }
+        let mut buf = [0u8; PAGE];
+        for p in 0..pages {
+            t.on_fault(p, &mut buf, 0);
+        }
+        let mut scratch = [0u8; PAGE];
+        for round in 0..4u64 {
+            for p in 0..pages {
+                t.evict(p, &shadow[p], &mut scratch);
+            }
+            for p in 0..pages {
+                if !matches!(t.state(p), State::Compressed | State::Zero) {
+                    continue;
+                }
+                let mut page = [0u8; PAGE];
+                assert!(!matches!(t.on_fault(p, &mut page, 0), crate::core::Fault::Corrupt));
+                assert_eq!(page, shadow[p], "page {p} round {round}");
+                shadow[p][(round as usize * 8 + 16) % PAGE] ^= 1; // небольшая правка перед следующим вытеснением
+            }
+        }
+        let st = t.cas_stats().unwrap();
+        assert!(st.put_dedup > 0 && st.put_temporal + st.put_delta > 0, "{st:?}");
+    }
+
     #[test]
     fn quota_pins_when_full() {
         let pages = 64;

@@ -1,0 +1,38 @@
+REAL browser=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
+
+  Id WS_MiB Private_MiB
+  -- ------ -----------
+1856    366         333
+5208    230         176
+7496    169         113
+7536    165          68
+4280    157          62
+7552    155          60
+6972    154          64
+7052    150          58
+4616    122          78
+2448    102          49
+7872     46          21
+9228     44          24
+
+
+REAL exe=msedge.exe processes=38 tracked_private_mib=1065.4 method=1
+REAL PHASE_START baseline unix_ms=1793175235352
+REAL tick baseline t=16s resident_mib=954.9 tracked_mib=1017.4 evicted=0 refaults=0
+REAL HALF baseline unix_ms=1793175255386
+REAL tick baseline t=32s resident_mib=930.0 tracked_mib=978.2 evicted=0 refaults=0
+REAL PHASE_END baseline unix_ms=1793175275382
+REAL PHASE baseline sec=40 [2nd half] resident_private_mib=933.1 of tracked 978.2 | evicted_per_s=0 refaults_per_s=0 (hot 0) | app_cpu_pct=7.0 agent_cpu_pct=1.4 (of one core) | sys_avail_delta_mib=114 compression_store_delta_mib=0 (store now 1)
+REAL PHASE_START page_precise unix_ms=1793175275387
+REAL tick page_precise t=16s resident_mib=154.9 tracked_mib=976.6 evicted=240570 refaults=40963
+REAL tick page_precise t=32s resident_mib=170.4 tracked_mib=971.4 evicted=246940 refaults=50100
+REAL tick page_precise t=48s resident_mib=208.2 tracked_mib=964.9 evicted=255723 refaults=65913
+REAL HALF page_precise unix_ms=1793175335390
+REAL tick page_precise t=64s resident_mib=198.4 tracked_mib=970.0 evicted=266483 refaults=72839
+REAL tick page_precise t=81s resident_mib=195.9 tracked_mib=971.0 evicted=272514 refaults=77270
+REAL tick page_precise t=97s resident_mib=212.6 tracked_mib=968.4 evicted=277215 refaults=86087
+REAL tick page_precise t=113s resident_mib=222.0 tracked_mib=974.0 evicted=283434 refaults=90808
+REAL PHASE_END page_precise unix_ms=1793175395401
+REAL PHASE page_precise sec=120 [2nd half] resident_private_mib=206.3 of tracked 974.0 | evicted_per_s=420 refaults_per_s=358 (hot 175) | app_cpu_pct=6.1 agent_cpu_pct=2.2 (of one core) | sys_avail_delta_mib=250 compression_store_delta_mib=11 (store now 13)
+REAL FRAMES baseline {"frames":1200,"fps":60,"work_p50":0.3,"work_p99":0.5,"work_max":1,"gap_p50":16.7,"gap_p99":16.8,"gap_max":16.8,"jank_gt_50ms":0}
+REAL FRAMES page_precise {"frames":3585,"fps":59.7,"work_p50":0.2,"work_p99":0.4,"work_max":0.6,"gap_p50":16.7,"gap_p99":16.8,"gap_max":16.8,"jank_gt_50ms":0}

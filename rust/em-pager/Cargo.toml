@@ -1,0 +1,12 @@
+[package]
+name = "em-pager"
+version = "0.1.0"
+edition = "2021"
+description = "Guest RAM pager for QEMU/WHPX: cold clusters are unmapped from the partition, stored in em-cas, host memory decommitted."
+
+[dependencies]
+em-cas = { path = "../em-cas" }
+
+[[example]]
+name = "pager-sim"
+path = "examples/pager_sim.rs"

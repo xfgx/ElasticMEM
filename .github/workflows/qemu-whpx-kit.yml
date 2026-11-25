@@ -1,0 +1,125 @@
+name: qemu-whpx-kit
+# Набор для проверки на вашем ПК: немодифицированный QEMU для Windows (сборка Stefan Weil, хеш закреплён) +
+# прокси WinHvPlatform.dll с em-pager + em-pagestat + probe.exe + скрипты. На раннерах GitHub нет вложенной
+# виртуализации, поэтому гостя здесь не запустить: проверяется, что QEMU стартует с урезанным набором DLL,
+# действительно грузит прокси из своей папки, а скрипты набора разбираются PowerShell без ошибок.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['claude/cas-memory']
+    paths: ['vm/qemu-whpx/**', 'rust/em-whp-proxy/src/**', 'rust/em-pager/src/**', 'rust/em-cas/src/**', 'rust/em-pagestat/src/**', '.github/workflows/qemu-whpx-kit.yml']
+permissions:
+  contents: write
+env:
+  QEMU_SETUP: qemu-w64-setup-20260811.exe
+  QEMU_SHA512: 5bcf9eed634e8575a37b74f445af41a2fe4106da512d0c30c368301d4c105037fdfab40a5287367a28a957624cddebbc8c07e16c88ab6634f554cdf3d16bf543
+jobs:
+  kit:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Build proxy, em-pagestat, probe.exe
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out, kit | Out-Null
+          cargo build --release --manifest-path rust/Cargo.toml -p em-whp-proxy -p em-pagestat
+          Copy-Item rust/target/release/WinHvPlatform.dll, rust/target/release/em-pagestat.exe kit/
+          cl /nologo /O2 /W3 research\active-trim\probe.c /Fe:kit\probe.exe psapi.lib winmm.lib advapi32.lib | Out-Null
+          dumpbin /exports kit\WinHvPlatform.dll | Tee-Object out/proxy-exports.txt | Out-Null
+          foreach ($s in 'WHvMapGpaRange', 'WHvUnmapGpaRange', 'WHvRunVirtualProcessor', 'WHvGetCapability', 'WHvGetVirtualProcessorCpuidOutput') { if (-not (Select-String -Path out/proxy-exports.txt -Pattern "\b$s\b" -Quiet)) { throw "missing export $s" } }
+      - name: Fetch QEMU for Windows (pinned SHA-512) and keep only what is needed
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://qemu.weilnetz.de/w64/$env:QEMU_SETUP" -OutFile q.exe
+          $h = (Get-FileHash q.exe -Algorithm SHA512).Hash.ToLower()
+          "sha512=$h" | Tee-Object out/qemu-download.txt
+          if ($h -ne $env:QEMU_SHA512) { throw "QEMU installer hash mismatch" }
+          & "C:\Program Files\7-Zip\7z.exe" x -y -oqx q.exe | Out-Null
+          New-Item -ItemType Directory -Force kit/qemu/share | Out-Null
+          # исполняемые файлы и транзитивно нужные им DLL из комплекта (по таблице импорта)
+          $need = New-Object System.Collections.Generic.HashSet[string]
+          $todo = New-Object System.Collections.Generic.Stack[string]
+          'qemu-system-x86_64.exe', 'qemu-img.exe' | ForEach-Object { $todo.Push($_) }
+          while ($todo.Count) {
+            $f = $todo.Pop()
+            if (-not $need.Add($f.ToLower())) { continue }
+            $deps = dumpbin /dependents "qx\$f" | Where-Object { $_ -match '^\s+(\S+\.dll)\s*$' } | ForEach-Object { $Matches[1] }
+            foreach ($d in $deps) { if ((Test-Path "qx\$d") -and -not $need.Contains($d.ToLower())) { $todo.Push($d) } }
+          }
+          foreach ($f in $need) { Copy-Item "qx\$f" kit/qemu/ }
+          foreach ($b in 'edk2-x86_64-code.fd', 'edk2-i386-vars.fd', 'bios-256k.bin', 'kvmvapic.bin', 'linuxboot_dma.bin', 'vgabios-stdvga.bin', 'efi-e1000e.rom', 'edk2-licenses.txt') { if (Test-Path "qx\share\$b") { Copy-Item "qx\share\$b" kit/qemu/share/ } }
+          if (Test-Path qx\share\keymaps) { Copy-Item -Recurse qx\share\keymaps kit/qemu/share/ }
+          foreach ($b in 'COPYING', 'COPYING.LIB') { if (Test-Path "qx\$b") { Copy-Item "qx\$b" kit/qemu/ } }
+          @("QEMU for Windows, build by Stefan Weil: https://qemu.weilnetz.de/w64/$env:QEMU_SETUP", "SHA-512 $env:QEMU_SHA512",
+            'Source code: https://www.qemu.org/download/ (GPL-2.0, see COPYING). Only qemu-system-x86_64, qemu-img and the DLLs they import are included, unmodified.') | Set-Content kit/qemu/SOURCE.txt
+          "files=$($need.Count)" | Tee-Object -Append out/qemu-download.txt
+          Get-ChildItem kit/qemu | Measure-Object Length -Sum | ForEach-Object { "kit_qemu_mib=$([int]($_.Sum/1MB))" } | Tee-Object -Append out/qemu-download.txt
+          & kit/qemu/qemu-system-x86_64.exe --version | Tee-Object out/qemu-version.txt
+          & kit/qemu/qemu-system-x86_64.exe -accel help | Tee-Object -Append out/qemu-version.txt
+      - name: QEMU starts with the trimmed DLL set (TCG) and loads the proxy from its folder (WHPX)
+        shell: pwsh
+        run: |
+          $q = (Resolve-Path kit/qemu/qemu-system-x86_64.exe).Path
+          $p = Start-Process -FilePath $q -ArgumentList @('-machine', 'q35', '-accel', 'tcg', '-m', '256', '-display', 'none', '-nodefaults', '-serial', 'none') -PassThru -RedirectStandardError out/qemu-tcg-err.txt
+          Start-Sleep -Seconds 10
+          $alive = -not $p.HasExited
+          if ($alive) { Stop-Process -Id $p.Id -Force }
+          "tcg_alive_after_10s=$alive" | Tee-Object out/qemu-start.txt
+          if (-not $alive) { Get-Content out/qemu-tcg-err.txt; throw "QEMU did not start with the trimmed kit" }
+          Copy-Item kit/WinHvPlatform.dll kit/qemu/
+          $env:EM_WHP_PROXY_LOG = "$PWD\out\proxy-load.txt"
+          $env:EM_PAGER = "1"
+          & $q -machine q35 -accel whpx -m 256 -display none -nodefaults 2>&1 | Tee-Object -Append out/qemu-start.txt
+          Remove-Item kit/qemu/WinHvPlatform.dll
+          Get-Content out/proxy-load.txt -ErrorAction SilentlyContinue | Tee-Object -Append out/qemu-start.txt
+          if (-not (Select-String -Path out/proxy-load.txt -Pattern 'EM_WHP_PROXY loaded' -Quiet)) { throw "QEMU did not load the proxy from its folder" }
+          $global:LASTEXITCODE = 0 # QEMU с WHPX на раннере без виртуализации ожидаемо завершается с ошибкой
+      - name: PowerShell syntax check of the kit
+        shell: pwsh
+        run: |
+          $bad = 0
+          $res = Get-ChildItem vm/qemu-whpx/kit -Recurse -Filter *.ps1 | ForEach-Object {
+            $err = $null; [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$err) | Out-Null
+            if ($err) { $script:bad++; "$($_.Name): $($err | Out-String)" } else { "$($_.Name): ok" }
+          }
+          $res | Tee-Object out/ps-syntax.txt
+          if ($bad) { throw "syntax errors" }
+      - name: Assemble kit
+        shell: pwsh
+        run: |
+          Copy-Item -Recurse vm/qemu-whpx/kit/* kit/
+          Copy-Item vm/qemu-whpx/README.md kit/README.md
+          $z = "ElasticMem-QEMU-WHPX-kit.zip"
+          Compress-Archive -Path kit/* -DestinationPath $z -CompressionLevel Optimal
+          (Get-FileHash $z -Algorithm SHA256).Hash + "  " + $z + "  " + (Get-Item $z).Length | Tee-Object out/kit-sha256.txt
+      - uses: actions/upload-artifact@v4
+        with: { name: ElasticMem-QEMU-WHPX-kit, path: ElasticMem-QEMU-WHPX-kit.zip }
+      - name: Publish kit as prerelease
+        shell: pwsh
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          $tag = "qemu-whpx-kit-${{ github.run_id }}"
+          gh release create $tag ElasticMem-QEMU-WHPX-kit.zip --prerelease --target ${{ github.sha }} --title "ElasticMem QEMU/WHPX kit (run ${{ github.run_id }})" --notes "QEMU for Windows (Stefan Weil, $env:QEMU_SETUP, без изменений) + прокси WinHvPlatform.dll с em-pager. Проверка на ПК с включённой платформой Windows Hypervisor Platform. См. README.md в архиве." 2>&1 | Tee-Object out/release.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: qemu-kit-logs, path: out/ }
+  commit:
+    needs: kit
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: qemu-kit-logs, path: dl }
+        continue-on-error: true
+      - name: Commit kit logs back
+        run: |
+          mkdir -p vm/qemu-whpx/results; rm -f vm/qemu-whpx/results/*.txt
+          cp dl/*.txt vm/qemu-whpx/results/ 2>/dev/null || true
+          echo "run: ${{ github.run_id }} sha: ${{ github.sha }} result: ${{ needs.kit.result }}" > vm/qemu-whpx/results/RUN.txt
+          git config user.name "qemu-whpx-kit"; git config user.email "actions@users.noreply.github.com"
+          git add vm/qemu-whpx/results
+          git commit -m "qemu-whpx-kit: logs of run ${{ github.run_id }}" || exit 0
+          for i in 1 2 3; do git pull --rebase origin ${{ github.ref_name }} && git push origin HEAD:${{ github.ref_name }} && break; sleep 5; done

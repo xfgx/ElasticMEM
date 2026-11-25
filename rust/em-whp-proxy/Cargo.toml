@@ -1,0 +1,12 @@
+[package]
+name = "em-whp-proxy"
+version = "0.1.0"
+edition = "2021"
+description = "WinHvPlatform.dll proxy: runs em-pager under an unmodified QEMU (WHPX)."
+
+[lib]
+name = "WinHvPlatform"
+crate-type = ["cdylib"]
+
+[dependencies]
+em-pager = { path = "../em-pager" }

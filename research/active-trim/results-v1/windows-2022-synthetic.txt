@@ -1,0 +1,36 @@
+OS 10.0.20348 total=1024 hot=96 warm=64 phase_s=25
+TARGET BASE 000001B63E5A0000 SIZE 1073741824 HOT 24576 WARM 16384
+
+OPEN rights=QUERY|SET_INFORMATION|VM_OPERATION|SET_QUOTA handle=ok err=0
+WS_BEFORE hot=24576 warm=16384 cold=221184 (pages)
+API InitializeProcessForWsWatch=1 err=0
+API VmRemoveFromWorkingSet missing
+API NtUnlockVirtualMemory missing
+API PrefetchVirtualMemory(foreign)=1 err=0 resident_after_prefetch=128 of 128 (prefetch may fill cache without WS)
+API VmPagePriority(foreign, prio=1) status=0x00000000
+RESULT no page-granular eviction method works on foreign process
+METHOD NtUnlockVirtualMemory
+API GetWsChangesEx first drain=0
+REFAULT_COST wait_ms=0 evict_status=0x00000000 us_per_page=0.69 pages=16384
+REFAULT_COST wait_ms=3000 evict_status=0x00000000 us_per_page=0.81 pages=16384
+REFAULT_COST wait_ms=15000 evict_status=0x00000000 us_per_page=0.81 pages=16384
+SYS baseline avail_mib=4942 commit_mib=3183
+PHASE baseline resident_mib hot=96.0 warm=64.0 cold=864.0 total=1024.0 of 1024 | pagefaults=3 ws_records=3 | evicted_pages=0 ranges=0 refaults hot=0 warm=0 cold=0 missed_ws_records=0 | target_cpu_ms=0 agent_cpu_ms=281
+SYS baseline avail_mib=4944 commit_mib=3180
+SYS empty_ws_every_2s avail_mib=4944 commit_mib=3180
+PHASE empty_ws_every_2s resident_mib hot=88.7 warm=14.0 cold=0.0 total=102.7 of 1024 | pagefaults=434916 ws_records=21519 | evicted_pages=0 ranges=0 refaults hot=0 warm=0 cold=0 missed_ws_records=0 | target_cpu_ms=1984 agent_cpu_ms=1375
+SYS empty_ws_every_2s avail_mib=5538 commit_mib=3198
+SYS page_precise avail_mib=5535 commit_mib=3198
+PHASE page_precise resident_mib hot=96.0 warm=48.9 cold=0.0 total=144.9 of 1024 | pagefaults=164284 ws_records=52256 | evicted_pages=149370 ranges=146722 refaults hot=96699 warm=50538 cold=0 missed_ws_records=119063 | target_cpu_ms=766 agent_cpu_ms=1078
+SYS page_precise avail_mib=5799 commit_mib=3196
+SYS baseline2 avail_mib=5799 commit_mib=3196
+PHASE baseline2 resident_mib hot=96.0 warm=64.0 cold=0.0 total=160.0 of 1024 | pagefaults=1494 ws_records=1028 | evicted_pages=0 ranges=0 refaults hot=0 warm=0 cold=0 missed_ws_records=0 | target_cpu_ms=0 agent_cpu_ms=422
+SYS baseline2 avail_mib=5838 commit_mib=3153
+TARGET FRAMES phase=0 n=2622 mean_ms=0.468 p50_ms=0.418 p99_ms=0.830 p999_ms=2.507 max_ms=2.782 over16ms=0
+
+TARGET FRAMES phase=1 n=1447 mean_ms=2.268 p50_ms=1.132 p99_ms=42.207 p999_ms=97.945 max_ms=106.163 over16ms=29
+
+TARGET FRAMES phase=2 n=1492 mean_ms=1.194 p50_ms=0.502 p99_ms=8.562 p999_ms=39.241 max_ms=45.033 over16ms=9
+
+TARGET FRAMES phase=3 n=1505 mean_ms=0.472 p50_ms=0.425 p99_ms=0.914 p999_ms=2.083 max_ms=2.225 over16ms=0
+

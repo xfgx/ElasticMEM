@@ -1,0 +1,8 @@
+[package]
+name = "em-pagestat"
+version = "0.1.0"
+edition = "2021"
+description = "Gate 0: how much would zero / dedup / XOR-delta / temporal delta save on real memory, vs plain per-page compression."
+
+[dependencies]
+em-cas = { path = "../em-cas" }

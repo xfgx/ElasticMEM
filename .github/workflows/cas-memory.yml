@@ -1,0 +1,121 @@
+name: cas-memory
+# Content-addressed память (em-cas) на настоящей Windows:
+#  * тесты без потерь: em-cas, elastic-arena (обычное и CAS-хранилище), em-pager (модель гипервизора);
+#  * elastic-arena: классическое хранилище против em-cas, проверка dedup / delta / временно́й дельты и
+#    реальной экономии по счётчикам ОС;
+#  * pager-sim: пейджер гостевой памяти (модель WHP) с настоящими VEH, VirtualFree и остановкой потоков;
+#  * прокси WinHvPlatform.dll: смещения структур по Windows SDK + имитация QEMU поверх модели WHP;
+#  * Gate 0: em-pagestat на настоящих процессах (Edge с реальными сайтами, svchost) — только агрегаты.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['claude/cas-memory']
+    paths: ['rust/em-cas/src/**', 'rust/em-pagestat/**', 'rust/em-pager/**', 'rust/em-whp-proxy/**', 'rust/elastic-arena/src/**', 'rust/elastic-arena/examples/**', '.github/workflows/cas-memory.yml']
+permissions:
+  contents: write
+jobs:
+  win:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Tests (lossless)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          cargo test --release --manifest-path rust/Cargo.toml -p em-cas -p elastic-arena -p em-pager 2>&1 | Tee-Object "out/${{ matrix.os }}-tests.txt"
+          if ($LASTEXITCODE -ne 0) { throw "tests failed" }
+      - name: Build
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path rust/Cargo.toml -p em-pagestat -p em-whp-proxy
+          cargo build --release --manifest-path rust/Cargo.toml -p elastic-arena --example arena-bench
+          cargo build --release --manifest-path rust/Cargo.toml -p em-pager --example pager-sim
+          Get-ChildItem rust/target/release/*.exe, rust/target/release/*.dll | Format-Table Name, Length | Out-String
+      - name: Environment
+        shell: pwsh
+        run: |
+          $o = "out/${{ matrix.os }}-env.txt"
+          (Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, TotalVisibleMemorySize | Format-List | Out-String) | Tee-Object $o
+          "nproc=$env:NUMBER_OF_PROCESSORS" | Tee-Object -Append $o
+      - name: Arena — classic store vs em-cas (same app)
+        shell: pwsh
+        run: |
+          $e = "rust/target/release/examples/arena-bench.exe"
+          function Run($name, $a) { & $e @a 2>&1 | Tee-Object "out/${{ matrix.os }}-arena-$name.txt"; if ($LASTEXITCODE -ne 0) { throw "$name lossless failed" } }
+          Run 'classic-xpress' @(1024, 96, 64, 40)
+          $env:EM_STORE = "cas"
+          Run 'cas-xpress' @(1024, 96, 64, 40)
+          $env:EM_DUP_PCT = "15"; $env:EM_NEAR_PCT = "15"
+          Run 'cas-dup15-near15' @(1024, 96, 64, 40)
+          Remove-Item Env:EM_STORE
+          Run 'classic-dup15-near15' @(1024, 96, 64, 40)
+          Remove-Item Env:EM_DUP_PCT, Env:EM_NEAR_PCT
+          $env:EM_STORE = "cas"; $env:EM_MUTATE = "1"; $env:EM_GHOST = "1"
+          Run 'cas-mutate-ghost' @(512, 48, 32, 40)
+          $env:EM_GHOST = "0"
+          Run 'cas-mutate-noghost' @(512, 48, 32, 40)
+      - name: Pager-sim (guest RAM pager, modelled WHP, real VEH / VirtualFree / thread freeze)
+        shell: pwsh
+        run: |
+          $e = "rust/target/release/examples/pager-sim.exe"
+          function Run($name) { & $e 1024 48 60 1000 2>&1 | Tee-Object "out/${{ matrix.os }}-pager-$name.txt"; if ($LASTEXITCODE -ne 0) { throw "pager $name failed" } }
+          Run 'runs64k-c16-xpress'
+          $env:EM_PAGER_CODEC = "lz4"; Run 'runs64k-c16-lz4'; Remove-Item Env:EM_PAGER_CODEC
+          $env:EM_SIM_SCATTER = "1"; Run 'scatter-c16'
+          $env:EM_PAGER_CLUSTER = "1"; Run 'scatter-c1'
+      - name: WHP proxy — SDK offsets + QEMU-like harness over a modelled WHP
+        shell: pwsh
+        run: |
+          $t = "rust/em-whp-proxy/test"
+          New-Item -ItemType Directory -Force pt | Out-Null
+          cl /nologo /O2 $t/offsets.c /Fe:pt/offsets.exe | Out-Null
+          ./pt/offsets.exe 2>&1 | Tee-Object "out/${{ matrix.os }}-proxy-offsets.txt"; if ($LASTEXITCODE -ne 0) { throw "offsets differ from SDK" }
+          cl /nologo /O2 /LD $t/fakewhp.c /Fe:pt/fakewhp.dll | Out-Null
+          cl /nologo /O2 $t/harness.c /Fe:pt/harness.exe psapi.lib | Out-Null
+          Copy-Item rust/target/release/WinHvPlatform.dll pt/
+          $env:EM_WHP_REAL = (Resolve-Path pt/fakewhp.dll).Path
+          ./pt/harness.exe 256 20 2>&1 | Tee-Object "out/${{ matrix.os }}-proxy-passthrough.txt"; if ($LASTEXITCODE -ne 0) { throw "proxy passthrough failed" }
+          $env:EM_PAGER = "1"; $env:EM_PAGER_START_DELAY_S = "0"; $env:EM_PAGER_IDLE_MS = "500"; $env:EM_PAGER_LOG = "out/${{ matrix.os }}-proxy-pager-log.txt"
+          ./pt/harness.exe 512 40 2>&1 | Tee-Object "out/${{ matrix.os }}-proxy-pager.txt"; if ($LASTEXITCODE -ne 0) { throw "proxy + pager failed" }
+      - name: Gate 0 — em-pagestat on real processes (Edge with real sites, svchost)
+        shell: pwsh
+        run: |
+          $ps = "rust/target/release/em-pagestat.exe"
+          & $ps --synthetic 256 2>&1 | Tee-Object "out/${{ matrix.os }}-pagestat-synthetic.txt"; if ($LASTEXITCODE -ne 0) { throw "pagestat synthetic failed" }
+          $edge = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          $sites = 'https://en.wikipedia.org/wiki/Microsoft_Windows', 'https://github.com/microsoft/terminal', 'https://www.youtube.com/', 'https://developer.mozilla.org/en-US/docs/Web/JavaScript', 'https://news.ycombinator.com/'
+          $i = 0
+          foreach ($u in $sites) { Start-Process -FilePath $edge -ArgumentList @('--headless=new', "--user-data-dir=$env:RUNNER_TEMP\p$i", '--no-first-run', '--window-size=1280,720', $u) | Out-Null; $i++ }
+          Start-Sleep -Seconds 60
+          Get-Process msedge | Measure-Object PrivateMemorySize64 -Sum | ForEach-Object { "msedge processes=$($_.Count) private_mib=$([int]($_.Sum/1MB))" } | Tee-Object "out/${{ matrix.os }}-pagestat-edge.txt"
+          & $ps --name msedge --snapshots 2 --interval-ms 30000 2>&1 | Tee-Object -Append "out/${{ matrix.os }}-pagestat-edge.txt"; if ($LASTEXITCODE -ne 0) { throw "pagestat edge: not lossless" }
+          & $ps --name msedge --private-only 2>&1 | Tee-Object "out/${{ matrix.os }}-pagestat-edge-private.txt"; if ($LASTEXITCODE -ne 0) { throw "pagestat edge private: not lossless" }
+          & $ps --name svchost --max-mib 1024 2>&1 | Tee-Object "out/${{ matrix.os }}-pagestat-svchost.txt"
+          Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          $global:LASTEXITCODE = 0 # svchost частично закрыт для чтения — это не ошибка замера
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: "cas-memory-${{ matrix.os }}", path: out/ }
+  commit:
+    needs: win
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dl }
+      - name: Commit results back
+        run: |
+          mkdir -p rust/em-cas/results; rm -f rust/em-cas/results/*.txt
+          find dl -type f -name '*.txt' -exec cp {} rust/em-cas/results/ \;
+          echo "run: ${{ github.run_id }} sha: ${{ github.sha }} result: ${{ needs.win.result }}" > rust/em-cas/results/RUN.txt
+          git config user.name "cas-memory"; git config user.email "actions@users.noreply.github.com"
+          git add rust/em-cas/results
+          git commit -m "cas-memory: results of run ${{ github.run_id }}" || exit 0
+          for i in 1 2 3; do git pull --rebase origin ${{ github.ref_name }} && git push origin HEAD:${{ github.ref_name }} && break; sleep 5; done
