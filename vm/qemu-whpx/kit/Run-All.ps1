@@ -35,6 +35,8 @@ function Finish([string]$why) {
   $qe = (Get-Content (Join-Path $Work 'qemu-err.txt') -Raw -ErrorAction SilentlyContinue) + (Get-Content (Join-Path $Work 'qemu-out.txt') -Raw -ErrorAction SilentlyContinue)
   if ("$qe" -match 'Unexpected VP exit code 4') { Say 'ДИАГНОЗ: гость аварийно остановился (тройной сбой после синего экрана). Сравните с запуском без пейджера: Run-All.ps1 -Mode plain' }
   if ("$qe" -match 'Unimplemented handler') { Say 'ДИАГНОЗ: QEMU получил обращение гостя к памяти как к устройству (Unimplemented handler) — признак ошибки пейджера' }
+  $pl = Get-Content (Join-Path $Work 'em-pager.log') -Raw -ErrorAction SilentlyContinue
+  if ("$pl" -match 'FATAL') { Say 'ДИАГНОЗ: пейджер остановил QEMU (FATAL в em-pager.log), чтобы не испортить память гостя' }
   Say "ИТОГ: $why"
   foreach ($f in 'em-pager.log', 'qemu-err.txt', 'qemu-out.txt', 'runs.txt') { $p = Join-Path $Work $f; if (Test-Path $p) { Copy-Item $p $rep } }
   $desk = [Environment]::GetFolderPath('Desktop')
@@ -186,8 +188,9 @@ elseif ($booted) {
   Say 'Открыл удалённый рабочий стол гостя (mstsc). Войдите учётной записью администратора гостя.'
 }
 Say 'Войти в гостя можно и прямо в окне QEMU. Запустите там приложения, которыми пользуетесь (браузер и т. п.).'
-$mode = if ($Mode -eq 'pager') { 'пейджера' } else { 'гостя без пейджера' }
-Say "Замер $mode $Minutes мин. Пользуйтесь приложениями в госте как обычно."
+# (переменные PowerShell не различают регистр: $mode — это тот же $Mode с ValidateSet, поэтому другое имя)
+$what = if ($Mode -eq 'pager') { 'пейджера' } else { 'гостя без пейджера' }
+Say "Замер $what $Minutes мин. Пользуйтесь приложениями в госте как обычно."
 $mm = if ($Mode -eq 'pager') { 'track2' } else { 'idle' }
 if ($mm -eq 'track2') {
   & (Join-Path $PSScriptRoot 'Measure.ps1') -Mode track2 -Seconds ($Minutes * 60) 2>&1 | ForEach-Object { Add-Content -Path $log -Value "$_" -Encoding UTF8 }

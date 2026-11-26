@@ -321,3 +321,35 @@ fn second_vcpu_exit_on_already_restored_cluster_is_handled() {
     assert!(core.on_exit(ri, cl, 9100, 0, &sim).unwrap(), "второй exit по уже восстановленному кластеру");
     assert!(core.on_host_fault(ri, cl, 9100, 1, &sim).unwrap());
 }
+
+/// Буфер ввода-вывода VMM: вытесненные кластеры возвращаются до вызова, закреплённые не пробуются и не вытесняются.
+#[test]
+fn io_buffer_is_restored_and_pinned() {
+    let (_mem, sim, mut core) = setup(2, false);
+    let (mut probe, mut idle) = (Vec::new(), Vec::new());
+    core.candidates(0, 1000, 1000, &mut probe, &mut idle);
+    for &(ri, cl) in &probe {
+        core.begin_probe(ri, cl, 0, &sim);
+    }
+    probe.clear();
+    core.candidates(5000, 0, 1000, &mut probe, &mut idle);
+    for &(ri, cl) in &idle {
+        core.evict(ri, cl, 5000, &sim);
+    }
+    let evicted: Vec<usize> = (0..core.ranges[0].st.len()).filter(|&c| core.ranges[0].st[c] == Cl::Evicted).collect();
+    assert!(evicted.len() > 4);
+    let base = core.ranges[0].hva;
+    let (c0, c1) = (evicted[0], evicted[1]);
+    // буфер на стыке двух кластеров
+    let a = base + c0 * 16 * PAGE + 100;
+    let len = (c1 - c0) * 16 * PAGE + 50;
+    let n = core.prepare_io(a, len, 6000, &sim).unwrap();
+    assert!(n >= 2);
+    for c in c0..=c1 {
+        assert_eq!(core.ranges[0].st[c], Cl::Resident, "cluster {c} must be resident");
+        assert!(sim.committed.borrow()[c * 16] && sim.mapped.borrow()[c * 16]);
+    }
+    // закреплённый кластер не пробуется
+    assert!(!core.begin_probe(0, c0, 6000 + 3_000_000.min(IO_PIN_MS - 1), &sim));
+    assert!(core.begin_probe(0, c0, 6000 + IO_PIN_MS + 1, &sim) || core.ranges[0].st[c0] != Cl::Resident);
+}

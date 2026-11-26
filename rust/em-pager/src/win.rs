@@ -359,6 +359,18 @@ pub extern "C" fn em_pager_del_ram(gpa: u64, size: u64) {
     p.logln(&format!("EM_PAGER del_ram gpa={gpa:#x} size_mib={}", size >> 20));
 }
 
+/// Буфер ввода-вывода VMM в памяти гостя: вернуть и закрепить кластеры до ReadFile/WriteFile (ядро не вызывает VEH).
+pub extern "C" fn em_pager_prepare_io(addr: usize, len: usize) {
+    let Some(p) = PAGER.get() else { return };
+    if len == 0 || !(0..16).any(|i| addr < p.hva_hi[i].load(Ordering::Acquire) && addr + len > p.hva_lo[i].load(Ordering::Acquire)) {
+        return;
+    }
+    let mut c = lock_urgent(p);
+    if c.prepare_io(addr, len, now_ms(), &p.ops).is_err() {
+        p.fail_closed("io buffer restore");
+    }
+}
+
 thread_local! { static LAST_EXIT: std::cell::Cell<(u64, u32)> = const { std::cell::Cell::new((u64::MAX, 0)) }; }
 
 /// Memory-access exit vCPU. 1 — наш кластер обработан (повторить инструкцию), 0 — не наш (MMIO для VMM).
@@ -445,13 +457,13 @@ fn line(p: &Pager) -> String {
     let qw = |f: f64| crate::quantile(&wt, f);
     let mib = |b: u64| b as f64 / 1048576.0;
     format!(
-        "t_s={} guest_mib={} resident_cl={} probing_cl={} evicted_cl={} evicted_mib={:.1} store_mib={:.1} payload_mib={:.1} tables_mib={:.1} saved_mib={:.1} zero_pages={} dedup={} delta={} temporal={} full={} incompressible={} ghost_pages={} probes={} probe_hits={} evictions={} rollbacks={} exit_restores={} host_restores={} prefetched={} prefetch_used={} pf_checks={} pf_check_hits={} pf_active={} pf_vcpu_acc_pct={} restore_p50_us={} restore_p99_us={} lock_wait_p50_us={} lock_wait_p99_us={} crc_failures={} segments_released={} proc_private_mib={:.1} proc_ws_mib={:.1} hold_p99/max_us={}",
+        "t_s={} guest_mib={} resident_cl={} probing_cl={} evicted_cl={} evicted_mib={:.1} store_mib={:.1} payload_mib={:.1} tables_mib={:.1} saved_mib={:.1} zero_pages={} dedup={} delta={} temporal={} full={} incompressible={} ghost_pages={} probes={} probe_hits={} evictions={} rollbacks={} exit_restores={} host_restores={} io_restores={} prefetched={} prefetch_used={} pf_checks={} pf_check_hits={} pf_active={} pf_vcpu_acc_pct={} restore_p50_us={} restore_p99_us={} lock_wait_p50_us={} lock_wait_p99_us={} crc_failures={} segments_released={} proc_private_mib={:.1} proc_ws_mib={:.1} hold_p99/max_us={}",
         (now_ms() - p.start_ms) / 1000,
         s.guest_bytes >> 20, s.resident_cl, s.probing_cl, s.evicted_cl,
         mib(evicted_b), mib(store_b), mib(cs.payload_bytes), mib(meta_b),
         (evicted_b as f64 - store_b as f64 - meta_b as f64) / 1048576.0,
         s.zero_pages_evicted, cs.put_dedup, cs.put_delta, cs.put_temporal, cs.put_full, cs.put_incompressible, s.ghost_pages,
-        s.probes, s.probe_hits, s.evictions, s.evict_rollbacks, s.exit_restores, s.host_restores, s.prefetched, s.prefetch_used, s.pf_checks, s.pf_check_hits, s.pf_active, s.pf_vcpu_acc_pct, q(0.5), q(0.99), qw(0.5), qw(0.99),
+        s.probes, s.probe_hits, s.evictions, s.evict_rollbacks, s.exit_restores, s.host_restores, s.io_restores, s.prefetched, s.prefetch_used, s.pf_checks, s.pf_check_hits, s.pf_active, s.pf_vcpu_acc_pct, q(0.5), q(0.99), qw(0.5), qw(0.99),
         cs.crc_failures, cs.segments_released, pv, ws, hold_s.join(",")
     )
 }

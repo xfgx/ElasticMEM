@@ -75,7 +75,13 @@ pub struct Range {
     refs: Vec<Ref>,          // по странице
     ghost: Vec<Option<Ref>>, // по странице (только при keep_ghost)
     pf: Vec<bool>,           // по кластеру: восстановлен prefetch'ем и ещё не тронут гостем
+    /// По кластеру: до какого момента (мс) кластер нельзя пробовать и вытеснять — он буфер ввода-вывода VMM.
+    pin_until: Vec<u64>,
 }
+
+/// Сколько держать буфер ввода-вывода резидентным после вызова ReadFile/WriteFile (асинхронный ввод-вывод
+/// может завершиться позже возврата из вызова).
+pub const IO_PIN_MS: u64 = 30_000;
 
 #[derive(Clone, Debug, Default)]
 pub struct Stats {
@@ -90,6 +96,8 @@ pub struct Stats {
     pub evict_rollbacks: u64,
     pub exit_restores: u64,
     pub host_restores: u64,
+    /// Кластеры, возвращённые заранее под буфер ввода-вывода VMM (ReadFile/WriteFile).
+    pub io_restores: u64,
     pub ghost_pages: u64,
     /// Кластеры, восстановленные заранее по цепочке co-access.
     pub prefetched: u64,
@@ -192,6 +200,7 @@ impl Core {
             refs: vec![Ref::Zero; pages],
             ghost: if self.cfg.keep_ghost { vec![None; pages] } else { Vec::new() },
             pf: vec![false; n],
+            pin_until: vec![0; n],
         });
         managed
     }
@@ -477,6 +486,38 @@ impl Core {
         }
     }
 
+    /// Буфер ввода-вывода VMM (ReadFile/WriteFile в память гостя). Ядро Windows, в отличие от кода VMM, не
+    /// вызывает VEH при обращении к декоммиченной памяти — оно просто возвращает ошибку ввода-вывода (QEMU тогда
+    /// останавливает ВМ или отдаёт гостю ошибку диска). Поэтому до вызова все кластеры буфера возвращаются в
+    /// память хоста и закрепляются на IO_PIN_MS: не пробуются и не вытесняются. Возвращает число восстановленных.
+    pub fn prepare_io(&mut self, hva: usize, len: usize, now: u64, ops: &dyn Ops) -> Result<usize, CasError> {
+        let clb = self.clb() as usize;
+        let mut todo = Vec::new();
+        for ri in 0..self.ranges.len() {
+            let r = &self.ranges[ri];
+            if !r.managed || hva + len <= r.hva || hva >= r.hva + r.bytes as usize {
+                continue;
+            }
+            let a = hva.max(r.hva) - r.hva;
+            let b = (hva + len).min(r.hva + r.bytes as usize) - r.hva;
+            for cl in a / clb..((b + clb - 1) / clb).min(r.st.len()) {
+                self.ranges[ri].pin_until[cl] = now + IO_PIN_MS;
+                if self.ranges[ri].st[cl] == Cl::Evicted {
+                    todo.push((ri, cl));
+                }
+            }
+        }
+        for chunk in todo.chunks(64) {
+            self.restore_batch(chunk, ops)?;
+            for &(ri, cl) in chunk {
+                self.map_cl(ri, cl, ops);
+                self.ranges[ri].pf[cl] = false;
+            }
+        }
+        self.st.io_restores += todo.len() as u64;
+        Ok(todo.len())
+    }
+
     /// Обращение самого VMM к памяти Evicted-кластера (access violation). Ok(true) — повторить инструкцию.
     pub fn on_host_fault(&mut self, ri: usize, cl: usize, now: u64, stream: u32, ops: &dyn Ops) -> Result<bool, CasError> {
         match self.ranges[ri].st[cl] {
@@ -525,7 +566,7 @@ impl Core {
             return false;
         }
         let r = &self.ranges[ri];
-        if r.st[cl] != Cl::Resident || now < r.next_probe[cl] {
+        if r.st[cl] != Cl::Resident || now < r.next_probe[cl] || now < r.pin_until[cl] {
             return false;
         }
         let (g, _) = self.cl_addr(ri, cl);
@@ -542,6 +583,12 @@ impl Core {
     /// Вытеснить нетронутый Probing-кластер в em-cas. false — не вытеснен (уже не Probing / не выгодно).
     pub fn evict(&mut self, ri: usize, cl: usize, now: u64, ops: &dyn Ops) -> bool {
         if ri >= self.ranges.len() || cl >= self.ranges[ri].st.len() || self.ranges[ri].st[cl] != Cl::Probing {
+            return false;
+        }
+        if now < self.ranges[ri].pin_until[cl] {
+            // стал буфером ввода-вывода, пока был в пробе: не вытесняем, возвращаем гостю
+            self.map_cl(ri, cl, ops);
+            self.ranges[ri].st[cl] = Cl::Resident;
             return false;
         }
         let n = self.cfg.cluster_pages;

@@ -14,10 +14,12 @@
 #![allow(non_snake_case)]
 #![cfg(windows)]
 
-use em_pager::win::{em_pager_add_ram, em_pager_del_ram, em_pager_init, em_pager_mem_exit};
+use em_pager::win::{em_pager_add_ram, em_pager_del_ram, em_pager_init, em_pager_mem_exit, em_pager_prepare_io};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 extern "system" {
+    fn GetModuleHandleW(name: *const u16) -> usize;
+    fn VirtualProtect(a: *mut u8, n: usize, p: u32, old: *mut u32) -> i32;
     fn LoadLibraryW(name: *const u16) -> usize;
     fn GetProcAddress(m: usize, name: *const u8) -> usize;
     fn GetSystemDirectoryW(buf: *mut u16, n: u32) -> u32;
@@ -47,13 +49,20 @@ fn real_module() -> usize {
     let m = unsafe { LoadLibraryW(path.as_ptr()) };
     REAL.store(m, Ordering::Release);
     // Для проверки набора: QEMU действительно загрузил прокси из своей папки.
-    if let Ok(log) = std::env::var("EM_WHP_PROXY_LOG") {
-        use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log) {
-            let _ = writeln!(f, "EM_WHP_PROXY loaded real_whp={} pager_enabled={}", if m != 0 { "ok" } else { "missing" }, enabled());
+    proxy_log(&format!("EM_WHP_PROXY loaded real_whp={} pager_enabled={}", if m != 0 { "ok" } else { "missing" }, enabled()));
+    m
+}
+
+/// Строка в EM_WHP_PROXY_LOG, а при включённом пейджере — и в журнал пейджера (EM_PAGER_LOG).
+fn proxy_log(s: &str) {
+    use std::io::Write;
+    for k in ["EM_WHP_PROXY_LOG", "EM_PAGER_LOG"] {
+        if let Ok(log) = std::env::var(k) {
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log) {
+                let _ = writeln!(f, "{s}");
+            }
         }
     }
-    m
 }
 
 fn real(name: &str) -> usize {
@@ -117,6 +126,89 @@ fn ptr(slot: &AtomicUsize, name: &str) -> usize {
     p
 }
 
+// ---------- ввод-вывод QEMU в память гостя ----------
+// Чтение диска QEMU делает ReadFile прямо в память гостя (и WriteFile — из неё). Если там вытесненный кластер,
+// ядро Windows не вызывает VEH, а возвращает ошибку ввода-вывода: гость видит сбой диска (0xc000007b при загрузке,
+// синий экран), QEMU может остановить ВМ. Поэтому ReadFile/WriteFile в таблице импорта QEMU подменяются: перед
+// вызовом пейджер возвращает и закрепляет кластеры буфера.
+
+type RwFn = unsafe extern "system" fn(isize, *mut u8, u32, *mut u32, *mut u8) -> i32;
+static REAL_READ: AtomicUsize = AtomicUsize::new(0);
+static REAL_WRITE: AtomicUsize = AtomicUsize::new(0);
+
+unsafe extern "system" fn hook_read_file(h: isize, buf: *mut u8, n: u32, done: *mut u32, ov: *mut u8) -> i32 {
+    em_pager_prepare_io(buf as usize, n as usize);
+    (std::mem::transmute::<usize, RwFn>(REAL_READ.load(Ordering::Acquire)))(h, buf, n, done, ov)
+}
+
+unsafe extern "system" fn hook_write_file(h: isize, buf: *mut u8, n: u32, done: *mut u32, ov: *mut u8) -> i32 {
+    em_pager_prepare_io(buf as usize, n as usize);
+    (std::mem::transmute::<usize, RwFn>(REAL_WRITE.load(Ordering::Acquire)))(h, buf, n, done, ov)
+}
+
+/// Подменить в таблице импорта главного модуля KERNEL32!name. Возвращает прежний адрес (0 — не найдено).
+unsafe fn patch_import(name: &[u8], hook: usize) -> usize {
+    let base = GetModuleHandleW(std::ptr::null()) as *mut u8;
+    if base.is_null() {
+        return 0;
+    }
+    let rd32 = |p: *const u8| std::ptr::read_unaligned(p as *const u32) as usize;
+    let nt = base.add(rd32(base.add(0x3c)));
+    let opt = nt.add(24);
+    if std::ptr::read_unaligned(opt as *const u16) != 0x20b {
+        return 0; // не PE32+
+    }
+    let imp_rva = rd32(opt.add(112 + 8));
+    if imp_rva == 0 {
+        return 0;
+    }
+    let mut d = base.add(imp_rva);
+    loop {
+        let (oft, nm, ft) = (rd32(d), rd32(d.add(12)), rd32(d.add(16)));
+        if nm == 0 {
+            return 0;
+        }
+        let dll = std::ffi::CStr::from_ptr(base.add(nm) as *const std::ffi::c_char).to_bytes().to_ascii_lowercase();
+        if dll == b"kernel32.dll" {
+            let mut i = 0;
+            loop {
+                let ent = std::ptr::read_unaligned(base.add(if oft != 0 { oft } else { ft } + i * 8) as *const u64);
+                if ent == 0 {
+                    break;
+                }
+                if ent >> 63 == 0 {
+                    let fname = std::ffi::CStr::from_ptr(base.add(ent as usize + 2) as *const std::ffi::c_char).to_bytes();
+                    if fname == name {
+                        let slot = base.add(ft + i * 8) as *mut usize;
+                        let mut old = 0u32;
+                        VirtualProtect(slot as *mut u8, 8, 0x04, &mut old);
+                        let prev = std::ptr::read_volatile(slot);
+                        std::ptr::write_volatile(slot, hook);
+                        VirtualProtect(slot as *mut u8, 8, old, &mut old);
+                        return prev;
+                    }
+                }
+                i += 1;
+            }
+        }
+        d = d.add(20);
+    }
+}
+
+fn hook_io() -> (bool, bool) {
+    unsafe {
+        let r = patch_import(b"ReadFile", hook_read_file as usize);
+        if r != 0 {
+            REAL_READ.store(r, Ordering::Release);
+        }
+        let w = patch_import(b"WriteFile", hook_write_file as usize);
+        if w != 0 {
+            REAL_WRITE.store(w, Ordering::Release);
+        }
+        (r != 0, w != 0)
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "system" fn WHvMapGpaRange(part: usize, src: usize, gpa: u64, size: u64, flags: u32) -> i32 {
     let p = ptr(&P_MAP, "WHvMapGpaRange");
@@ -127,7 +219,12 @@ pub unsafe extern "system" fn WHvMapGpaRange(part: usize, src: usize, gpa: u64, 
     if r >= 0 && flags & 2 != 0 && enabled() {
         if !INIT_TRIED.swap(true, Ordering::SeqCst) {
             let u = ptr(&P_UNMAP, "WHvUnmapGpaRange");
-            INITED.store(em_pager_init(part, p, u) == 0, Ordering::SeqCst);
+            let ok = em_pager_init(part, p, u) == 0;
+            INITED.store(ok, Ordering::SeqCst);
+            if ok {
+                let (r, w) = hook_io();
+                proxy_log(&format!("EM_WHP_PROXY io_hooks read_file={r} write_file={w}"));
+            }
         }
         if INITED.load(Ordering::Acquire) {
             em_pager_add_ram(gpa, src as *mut u8, size, 1);
