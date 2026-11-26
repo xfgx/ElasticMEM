@@ -1,0 +1,4 @@
+PAGESTAT_RUN sources_pids=179 names=["*"] dump=false raw=false synthetic=None private_only=true snapshots=1 interval_ms=30000 max_mib=12288 cas_codec=xpress
+PAGESTAT snap=1 sources=164 pages=296016 resident_mib=1156.3 zero_pct=4.7 dup_pct=6.1 dup_cross_pct=4.5 lz4_mib=339.6 lz4_ratio=0.294 xpress_mib=308.8 xpress_ratio=0.267 cas_mib=322.6 cas_ratio=0.279 cas_payload_mib=290.6 cas_meta_mib=18.7 cas_segments_mib=303.9 cas_dedup=18084 cas_delta=0 cas_full=262557 cas_incompressible=1368 cas_errors=0 cas_lossless=PASS
+STORE snap=1 variant=dedup total_mib=322.6 payload_mib=290.6 meta_mib=18.7 segments_mib=303.9 ratio=0.279 meta_bytes_per_page=66.2 dedup=18084 delta=0 full=262557 incompressible=1368
+GATE0 snap=1 best_plain=xpress best_plain_mib=308.8 cas_mib=322.6 cas_gain_vs_best_plain_pct=-4.5 cas_payload_gain_vs_best_plain_pct=5.9
