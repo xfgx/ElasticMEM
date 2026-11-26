@@ -9,7 +9,7 @@
 static uint8_t *g_hva; static uint64_t g_gpa0, g_pages; static volatile LONG *g_map; static uint64_t *g_sh;
 static uint64_t g_hot[1 << 16]; static int g_nhot; static int64_t g_pending = -1;
 static volatile LONG64 g_err_decommitted, g_err_bytes, g_exits, g_access;
-static uint64_t r_ = 88172645463325252ULL; static uint64_t g_calls;
+static uint64_t r_ = 88172645463325252ULL; static uint64_t g_calls, g_q;
 static uint64_t xr(void) { r_ ^= r_ << 13; r_ ^= r_ >> 7; r_ ^= r_ << 17; return r_; }
 #define EXP __declspec(dllexport) HRESULT WINAPI
 EXP WHvGetCapability(int c, void *b, UINT32 n, UINT32 *w) { if (b && n) memset(b, 0, n); if (w) *w = n; return 0; }
@@ -51,9 +51,13 @@ EXP WHvRunVirtualProcessor(void *p, UINT32 vp, void *ctx, UINT32 size) {
       return 0;
     }
     g_pending = -1;
-    MEMORY_BASIC_INFORMATION m;
-    VirtualQuery(g_hva + i * PG, &m, sizeof m);
-    if (m.State != MEM_COMMIT || (m.Protect & PAGE_READWRITE) == 0) { InterlockedIncrement64(&g_err_decommitted); continue; }
+    // VirtualQuery на большом регионе дорогая (ОС ищет конец региона с теми же атрибутами) и под нагрузкой
+    // конкурирует за адресное пространство с VirtualProtect/VirtualFree пейджера: проверяем каждое 8-е обращение.
+    if ((++g_q & 7) == 0) {
+      MEMORY_BASIC_INFORMATION m;
+      VirtualQuery(g_hva + i * PG, &m, sizeof m);
+      if (m.State != MEM_COMMIT || (m.Protect & PAGE_READWRITE) == 0) { InterlockedIncrement64(&g_err_decommitted); continue; }
+    }
     uint64_t *w = (uint64_t *)(g_hva + i * PG + 256);
     if (*w != g_sh[i]) InterlockedIncrement64(&g_err_bytes);
     *w = g_sh[i] = *w + 1;
