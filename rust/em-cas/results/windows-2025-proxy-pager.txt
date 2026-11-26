@@ -1,3 +1,3 @@
-HARNESS ram_mib=512 secs=40 runs=214464 mmio_exits_leaked_to_qemu=0 guest_accesses=6973151 guest_exits=4217 guest_saw_decommitted=0 guest_wrong_bytes=0
-PROC private_mib start=1027.8 min=636.0 end=654.2
+HARNESS ram_mib=512 secs=40 runs=194752 mmio_exits_leaked_to_qemu=0 guest_accesses=6330303 guest_exits=3842 guest_saw_decommitted=0 guest_wrong_bytes=0
+PROC private_mib start=1027.8 min=635.8 end=691.3
 LOSSLESS host_side_bad_pages=0 guest_side_bad_pages=0 verdict=PASS

@@ -1,19 +1,19 @@
     Updating crates.io index
  Downloading crates ...
+  Downloaded block-buffer v0.10.4
+  Downloaded version_check v0.9.5
+  Downloaded cfg-if v1.0.5
+  Downloaded lz4_flex v0.11.7
+  Downloaded crypto-common v0.1.7
   Downloaded digest v0.10.7
   Downloaded generic-array v0.14.7
-  Downloaded block-buffer v0.10.4
-  Downloaded sha2 v0.10.9
   Downloaded cpufeatures v0.2.17
-  Downloaded cfg-if v1.0.5
-  Downloaded version_check v0.9.5
-  Downloaded crypto-common v0.1.7
-  Downloaded lz4_flex v0.11.7
+  Downloaded sha2 v0.10.9
   Downloaded typenum v1.20.1
    Compiling version_check v0.9.5
    Compiling typenum v1.20.1
-   Compiling cpufeatures v0.2.17
    Compiling cfg-if v1.0.5
+   Compiling cpufeatures v0.2.17
    Compiling lz4_flex v0.11.7
    Compiling generic-array v0.14.7
    Compiling crypto-common v0.1.7
@@ -23,14 +23,14 @@
    Compiling em-cas v0.1.0 (D:\a\ElasticMEM\ElasticMEM\rust\em-cas)
    Compiling em-pager v0.1.0 (D:\a\ElasticMEM\ElasticMEM\rust\em-pager)
    Compiling elastic-arena v0.1.0 (D:\a\ElasticMEM\ElasticMEM\rust\elastic-arena)
-    Finished `release` profile [optimized] target(s) in 33.80s
+    Finished `release` profile [optimized] target(s) in 39.53s
      Running unittests src\lib.rs (rust\target\release\build\elastic-arena/311f90e9433c34dc\out\elastic_arena-311f90e9433c34dc.exe)
 
 running 6 tests
 test tests::probe_marks_hot_and_idle_compresses ... ok
 test tests::quota_pins_when_full ... ok
-test tests::rle_roundtrip_lossless ... ok
 test tests::zero_page_detected ... ok
+test tests::rle_roundtrip_lossless ... ok
 test tests::table_evict_fault_is_lossless ... ok
 test tests::cas_table_evict_fault_is_lossless ... ok
 
@@ -51,17 +51,18 @@ test tests::plain_config_builds_no_similarity_index ... ok
 test tests::roundtrip_lossless_mixed ... ok
 test tests::compaction_moves_payloads_and_frees_segments ... ok
 
-test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
 
      Running unittests src\lib.rs (rust\target\release\build\em-pager/aa8a592bb69455a1\out\em_pager-aa8a592bb69455a1.exe)
 
-running 4 tests
+running 5 tests
 test tests::aliased_ranges_are_not_managed ... ok
 test tests::corrupted_store_fails_closed ... ok
 test tests::pager_with_temporal_delta_is_lossless ... ok
 test tests::pager_is_lossless_under_guest_and_host_access ... ok
+test tests::coaccess_prefetch_cuts_restore_exits ... ok
 
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.06s
 
    Doc-tests elastic_arena
 
