@@ -11,6 +11,9 @@ pub type Sink<'a> = dyn FnMut(u32, u64, &[u8]) + 'a;
 pub struct Opts {
     pub private_only: bool,
     pub max_bytes: u64,
+    /// Для --raw: диапазоны смещений [a, b), которых нет в образе (например, дыры физической памяти,
+    /// забитые нулями при снятии дампа). Такие страницы не считаются.
+    pub skip: Vec<(u64, u64)>,
 }
 
 // ------------------------------ сырой образ / минидамп ------------------------------
@@ -25,9 +28,11 @@ pub fn raw(path: &str, o: &Opts, sink: &mut Sink) -> std::io::Result<u64> {
             if n * PAGE as u64 >= o.max_bytes {
                 return Ok(n);
             }
-            sink(0, addr, p);
+            if !o.skip.iter().any(|&(a, b)| addr >= a && addr < b) {
+                sink(0, addr, p);
+                n += 1;
+            }
             addr += PAGE as u64;
-            n += 1;
         }
         if got < buf.len() {
             return Ok(n);

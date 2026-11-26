@@ -26,10 +26,12 @@ struct Args {
     interval_ms: u64,
     max_mib: u64,
     codec: String,
+    skip: Vec<(u64, u64)>,
+    variants: Vec<String>,
 }
 
 fn parse() -> Args {
-    let mut a = Args { pids: vec![], names: vec![], dump: None, raw: None, synthetic: None, private_only: false, snapshots: 1, interval_ms: 30000, max_mib: 4096, codec: if cfg!(windows) { "xpress".into() } else { "lz4".into() } };
+    let mut a = Args { pids: vec![], names: vec![], dump: None, raw: None, synthetic: None, private_only: false, snapshots: 1, interval_ms: 30000, max_mib: 4096, codec: if cfg!(windows) { "xpress".into() } else { "lz4".into() }, skip: vec![], variants: vec!["plain".into(), "dedup".into(), "cas".into(), "cas1".into()] };
     let v: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     let need = |i: usize| -> String { v.get(i + 1).cloned().unwrap_or_else(|| { eprintln!("нет значения для {}", v[i]); std::process::exit(2) }) };
@@ -45,8 +47,16 @@ fn parse() -> Args {
             "--interval-ms" => { a.interval_ms = need(i).parse().unwrap(); i += 1; }
             "--max-mib" => { a.max_mib = need(i).parse().unwrap(); i += 1; }
             "--codec" => { a.codec = need(i); i += 1; }
+            "--skip-ranges" => {
+                // "0xA-0xB,0xC-0xD" или @файл с выводом winpmem (строки "Padding from 0x.. to 0x..")
+                let v = need(i);
+                let text = match v.strip_prefix('@') { Some(f) => std::fs::read_to_string(f).unwrap_or_default(), None => v.clone() };
+                a.skip.extend(parse_ranges(&text));
+                i += 1;
+            }
+            "--variants" => { a.variants = need(i).split(',').map(|s| s.trim().to_string()).collect(); i += 1; }
             "-h" | "--help" => {
-                println!("em-pagestat [--pid N]... [--name EXE]... [--dump F.dmp] [--raw F] [--synthetic MIB] [--private-only] [--snapshots K] [--interval-ms MS] [--max-mib M] [--codec xpress|lz4]");
+                println!("em-pagestat [--pid N]... [--name EXE]... [--dump F.dmp] [--raw F [--skip-ranges A-B,..|@winpmem.log]] [--synthetic MIB] [--private-only] [--snapshots K] [--interval-ms MS] [--max-mib M] [--codec xpress|lz4] [--variants plain,dedup,cas,cas1]");
                 std::process::exit(0);
             }
             x => { eprintln!("неизвестный аргумент {x}"); std::process::exit(2); }
@@ -54,6 +64,33 @@ fn parse() -> Args {
         i += 1;
     }
     a
+}
+
+fn hex(s: &str) -> Option<u64> {
+    u64::from_str_radix(s.trim().trim_start_matches("0x").trim_start_matches("0X"), 16).ok()
+}
+
+/// "0xA-0xB,..." или строки winpmem "Padding from 0xA to 0xB".
+fn parse_ranges(t: &str) -> Vec<(u64, u64)> {
+    let mut out = Vec::new();
+    for l in t.lines() {
+        if let Some(rest) = l.trim().strip_prefix("Padding from ") {
+            if let Some((a, b)) = rest.split_once(" to ") {
+                if let (Some(a), Some(b)) = (hex(a), hex(b.split_whitespace().next().unwrap_or(""))) {
+                    out.push((a, b));
+                }
+            }
+            continue;
+        }
+        for part in l.split(',') {
+            if let Some((a, b)) = part.split_once('-') {
+                if let (Some(a), Some(b)) = (hex(a), hex(b)) {
+                    out.push((a, b));
+                }
+            }
+        }
+    }
+    out
 }
 
 #[derive(Default)]
@@ -79,7 +116,10 @@ fn clen(c: &dyn Codec, p: &[u8]) -> u64 {
 
 fn main() {
     let a = parse();
-    let o = Opts { private_only: a.private_only, max_bytes: a.max_mib << 20 };
+    let o = Opts { private_only: a.private_only, max_bytes: a.max_mib << 20, skip: a.skip.clone() };
+    if !a.skip.is_empty() {
+        println!("PAGESTAT_SKIP ranges={} skipped_mib={}", a.skip.len(), a.skip.iter().map(|(x, y)| y.saturating_sub(*x)).sum::<u64>() >> 20);
+    }
     let mut pids = a.pids.clone();
     for n in &a.names {
         #[cfg(any(windows, target_os = "linux"))]
@@ -103,12 +143,14 @@ fn main() {
     for snap in 1..=a.snapshots {
         let mut s = Snap::default();
         let mut seen: HashMap<u128, (u32, bool)> = HashMap::new(); // ключ -> (первый источник, был ли в другом)
-        let variants: [(&str, Config); 4] = [
+        let all_variants: [(&str, Config); 4] = [
             ("plain", Config { dedup: false, delta: false, ..Config::default() }),
             ("dedup", Config { dedup: true, delta: false, ..Config::default() }),
             ("cas", Config::default()),
             ("cas1", Config { sketch_features: 1, ..Config::default() }),
         ];
+        let variants: Vec<(&str, Config)> = all_variants.iter().copied().filter(|(n, _)| a.variants.iter().any(|v| v == n)).collect();
+        let vi = |n: &str| variants.iter().position(|(x, _)| *x == n);
         let mut stores: Vec<CasStore> = variants.iter().map(|(_, c)| CasStore::new(em_cas::by_name(&a.codec), *c)).collect();
         let mut refs: Vec<Vec<Ref>> = vec![Vec::new(); stores.len()];
         let mut keys: Vec<u128> = Vec::new();
@@ -214,7 +256,7 @@ fn main() {
             }
         }
         let all: Vec<em_cas::CasStats> = stores.iter().map(|s| s.stats()).collect();
-        let cs = all[2];
+        let cs = all[vi("cas").or(vi("cas1")).or(vi("dedup")).unwrap_or(0)];
         let raw_b = s.pages * PAGE as u64;
         let mib = |x: u64| x as f64 / 1048576.0;
         let pct = |x: u64, of: u64| if of == 0 { 0.0 } else { 100.0 * x as f64 / of as f64 };
@@ -238,13 +280,16 @@ fn main() {
             );
         }
         let gain = |x: u64, base: u64| if base == 0 { 0.0 } else { 100.0 * (base as f64 - x as f64) / base as f64 };
-        let plain = all[0].total_bytes();
-        println!(
-            "GATE0_FAIR snap={snap} codec={} plain_mib={:.1} dedup_mib={:.1} cas_mib={:.1} cas1_mib={:.1} dedup_gain_pct={:.1} cas_gain_pct={:.1} cas1_gain_pct={:.1} delta_extra_gain_pct={:.1}",
-            a.codec, mib(plain), mib(all[1].total_bytes()), mib(all[2].total_bytes()), mib(all[3].total_bytes()),
-            gain(all[1].total_bytes(), plain), gain(all[2].total_bytes(), plain), gain(all[3].total_bytes(), plain),
-            gain(all[2].total_bytes(), all[1].total_bytes())
-        );
+        if let Some(pi) = vi("plain") {
+            let plain = all[pi].total_bytes();
+            let mut line = format!("GATE0_FAIR snap={snap} codec={} plain_mib={:.1}", a.codec, mib(plain));
+            for (i, (n, _)) in variants.iter().enumerate() {
+                if i != pi {
+                    line += &format!(" {n}_mib={:.1} {n}_gain_pct={:.1}", mib(all[i].total_bytes()), gain(all[i].total_bytes(), plain));
+                }
+            }
+            println!("{line}");
+        }
         let (best_name, best) = if xp.is_some() && s.xpress < s.lz4 { ("xpress", s.xpress) } else { ("lz4", s.lz4) };
         // Честное сравнение: обычному сжатию нулевые страницы тоже ничего не стоят (их и так не храним).
         println!(

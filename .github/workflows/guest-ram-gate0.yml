@@ -1,0 +1,97 @@
+name: guest-ram-gate0
+# Gate 0 по памяти Windows-гостя целиком. Раннер GitHub сам является ВМ Windows Server на Hyper-V, поэтому его
+# физическая память и есть «память гостя» — ровно то, что видел бы пейджер em-pager под QEMU/WHPX.
+# Снимаем её WinPmem (подписанный драйвер, хеш закреплён), под нагрузкой Edge с реальными сайтами, и считаем
+# em-pagestat --raw: нули, дубликаты страниц, XPRESS, em-cas. Образ памяти никуда не уходит и удаляется в конце;
+# в репозиторий попадают только агрегаты.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['claude/cas-memory']
+    paths: ['.github/workflows/guest-ram-gate0.yml']
+permissions:
+  contents: write
+env:
+  WINPMEM_URL: https://github.com/Velocidex/WinPmem/releases/download/v4.0.rc1/winpmem_mini_x64_rc2.exe
+  WINPMEM_SHA256: a4d516b6fcaf3b5b1d4ee709ce86f8eabf1d8028b3a83101479b7568b933d21b
+jobs:
+  gate0:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build em-pagestat
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          cargo build --release --manifest-path rust/Cargo.toml -p em-pagestat
+      - name: Workload (Edge with real sites) and memory state
+        shell: pwsh
+        run: |
+          $edge = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          $sites = 'https://en.wikipedia.org/wiki/Microsoft_Windows', 'https://github.com/microsoft/terminal', 'https://www.youtube.com/', 'https://developer.mozilla.org/en-US/docs/Web/JavaScript', 'https://news.ycombinator.com/'
+          $i = 0
+          foreach ($u in $sites) { Start-Process -FilePath $edge -ArgumentList @('--headless=new', "--user-data-dir=$env:RUNNER_TEMP\p$i", '--no-first-run', '--window-size=1280,720', $u) | Out-Null; $i++ }
+          Start-Sleep -Seconds 90
+          $o = "out/${{ matrix.os }}-state.txt"
+          (Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, TotalVisibleMemorySize, FreePhysicalMemory | Format-List | Out-String) | Tee-Object $o
+          $c = '\Memory\Free & Zero Page List Bytes', '\Memory\Standby Cache Normal Priority Bytes', '\Memory\Standby Cache Reserve Bytes', '\Memory\Standby Cache Core Bytes', '\Memory\Modified Page List Bytes', '\Memory\Pool Nonpaged Bytes', '\Memory\Pool Paged Resident Bytes', '\Memory\Committed Bytes'
+          foreach ($n in $c) { try { $v = (Get-Counter $n -ErrorAction Stop).CounterSamples[0].CookedValue; "{0} = {1:N0} MiB" -f $n, ($v / 1MB) | Tee-Object -Append $o } catch { "$n : n/a" | Tee-Object -Append $o } }
+          Get-Process msedge -ErrorAction SilentlyContinue | Measure-Object PrivateMemorySize64 -Sum | ForEach-Object { "msedge processes=$($_.Count) private_mib=$([int]($_.Sum/1MB))" } | Tee-Object -Append $o
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{n='FreeGiB';e={[int]($_.Free/1GB)}} | Format-Table | Out-String | Tee-Object -Append $o
+      - name: Physical memory image (WinPmem, pinned hash)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri $env:WINPMEM_URL -OutFile wp.exe
+          $h = (Get-FileHash wp.exe -Algorithm SHA256).Hash.ToLower()
+          if ($h -ne $env:WINPMEM_SHA256) { throw "winpmem hash mismatch: $h" }
+          $drive = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Free -gt 20GB } | Sort-Object Free -Descending | Select-Object -First 1
+          if (-not $drive) { throw "no drive with 20 GiB free" }
+          $img = "$($drive.Root)mem.raw"
+          "IMAGE=$img" | Out-File -Append $env:GITHUB_ENV
+          $t0 = Get-Date
+          ./wp.exe $img 2>&1 | Tee-Object "out/${{ matrix.os }}-winpmem.txt" | Select-Object -Last 15
+          "acquire_s=$([int]((Get-Date) - $t0).TotalSeconds) image_gib=$([math]::Round((Get-Item $img).Length / 1GB, 2))" | Tee-Object -Append "out/${{ matrix.os }}-winpmem.txt"
+          Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          if (-not (Test-Path $img) -or (Get-Item $img).Length -lt 1GB) { throw "no memory image" }
+          $global:LASTEXITCODE = 0
+      - name: em-pagestat on the guest RAM image (one store variant per pass)
+        shell: pwsh
+        run: |
+          $ps = "rust/target/release/em-pagestat.exe"
+          $skip = "out/${{ matrix.os }}-winpmem.txt"
+          foreach ($v in 'plain', 'dedup', 'cas1') {
+            & $ps --raw $env:IMAGE --skip-ranges "@$skip" --max-mib 65536 --variants $v 2>&1 | Tee-Object "out/${{ matrix.os }}-gate0-$v.txt"
+            if ($LASTEXITCODE -ne 0) { throw "pagestat $v failed (not lossless?)" }
+          }
+      - name: Delete the memory image
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:IMAGE -and (Test-Path $env:IMAGE)) { Remove-Item $env:IMAGE -Force }
+          Remove-Item wp.exe -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: "guest-ram-gate0-${{ matrix.os }}", path: out/ }
+  commit:
+    needs: gate0
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dl }
+      - name: Commit results back
+        run: |
+          mkdir -p rust/em-pagestat/results-guest-ram; rm -f rust/em-pagestat/results-guest-ram/*.txt
+          find dl -type f -name '*.txt' -exec cp {} rust/em-pagestat/results-guest-ram/ \;
+          # из журнала winpmem оставляем только служебные строки (диапазоны и итог), без лишнего
+          echo "run: ${{ github.run_id }} sha: ${{ github.sha }} result: ${{ needs.gate0.result }}" > rust/em-pagestat/results-guest-ram/RUN.txt
+          git config user.name "guest-ram-gate0"; git config user.email "actions@users.noreply.github.com"
+          git add rust/em-pagestat/results-guest-ram
+          git commit -m "guest-ram-gate0: results of run ${{ github.run_id }}" || exit 0
+          for i in 1 2 3; do git pull --rebase origin ${{ github.ref_name }} && git push origin HEAD:${{ github.ref_name }} && break; sleep 5; done
