@@ -2,19 +2,6 @@ Measure.ps1: ok
 Open-App.ps1: ok
 Prepare-Disk.ps1: ok
 Prepare-Guest.ps1: ok
-Run-All.ps1: 
-Extent          ErrorId                             Message                                                        Incom
-                                                                                                                   plete
-                                                                                                                   Input
-------          -------                             -------                                                        -----
-предварительные UnexpectedToken                     Unexpected token 'предварительные' in expression or statement. False
-предварительные MissingEndParenthesisAfterStatement Missing closing ')' after expression in 'if' statement.        False
-                MissingEndParenthesisInExpression   Missing closing ')' in expression.                             False
-)               UnexpectedToken                     Unexpected token ')' in expression or statement.               False
-,               MissingArgument                     Missing argument in parameter list.                            False
-,               MissingArgument                     Missing argument in parameter list.                            False
-'…              TerminatorExpectedAtEndOfString     The string is missing the terminator: '.                        True
-
-
+Run-All.ps1: ok
 Start-Guest.ps1: ok
 Common.ps1: ok

@@ -1,0 +1,7 @@
+Резервная копия куста: E:\Windows\System32\config\SYSTEM.elasticmem.bak
+storahci: загрузочный (Start=0)
+stornvme: загрузочный (Start=0)
+RDP разрешён
+Правила брандмауэра для RDP включены: 0
+Готово: диск подготовлен для QEMU.
+verify storahci_start=0 fDenyTSConnections=0 backup=True
