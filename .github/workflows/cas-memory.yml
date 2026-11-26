@@ -4,7 +4,8 @@ name: cas-memory
 #  * elastic-arena: классическое хранилище против em-cas, проверка dedup / delta / временно́й дельты и
 #    реальной экономии по счётчикам ОС;
 #  * pager-sim: пейджер гостевой памяти (модель WHP) с настоящими VEH, VirtualFree и остановкой потоков;
-#  * прокси WinHvPlatform.dll: смещения структур по Windows SDK + имитация QEMU поверх модели WHP;
+#  * прокси WinHvPlatform.dll: смещения структур по Windows SDK + имитация QEMU поверх модели WHP
+#    (включая дисковый ввод-вывод ReadFile/WriteFile в память гостя);
 #  * Gate 0: em-pagestat на настоящих процессах (Edge с реальными сайтами, svchost) — только агрегаты.
 #  Пейджер здесь работает с настройками по умолчанию (zero + dedup + XPRESS, без XOR-delta, co-access prefetch 8).
 on:
