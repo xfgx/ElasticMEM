@@ -1,0 +1,6 @@
+WinPmem64
+Extracting driver to C:\Users\RUNNER~1\AppData\Local\Temp\pmeC81A.tmp
+Driver Unloaded.
+Deleting C:\Users\RUNNER~1\AppData\Local\Temp\pmeC81A.tmp
+Driver Unloaded.
+acquire_s=0 image_gib=0
