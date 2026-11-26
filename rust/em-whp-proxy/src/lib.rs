@@ -197,11 +197,11 @@ unsafe fn patch_import(name: &[u8], hook: usize) -> usize {
 
 fn hook_io() -> (bool, bool) {
     unsafe {
-        let r = patch_import(b"ReadFile", hook_read_file as usize);
+        let r = patch_import(b"ReadFile", hook_read_file as *const () as usize);
         if r != 0 {
             REAL_READ.store(r, Ordering::Release);
         }
-        let w = patch_import(b"WriteFile", hook_write_file as usize);
+        let w = patch_import(b"WriteFile", hook_write_file as *const () as usize);
         if w != 0 {
             REAL_WRITE.store(w, Ordering::Release);
         }

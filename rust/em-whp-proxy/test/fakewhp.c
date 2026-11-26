@@ -24,12 +24,14 @@ EXP WHvMapGpaRange(void *p, void *src, uint64_t gpa, uint64_t size, int flags) {
     for (uint64_t i = 0; i < g_pages; i++) g_sh[i] = *(uint64_t *)(g_hva + i * PG + 256);
     while (g_nhot < (int)(g_pages / 32) && g_nhot < (1 << 16) - 16) { uint64_t s = (xr() % (g_pages / 16)) * 16; for (int k = 0; k < 16; k++) g_hot[g_nhot++] = s + k; }
   }
+  if (gpa < g_gpa0 || gpa >= g_gpa0 + g_pages * PG) return 0; // другие диапазоны (буферы ввода-вывода стенда) гость не трогает
   if ((uint8_t *)src != g_hva + (gpa - g_gpa0)) return 0x80070057;
   for (uint64_t i = 0; i < size / PG; i++) if (g_map[(gpa - g_gpa0) / PG + i]) return 0x80070057; // как WHP: уже отображено
   for (uint64_t i = 0; i < size / PG; i++) InterlockedExchange(&g_map[(gpa - g_gpa0) / PG + i], 1);
   return 0;
 }
 EXP WHvUnmapGpaRange(void *p, uint64_t gpa, uint64_t size) {
+  if (gpa < g_gpa0 || gpa >= g_gpa0 + g_pages * PG) return 0;
   for (uint64_t i = 0; i < size / PG; i++) InterlockedExchange(&g_map[(gpa - g_gpa0) / PG + i], 0);
   return 0;
 }
