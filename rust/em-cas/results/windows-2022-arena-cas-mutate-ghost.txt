@@ -1,7 +1,7 @@
 OS windows arena total_mib=512 hot_mib=48 warm_mib=32 secs=40 codec=xpress store=cas dup_pct=0 near_pct=0 ghost=true mutate=true pages=131072
-FRAMES n=2386 p50_ms=0.282 p99_ms=1.502 p999_ms=60.840 max_ms=81.738 over16ms=7 over50ms=3
+FRAMES n=2391 p50_ms=0.486 p99_ms=1.919 p999_ms=47.923 max_ms=59.351 over16ms=7 over50ms=2
 MEM resident_mib=69.6 compressed_mib=326.3 zero_mib=0.0 pinned_mib=116.1 store_mib=17.8 payload_mib=12.1 ratio=0.055
-ENGINE faults=147692 probe_hits=64459 probing_mib=0.0 decompressed=16620 evictions=100151 evicted_by_compactor=100151
-CAS zero=0 dedup=64603 delta=3438 temporal=2156 full=29954 incompressible=29719 live_entries=33293 payload_mib=12.1 segments_mib=13.7 meta_mib=4.1 total_mib=17.8 compact_moves=24 segments_released=1 crc_failures=0
-OSMEM private_start_mib=0.7 private_end_mib=727.3 ws_end_mib=726.9 shadow_mib=512.0 arena_plus_store_mib=214.6 logical_mib=512.0 saved_mib=297.4
+ENGINE faults=147671 probe_hits=65083 probing_mib=0.0 decompressed=16599 evictions=100122 evicted_by_compactor=100122
+CAS zero=0 dedup=64488 delta=3535 temporal=2145 full=29954 incompressible=29719 live_entries=33470 payload_mib=12.1 segments_mib=13.7 meta_mib=4.1 total_mib=17.8 compact_moves=0 segments_released=0 crc_failures=0
+OSMEM private_start_mib=0.7 private_end_mib=727.5 ws_end_mib=727.0 shadow_mib=512.0 arena_plus_store_mib=214.8 logical_mib=512.0 saved_mib=297.2
 LOSSLESS mismatched_pages=0 first_bad_page=-1 verdict=PASS

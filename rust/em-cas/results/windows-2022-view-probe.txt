@@ -1,0 +1,25 @@
+--- method=discard mib=512
+SNAP written via app view         ws_mib=1027 private_mib=2 sys_avail_mib=13574 sys_commit_mib=2811
+SNAP after release                ws_mib=3 private_mib=2 sys_avail_mib=14066 sys_commit_mib=2815
+RELEASE method=discard rc=0 ws_freed_mib=1024 sys_avail_gain_mib=492 sys_commit_delta_mib=4
+SNAP refilled via filler view     ws_mib=1027 private_mib=2 sys_avail_mib=13559 sys_commit_mib=2815
+COHERENT method=discard alias_mismatch=0 after_refill_mismatch=0 refill_cost_avail_mib=507
+--- method=mem_reset mib=512
+SNAP written via app view         ws_mib=1027 private_mib=2 sys_avail_mib=13557 sys_commit_mib=2815
+SNAP after release                ws_mib=3 private_mib=2 sys_avail_mib=14069 sys_commit_mib=2816
+RELEASE method=mem_reset rc=0 ws_freed_mib=1024 sys_avail_gain_mib=512 sys_commit_delta_mib=1
+SNAP refilled via filler view     ws_mib=1027 private_mib=2 sys_avail_mib=13557 sys_commit_mib=2816
+COHERENT method=mem_reset alias_mismatch=0 after_refill_mismatch=0 refill_cost_avail_mib=512
+--- method=offer mib=512
+SNAP written via app view         ws_mib=1027 private_mib=2 sys_avail_mib=13558 sys_commit_mib=2816
+SNAP after release                ws_mib=3 private_mib=2 sys_avail_mib=14070 sys_commit_mib=2816
+RELEASE method=offer rc=0 ws_freed_mib=1024 sys_avail_gain_mib=512 sys_commit_delta_mib=0
+SNAP refilled via filler view     ws_mib=1027 private_mib=2 sys_avail_mib=13558 sys_commit_mib=2816
+COHERENT method=offer alias_mismatch=0 after_refill_mismatch=0 refill_cost_avail_mib=512
+--- method=unlock_only mib=512
+SNAP written via app view         ws_mib=1027 private_mib=2 sys_avail_mib=13568 sys_commit_mib=2816
+SNAP after release                ws_mib=3 private_mib=2 sys_avail_mib=13555 sys_commit_mib=2816
+RELEASE method=unlock_only rc=0 ws_freed_mib=1024 sys_avail_gain_mib=-13 sys_commit_delta_mib=0
+SNAP refilled via filler view     ws_mib=1027 private_mib=2 sys_avail_mib=13555 sys_commit_mib=2816
+COHERENT method=unlock_only alias_mismatch=0 after_refill_mismatch=0 refill_cost_avail_mib=0
+VIEWS coherent=PASS
