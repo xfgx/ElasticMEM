@@ -273,12 +273,16 @@ impl Pager {
     }
     /// Операция под замком пейджера с учётом времени удержания (вид op из HOLD_NAMES).
     fn with_core<R>(&self, op: usize, f: impl FnOnce(&mut Core) -> R) -> R {
-        // фоновая работа уступает замок срочным (exit vCPU, VEH)
-        for _ in 0..10_000 {
+        // фоновая работа уступает замок срочным (exit vCPU, VEH): не больше ~2 мс ожидания на операцию
+        for i in 0..64 {
             if WAITERS.load(Ordering::SeqCst) == 0 {
                 break;
             }
-            std::thread::yield_now();
+            if i < 32 {
+                std::hint::spin_loop();
+            } else {
+                std::thread::sleep(std::time::Duration::from_micros(50));
+            }
         }
         let mut c = self.core.lock().unwrap();
         let t0 = self.qpc();
