@@ -1,27 +1,25 @@
-msedge processes=42 private_mib=1087
-PAGESTAT_RUN sources_pids=42 names=["msedge"] dump=false raw=false synthetic=None private_only=false snapshots=2 interval_ms=30000 max_mib=4096 cas_codec=xpress
-pid 11024: The parameter is incorrect. (os error 87)
-pid 11176: The parameter is incorrect. (os error 87)
-pid 11188: The parameter is incorrect. (os error 87)
-pid 11272: The parameter is incorrect. (os error 87)
-pid 11580: The parameter is incorrect. (os error 87)
-PAGESTAT snap=1 sources=37 pages=532825 resident_mib=2081.3 zero_pct=1.7 dup_pct=60.7 dup_cross_pct=59.9 lz4_mib=1110.8 lz4_ratio=0.534 xpress_mib=1040.8 xpress_ratio=0.500 cas_mib=306.7 cas_ratio=0.147 cas_payload_mib=269.0 cas_meta_mib=25.4 cas_segments_mib=281.2 cas_dedup=323569 cas_delta=11366 cas_full=187379 cas_incompressible=1274 cas_errors=0 cas_lossless=PASS
-STORE snap=1 variant=plain total_mib=1105.0 payload_mib=1040.8 meta_mib=24.0 segments_mib=1081.0 ratio=0.531 meta_bytes_per_page=47.2 dedup=0 delta=0 full=518709 incompressible=4879
-STORE snap=1 variant=dedup total_mib=301.2 payload_mib=276.3 meta_mib=12.4 segments_mib=288.8 ratio=0.145 meta_bytes_per_page=24.5 dedup=323569 delta=0 full=198728 incompressible=1291
-STORE snap=1 variant=cas total_mib=306.7 payload_mib=269.0 meta_mib=25.4 segments_mib=281.2 ratio=0.147 meta_bytes_per_page=50.1 dedup=323569 delta=11366 full=187379 incompressible=1274
-STORE snap=1 variant=cas1 total_mib=298.9 payload_mib=270.8 meta_mib=15.7 segments_mib=283.2 ratio=0.144 meta_bytes_per_page=30.9 dedup=323569 delta=7710 full=191033 incompressible=1276
-GATE0_FAIR snap=1 codec=xpress plain_mib=1105.0 dedup_mib=301.2 cas_mib=306.7 cas1_mib=298.9 dedup_gain_pct=72.7 cas_gain_pct=72.2 cas1_gain_pct=73.0 delta_extra_gain_pct=-1.8
-GATE0 snap=1 best_plain=xpress best_plain_mib=1040.8 cas_mib=306.7 cas_gain_vs_best_plain_pct=70.5 cas_payload_gain_vs_best_plain_pct=74.2
-pid 11024: The parameter is incorrect. (os error 87)
-pid 11176: The parameter is incorrect. (os error 87)
-pid 11188: The parameter is incorrect. (os error 87)
-pid 11272: The parameter is incorrect. (os error 87)
-pid 11580: The parameter is incorrect. (os error 87)
-PAGESTAT snap=2 sources=37 pages=334043 resident_mib=1304.9 zero_pct=0.9 dup_pct=60.7 dup_cross_pct=60.3 lz4_mib=719.2 lz4_ratio=0.551 xpress_mib=673.9 xpress_ratio=0.516 cas_mib=213.2 cas_ratio=0.163 cas_payload_mib=188.5 cas_meta_mib=15.8 cas_segments_mib=197.4 cas_dedup=202634 cas_delta=6640 cas_full=120904 cas_incompressible=744 cas_errors=0 cas_lossless=PASS
-STORE snap=2 variant=plain total_mib=715.6 payload_mib=673.9 meta_mib=15.2 segments_mib=700.4 ratio=0.548 meta_bytes_per_page=47.7 dedup=0 delta=0 full=328389 incompressible=2533
-STORE snap=2 variant=dedup total_mib=211.3 payload_mib=193.1 meta_mib=9.2 segments_mib=202.1 ratio=0.162 meta_bytes_per_page=29.0 dedup=202634 delta=0 full=127542 incompressible=746
-STORE snap=2 variant=cas total_mib=213.2 payload_mib=188.5 meta_mib=15.8 segments_mib=197.4 ratio=0.163 meta_bytes_per_page=49.4 dedup=202634 delta=6640 full=120904 incompressible=744
-STORE snap=2 variant=cas1 total_mib=211.1 payload_mib=189.5 meta_mib=12.5 segments_mib=198.6 ratio=0.162 meta_bytes_per_page=39.2 dedup=202634 delta=4726 full=122817 incompressible=745
-GATE0_FAIR snap=2 codec=xpress plain_mib=715.6 dedup_mib=211.3 cas_mib=213.2 cas1_mib=211.1 dedup_gain_pct=70.5 cas_gain_pct=70.2 cas1_gain_pct=70.5 delta_extra_gain_pct=-0.9
-GATE0 snap=2 best_plain=xpress best_plain_mib=673.9 cas_mib=213.2 cas_gain_vs_best_plain_pct=68.4 cas_payload_gain_vs_best_plain_pct=72.0
-TEMPORAL snap=2 matched_pages=330316 unchanged_pct=91.2 changed_pages=29187 changed_plain_lz4_mib=38.68 changed_xor_prev_lz4_mib=11.33 xor_gain_pct=70.7
+msedge processes=40 private_mib=1069
+PAGESTAT_RUN sources_pids=40 names=["msedge"] dump=false raw=false synthetic=None private_only=false snapshots=2 interval_ms=30000 max_mib=4096 cas_codec=xpress
+pid 10500: The parameter is incorrect. (os error 87)
+pid 10580: The parameter is incorrect. (os error 87)
+pid 10776: The parameter is incorrect. (os error 87)
+pid 10972: The parameter is incorrect. (os error 87)
+PAGESTAT snap=1 sources=36 pages=528770 resident_mib=2065.5 zero_pct=1.7 dup_pct=60.2 dup_cross_pct=59.5 lz4_mib=1100.9 lz4_ratio=0.533 xpress_mib=1031.3 xpress_ratio=0.499 cas_mib=311.8 cas_ratio=0.151 cas_payload_mib=273.8 cas_meta_mib=25.6 cas_segments_mib=286.2 cas_dedup=318489 cas_delta=11251 cas_full=188846 cas_incompressible=1222 cas_errors=0 cas_lossless=PASS
+STORE snap=1 variant=plain total_mib=1094.9 payload_mib=1031.3 meta_mib=23.8 segments_mib=1071.1 ratio=0.530 meta_bytes_per_page=47.2 dedup=0 delta=0 full=515210 incompressible=4598
+STORE snap=1 variant=dedup total_mib=306.2 payload_mib=281.1 meta_mib=12.6 segments_mib=293.6 ratio=0.148 meta_bytes_per_page=25.0 dedup=318489 delta=0 full=200088 incompressible=1231
+STORE snap=1 variant=cas total_mib=311.8 payload_mib=273.8 meta_mib=25.6 segments_mib=286.2 ratio=0.151 meta_bytes_per_page=50.8 dedup=318489 delta=11251 full=188846 incompressible=1222
+STORE snap=1 variant=cas1 total_mib=304.1 payload_mib=275.6 meta_mib=15.9 segments_mib=288.2 ratio=0.147 meta_bytes_per_page=31.5 dedup=318489 delta=7633 full=192462 incompressible=1224
+GATE0_FAIR snap=1 codec=xpress plain_mib=1094.9 dedup_mib=306.2 cas_mib=311.8 cas1_mib=304.1 dedup_gain_pct=72.0 cas_gain_pct=71.5 cas1_gain_pct=72.2 delta_extra_gain_pct=-1.8
+GATE0 snap=1 best_plain=xpress best_plain_mib=1031.3 cas_mib=311.8 cas_gain_vs_best_plain_pct=69.8 cas_payload_gain_vs_best_plain_pct=73.5
+pid 10500: The parameter is incorrect. (os error 87)
+pid 10580: The parameter is incorrect. (os error 87)
+pid 10776: The parameter is incorrect. (os error 87)
+pid 10972: The parameter is incorrect. (os error 87)
+PAGESTAT snap=2 sources=36 pages=347019 resident_mib=1355.5 zero_pct=0.7 dup_pct=61.2 dup_cross_pct=60.6 lz4_mib=754.6 lz4_ratio=0.557 xpress_mib=707.5 xpress_ratio=0.522 cas_mib=221.4 cas_ratio=0.163 cas_payload_mib=196.2 cas_meta_mib=15.9 cas_segments_mib=205.4 cas_dedup=212535 cas_delta=6451 cas_full=124720 cas_incompressible=812 cas_errors=0 cas_lossless=PASS
+STORE snap=2 variant=plain total_mib=751.0 payload_mib=707.5 meta_mib=15.9 segments_mib=735.1 ratio=0.554 meta_bytes_per_page=48.2 dedup=0 delta=0 full=341562 incompressible=2956
+STORE snap=2 variant=dedup total_mib=219.4 payload_mib=200.6 meta_mib=9.4 segments_mib=210.0 ratio=0.162 meta_bytes_per_page=28.5 dedup=212535 delta=0 full=131165 incompressible=818
+STORE snap=2 variant=cas total_mib=221.4 payload_mib=196.2 meta_mib=15.9 segments_mib=205.4 ratio=0.163 meta_bytes_per_page=48.2 dedup=212535 delta=6451 full=124720 incompressible=812
+STORE snap=2 variant=cas1 total_mib=219.2 payload_mib=197.1 meta_mib=12.7 segments_mib=206.5 ratio=0.162 meta_bytes_per_page=38.3 dedup=212535 delta=4721 full=126449 incompressible=813
+GATE0_FAIR snap=2 codec=xpress plain_mib=751.0 dedup_mib=219.4 cas_mib=221.4 cas1_mib=219.2 dedup_gain_pct=70.8 cas_gain_pct=70.5 cas1_gain_pct=70.8 delta_extra_gain_pct=-0.9
+GATE0 snap=2 best_plain=xpress best_plain_mib=707.5 cas_mib=221.4 cas_gain_vs_best_plain_pct=68.7 cas_payload_gain_vs_best_plain_pct=72.3
+TEMPORAL snap=2 matched_pages=342819 unchanged_pct=91.8 changed_pages=27990 changed_plain_lz4_mib=37.61 changed_xor_prev_lz4_mib=15.88 xor_gain_pct=57.8
