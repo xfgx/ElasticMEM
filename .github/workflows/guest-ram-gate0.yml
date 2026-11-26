@@ -53,9 +53,21 @@ jobs:
           if (-not $drive) { throw "no drive with 20 GiB free" }
           $img = "$($drive.Root)mem.raw"
           "IMAGE=$img" | Out-File -Append $env:GITHUB_ENV
-          $t0 = Get-Date
-          ./wp.exe $img 2>&1 | Tee-Object "out/${{ matrix.os }}-winpmem.txt" | Select-Object -Last 15
-          "acquire_s=$([int]((Get-Date) - $t0).TotalSeconds) image_gib=$([math]::Round((Get-Item $img).Length / 1GB, 2))" | Tee-Object -Append "out/${{ matrix.os }}-winpmem.txt"
+          $log = "out/${{ matrix.os }}-winpmem.txt"
+          $dg = Get-CimInstance -ClassName Win32_DeviceGuard -Namespace root\Microsoft\Windows\DeviceGuard -ErrorAction SilentlyContinue
+          if ($dg) { "deviceguard vbs_status=$($dg.VirtualizationBasedSecurityStatus) services_running=$($dg.SecurityServicesRunning -join ',')" | Tee-Object -Append $log }
+          foreach ($mode in '-2', '-1', '-0') {
+            if (Test-Path $img) { Remove-Item $img -Force }
+            $t0 = Get-Date
+            $p = Start-Process -FilePath (Resolve-Path wp.exe).Path -ArgumentList @($mode, $img) -Wait -PassThru -NoNewWindow -RedirectStandardOutput wp-out.txt -RedirectStandardError wp-err.txt
+            "--- mode $mode exit=$($p.ExitCode) s=$([int]((Get-Date) - $t0).TotalSeconds)" | Tee-Object -Append $log
+            Get-Content wp-out.txt, wp-err.txt -ErrorAction SilentlyContinue | Tee-Object -Append $log | Select-Object -Last 20
+            $len = if (Test-Path $img) { (Get-Item $img).Length } else { 0 }
+            "image_gib=$([math]::Round($len / 1GB, 2))" | Tee-Object -Append $log
+            if ($len -gt 1GB) { break }
+          }
+          Get-WinEvent -LogName 'Microsoft-Windows-CodeIntegrity/Operational' -MaxEvents 10 -ErrorAction SilentlyContinue | ForEach-Object { "CI $($_.Id): $($_.Message -replace '\s+', ' ')".Substring(0, [Math]::Min(300, 4 + $_.Message.Length)) } | Tee-Object -Append $log
+          Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager' } -MaxEvents 5 -ErrorAction SilentlyContinue | ForEach-Object { "SCM $($_.Id): $($_.Message -replace '\s+', ' ')" } | Tee-Object -Append $log
           Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           if (-not (Test-Path $img) -or (Get-Item $img).Length -lt 1GB) { throw "no memory image" }
           $global:LASTEXITCODE = 0
@@ -89,7 +101,6 @@ jobs:
         run: |
           mkdir -p rust/em-pagestat/results-guest-ram; rm -f rust/em-pagestat/results-guest-ram/*.txt
           find dl -type f -name '*.txt' -exec cp {} rust/em-pagestat/results-guest-ram/ \;
-          # из журнала winpmem оставляем только служебные строки (диапазоны и итог), без лишнего
           echo "run: ${{ github.run_id }} sha: ${{ github.sha }} result: ${{ needs.gate0.result }}" > rust/em-pagestat/results-guest-ram/RUN.txt
           git config user.name "guest-ram-gate0"; git config user.email "actions@users.noreply.github.com"
           git add rust/em-pagestat/results-guest-ram
