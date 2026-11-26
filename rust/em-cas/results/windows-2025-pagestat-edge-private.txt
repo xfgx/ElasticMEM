@@ -1,3 +1,8 @@
-PAGESTAT_RUN sources_pids=41 names=["msedge"] dump=false raw=false synthetic=None private_only=true snapshots=1 interval_ms=30000 max_mib=4096 cas_codec=xpress
-PAGESTAT snap=1 sources=41 pages=123235 resident_mib=481.4 zero_pct=2.7 dup_pct=4.1 dup_cross_pct=2.2 lz4_mib=158.4 lz4_ratio=0.329 xpress_mib=144.1 xpress_ratio=0.299 cas_mib=158.9 cas_ratio=0.330 cas_payload_mib=136.0 cas_meta_mib=15.8 cas_segments_mib=143.2 cas_dedup=5033 cas_delta=3777 cas_full=110766 cas_incompressible=380 cas_errors=0 cas_lossless=PASS
-GATE0 snap=1 best_plain=xpress best_plain_mib=144.1 cas_mib=158.9 cas_gain_vs_best_plain_pct=-10.3 cas_payload_gain_vs_best_plain_pct=5.6
+PAGESTAT_RUN sources_pids=42 names=["msedge"] dump=false raw=false synthetic=None private_only=true snapshots=1 interval_ms=30000 max_mib=4096 cas_codec=xpress
+PAGESTAT snap=1 sources=42 pages=85880 resident_mib=335.5 zero_pct=1.2 dup_pct=2.7 dup_cross_pct=2.1 lz4_mib=112.4 lz4_ratio=0.335 xpress_mib=101.5 xpress_ratio=0.303 cas_mib=111.8 cas_ratio=0.333 cas_payload_mib=97.4 cas_meta_mib=8.8 cas_segments_mib=103.0 cas_dedup=2290 cas_delta=3125 cas_full=79254 cas_incompressible=192 cas_errors=0 cas_lossless=PASS
+STORE snap=1 variant=plain total_mib=111.4 payload_mib=101.5 meta_mib=3.9 segments_mib=107.4 ratio=0.332 meta_bytes_per_page=48.1 dedup=0 delta=0 full=84616 incompressible=245
+STORE snap=1 variant=dedup total_mib=110.6 payload_mib=99.5 meta_mib=5.6 segments_mib=105.1 ratio=0.330 meta_bytes_per_page=67.9 dedup=2290 delta=0 full=82375 incompressible=196
+STORE snap=1 variant=cas total_mib=111.8 payload_mib=97.4 meta_mib=8.8 segments_mib=103.0 ratio=0.333 meta_bytes_per_page=107.6 dedup=2290 delta=3125 full=79254 incompressible=192
+STORE snap=1 variant=cas1 total_mib=110.9 payload_mib=98.0 meta_mib=7.2 segments_mib=103.7 ratio=0.331 meta_bytes_per_page=87.8 dedup=2290 delta=1990 full=80389 incompressible=192
+GATE0_FAIR snap=1 codec=xpress plain_mib=111.4 dedup_mib=110.6 cas_mib=111.8 cas1_mib=110.9 dedup_gain_pct=0.7 cas_gain_pct=-0.4 cas1_gain_pct=0.4 delta_extra_gain_pct=-1.1
+GATE0 snap=1 best_plain=xpress best_plain_mib=101.5 cas_mib=111.8 cas_gain_vs_best_plain_pct=-10.1 cas_payload_gain_vs_best_plain_pct=4.1
