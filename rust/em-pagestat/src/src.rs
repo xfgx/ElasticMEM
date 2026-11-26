@@ -166,6 +166,7 @@ pub mod live {
 
     pub fn pids_by_name(name: &str) -> Vec<u32> {
         let want = name.to_lowercase().trim_end_matches(".exe").to_string();
+        let all = want == "*";
         let mut out = Vec::new();
         unsafe {
             let s = CreateToolhelp32Snapshot(2, 0);
@@ -177,7 +178,7 @@ pub mod live {
             while ok != 0 {
                 let n = e.exe.iter().position(|&c| c == 0).unwrap_or(260);
                 let exe = String::from_utf16_lossy(&e.exe[..n]).to_lowercase();
-                if exe.trim_end_matches(".exe") == want {
+                if (all && e.pid > 4 && e.pid != std::process::id()) || exe.trim_end_matches(".exe") == want {
                     out.push(e.pid);
                 }
                 ok = Process32NextW(s, &mut e);
@@ -262,7 +263,7 @@ pub mod live {
             for e in rd.flatten() {
                 if let Ok(pid) = e.file_name().to_string_lossy().parse::<u32>() {
                     if let Ok(c) = std::fs::read_to_string(format!("/proc/{pid}/comm")) {
-                        if c.trim() == name {
+                        if (name == "*" && pid != std::process::id()) || c.trim() == name {
                             out.push(pid);
                         }
                     }

@@ -1,0 +1,37 @@
+deviceguard vbs_status=2 services_running=0
+--- mode -2 exit=1 s=0
+WinPmem64
+Extracting driver to C:\Users\RUNNER~1\AppData\Local\Temp\pme7849.tmp
+Driver Unloaded.
+Deleting C:\Users\RUNNER~1\AppData\Local\Temp\pme7849.tmp
+Driver Unloaded.
+image_gib=0
+--- mode -1 exit=1 s=0
+WinPmem64
+Extracting driver to C:\Users\RUNNER~1\AppData\Local\Temp\pme7888.tmp
+Driver Unloaded.
+Deleting C:\Users\RUNNER~1\AppData\Local\Temp\pme7888.tmp
+Driver Unloaded.
+image_gib=0
+--- mode -0 exit=1 s=0
+WinPmem64
+Extracting driver to C:\Users\RUNNER~1\AppData\Local\Temp\pme7897.tmp
+Driver Unloaded.
+Deleting C:\Users\RUNNER~1\AppData\Local\Temp\pme7897.tmp
+Driver Unloaded.
+image_gib=0
+CI 3116: Signature information for Code Integrity policy ID {a072029f-588b-4b5e-b7f9-05aad67df
+CI 3099: Refreshed and activated Code Integrity policy {a072029f-588b-4b5e-b7f9-05aad67df687} Microsoft Windows Virtualization Based Security Policy. id 10.0.29664.0. Statu
+CI 3085: Code Integrity will disable WHQL driver enforcement for this boot session. Settings 
+CI 3116: Signature information for Code Integrity policy ID {a072029f-588b-4b5e-b7f9-05aad67df
+CI 3099: Refreshed and activated Code Integrity policy {a072029f-588b-4b5e-b7f9-05aad67df687} Microsoft Windows Virtualization Based Security Policy. id 10.0.29664.0. Statu
+CI 3085: Code Integrity will disable WHQL driver enforcement for this boot session. Settings 
+CI 3116: Signature information for Code Integrity policy ID {a072029f-588b-4b5e-b7f9-05aad67df
+CI 3099: Refreshed and activated Code Integrity policy {a072029f-588b-4b5e-b7f9-05aad67df687} Microsoft Windows Virtualization Based Security Policy. id 10.0.29664.0. Statu
+CI 3085: Code Integrity will disable WHQL driver enforcement for this boot session. Settings 
+CI 3116: Signature information for Code Integrity policy ID {a072029f-588b-4b5e-b7f9-05aad67df
+SCM 7036: The Windows Modules Installer service entered the running state.
+SCM 7036: The Software Protection service entered the running state.
+SCM 7036: The Background Intelligent Transfer Service service entered the running state.
+SCM 7040: The start type of the Background Intelligent Transfer Service service was changed from demand start to auto start.
+SCM 7036: The Portable Device Enumerator Service service entered the stopped state.
