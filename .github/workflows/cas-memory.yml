@@ -6,6 +6,7 @@ name: cas-memory
 #  * pager-sim: пейджер гостевой памяти (модель WHP) с настоящими VEH, VirtualFree и остановкой потоков;
 #  * прокси WinHvPlatform.dll: смещения структур по Windows SDK + имитация QEMU поверх модели WHP;
 #  * Gate 0: em-pagestat на настоящих процессах (Edge с реальными сайтами, svchost) — только агрегаты.
+#  Пейджер здесь работает с настройками по умолчанию (zero + dedup + XPRESS, без XOR-delta).
 on:
   workflow_dispatch:
   push:
