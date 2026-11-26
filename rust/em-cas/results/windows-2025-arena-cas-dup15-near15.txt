@@ -1,7 +1,7 @@
 OS windows arena total_mib=1024 hot_mib=96 warm_mib=64 secs=40 codec=xpress store=cas dup_pct=15 near_pct=15 ghost=false mutate=false pages=262144
-FRAMES n=2376 p50_ms=0.499 p99_ms=3.443 p999_ms=75.543 max_ms=84.021 over16ms=9 over50ms=7
-MEM resident_mib=131.3 compressed_mib=651.9 zero_mib=0.0 pinned_mib=230.7 store_mib=27.9 payload_mib=17.5 ratio=0.043
-ENGINE faults=287226 probe_hits=106086 probing_mib=10.2 decompressed=25082 evictions=191966 evicted_by_compactor=191966
-CAS zero=0 dedup=117615 delta=27579 temporal=0 full=46772 incompressible=59053 live_entries=65236 payload_mib=17.5 segments_mib=20.0 meta_mib=7.9 total_mib=27.9 compact_moves=1085 segments_released=29 crc_failures=0
-OSMEM private_start_mib=0.7 private_end_mib=1445.8 ws_end_mib=1434.3 shadow_mib=1024.0 arena_plus_store_mib=421.1 logical_mib=1024.0 saved_mib=602.9
+FRAMES n=2378 p50_ms=1.001 p99_ms=3.643 p999_ms=64.663 max_ms=80.548 over16ms=9 over50ms=7
+MEM resident_mib=131.7 compressed_mib=650.9 zero_mib=0.0 pinned_mib=230.1 store_mib=27.8 payload_mib=17.5 ratio=0.043
+ENGINE faults=288164 probe_hits=104848 probing_mib=11.3 decompressed=26020 evictions=192658 evicted_by_compactor=192658
+CAS zero=0 dedup=118072 delta=27694 temporal=0 full=46892 incompressible=58893 live_entries=65130 payload_mib=17.5 segments_mib=19.9 meta_mib=7.9 total_mib=27.8 compact_moves=1161 segments_released=31 crc_failures=0
+OSMEM private_start_mib=0.7 private_end_mib=1446.8 ws_end_mib=1434.1 shadow_mib=1024.0 arena_plus_store_mib=422.1 logical_mib=1024.0 saved_mib=601.9
 LOSSLESS mismatched_pages=0 first_bad_page=-1 verdict=PASS
