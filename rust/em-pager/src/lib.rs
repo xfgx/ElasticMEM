@@ -448,8 +448,12 @@ impl Core {
     pub fn on_exit(&mut self, ri: usize, cl: usize, now: u64, stream: u32, ops: &dyn Ops) -> Result<bool, CasError> {
         match self.ranges[ri].st[cl] {
             Cl::Resident => {
-                // другой vCPU уже вернул кластер — или отображение пропало не по нашей вине: отобразить ещё раз
-                Ok(self.map_cl(ri, cl, ops))
+                // Другой vCPU (или VEH) уже вернул и отобразил кластер, пока этот exit ждал замок: exit устарел,
+                // инструкцию нужно просто повторить. Повторное WHvMapGpaRange по отображённому диапазону завершится
+                // ошибкой — это не повод отдавать exit в QEMU как MMIO (на настоящем госте это ломало гостя).
+                // Если отображения вдруг действительно нет, эта попытка его вернёт.
+                let _ = self.map_cl(ri, cl, ops);
+                Ok(true)
             }
             Cl::Probing => {
                 if !self.map_cl(ri, cl, ops) {

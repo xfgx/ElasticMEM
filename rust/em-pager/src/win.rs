@@ -148,7 +148,15 @@ impl Ops for WinOps {
                 let fl = WHV_READ | WHV_EXEC | if write { WHV_WRITE } else { 0 };
                 unsafe { map(*part, hva, gpa, len as u64, fl) >= 0 }
             }
-            Hv::Sim { .. } => {
+            Hv::Sim { mapped, .. } => {
+                // как настоящий WHP: отображение уже отображённого диапазона — ошибка
+                for k in 0..len / 4096 {
+                    if let Some((wi, b)) = self.sim_bit(gpa + (k * 4096) as u64) {
+                        if mapped[wi].load(Ordering::SeqCst) & b != 0 {
+                            return false;
+                        }
+                    }
+                }
                 self.sim_set(gpa, len, true);
                 true
             }

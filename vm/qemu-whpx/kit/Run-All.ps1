@@ -5,7 +5,8 @@
 #   -Vhdx          : диск гостя (иначе — выбор из ВМ Hyper-V)
 #   -Rdp           : ваш .rdp для окна приложения (иначе окно не открывается автоматически)
 #   -Minutes       : сколько минут мерить пейджер, пока вы пользуетесь приложением (по умолчанию 10)
-param([switch]$PreflightOnly, [string]$Vhdx, [string]$Rdp, [int]$Minutes = 10, [int]$MemoryMiB = 0, [int]$BootTimeoutMin = 15)
+#   -Mode          : pager (по умолчанию) или plain — тот же гость без пейджера, для сравнения, если гость падает
+param([switch]$PreflightOnly, [string]$Vhdx, [string]$Rdp, [int]$Minutes = 10, [int]$MemoryMiB = 0, [int]$BootTimeoutMin = 15, [ValidateSet('pager', 'plain')][string]$Mode = 'pager')
 . (Join-Path $PSScriptRoot 'scripts\Common.ps1')
 $ErrorActionPreference = 'Continue'
 $stamp = '{0:yyyyMMdd-HHmm}' -f (Get-Date)
@@ -14,7 +15,26 @@ New-Item -ItemType Directory -Force $rep | Out-Null
 $env:EM_REPORT_DIR = $rep
 $log = Join-Path $rep 'run-all.txt'
 function Say([string]$s) { Write-Host $s; Add-Content -Path $log -Value ("{0:HH:mm:ss} {1}" -f (Get-Date), $s) -Encoding UTF8 }
+# Настоящая проверка RDP: QEMU (slirp) принимает TCP-соединение на проброшенном порту ещё до загрузки гостя,
+# поэтому ждём ответ сервера RDP на запрос X.224 Connection Request.
+function Test-Rdp([int]$port = 13389) {
+  try {
+    $c = New-Object Net.Sockets.TcpClient
+    $c.ReceiveTimeout = 3000
+    $c.Connect('127.0.0.1', $port)
+    $s = $c.GetStream()
+    $req = [byte[]](3, 0, 0, 19, 14, 224, 0, 0, 0, 0, 0, 1, 0, 8, 0, 3, 0, 0, 0)
+    $s.Write($req, 0, $req.Length)
+    $buf = New-Object byte[] 64
+    $n = $s.Read($buf, 0, 64)
+    $c.Close()
+    return ($n -ge 4 -and $buf[0] -eq 3)
+  } catch { return $false }
+}
 function Finish([string]$why) {
+  $qe = (Get-Content (Join-Path $Work 'qemu-err.txt') -Raw -ErrorAction SilentlyContinue) + (Get-Content (Join-Path $Work 'qemu-out.txt') -Raw -ErrorAction SilentlyContinue)
+  if ("$qe" -match 'Unexpected VP exit code 4') { Say 'ДИАГНОЗ: гость аварийно остановился (тройной сбой после синего экрана). Сравните с запуском без пейджера: Run-All.ps1 -Mode plain' }
+  if ("$qe" -match 'Unimplemented handler') { Say 'ДИАГНОЗ: QEMU получил обращение гостя к памяти как к устройству (Unimplemented handler) — признак ошибки пейджера' }
   Say "ИТОГ: $why"
   foreach ($f in 'em-pager.log', 'qemu-err.txt', 'qemu-out.txt', 'runs.txt') { $p = Join-Path $Work $f; if (Test-Path $p) { Copy-Item $p $rep } }
   $desk = [Environment]::GetFolderPath('Desktop')
@@ -136,7 +156,7 @@ $irq = 'on'
 $started = $false
 for ($try = 1; $try -le 2 -and -not $started; $try++) {
   try {
-    & (Join-Path $PSScriptRoot 'Start-Guest.ps1') -Vhdx $Vhdx -Mode pager -Firmware $fw -MemoryMiB $MemoryMiB -Irqchip $irq 2>&1 | ForEach-Object { Say "$_" }
+    & (Join-Path $PSScriptRoot 'Start-Guest.ps1') -Vhdx $Vhdx -Mode $Mode -Firmware $fw -MemoryMiB $MemoryMiB -Irqchip $irq 2>&1 | ForEach-Object { Say "$_" }
     $started = [bool](Get-GuestProcess)
   } catch { Say "Start-Guest: $($_.Exception.Message)" }
   if (-not $started) {
@@ -152,17 +172,34 @@ $t0 = Get-Date
 $booted = $false
 while (((Get-Date) - $t0).TotalMinutes -lt $BootTimeoutMin) {
   if (-not (Get-GuestProcess)) { break }
-  try { $c = New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1', 13389); $c.Close(); $booted = $true; break } catch { }
+  if (Test-Rdp) { $booted = $true; break }
   Start-Sleep -Seconds 10
 }
 Say ("Загрузка: {0} за {1:N0} с" -f $(if ($booted) { 'гость отвечает по RDP' } else { 'не дождался' }), ((Get-Date) - $t0).TotalSeconds)
 if (-not (Get-GuestProcess)) { Finish 'QEMU завершился во время загрузки (если на экране был синий экран INACCESSIBLE_BOOT_DEVICE — не запускали Prepare-Guest.ps1)' }
-if (-not $booted) { Say 'RDP не ответил: замеряю всё равно (возможно, в госте выключен RDP)' }
+if (-not $booted) { Say 'RDP не ответил: замеряю всё равно. В гость можно войти прямо в окне QEMU.' }
 
-# ---------- замеры ----------
+# ---------- окно гостя ----------
 if ($Rdp) { & (Join-Path $PSScriptRoot 'Open-App.ps1') -Rdp $Rdp }
-Say "Замер пейджера $Minutes мин. Пользуйтесь приложением гостя как обычно (окно — пункт 3 меню или ваш .rdp)."
-& (Join-Path $PSScriptRoot 'Measure.ps1') -Mode track2 -Seconds ($Minutes * 60) 2>&1 | ForEach-Object { Add-Content -Path $log -Value "$_" -Encoding UTF8 }
+elseif ($booted) {
+  Start-Process mstsc.exe -ArgumentList '/v:127.0.0.1:13389'
+  Say 'Открыл удалённый рабочий стол гостя (mstsc). Войдите учётной записью администратора гостя.'
+}
+Say 'Войти в гостя можно и прямо в окне QEMU. Запустите там приложения, которыми пользуетесь (браузер и т. п.).'
+$mode = if ($Mode -eq 'pager') { 'пейджера' } else { 'гостя без пейджера' }
+Say "Замер $mode $Minutes мин. Пользуйтесь приложениями в госте как обычно."
+$mm = if ($Mode -eq 'pager') { 'track2' } else { 'idle' }
+if ($mm -eq 'track2') {
+  & (Join-Path $PSScriptRoot 'Measure.ps1') -Mode track2 -Seconds ($Minutes * 60) 2>&1 | ForEach-Object { Add-Content -Path $log -Value "$_" -Encoding UTF8 }
+} else {
+  for ($t = 0; $t -lt $Minutes * 60; $t += 30) {
+    Start-Sleep 30
+    $snap = (Get-MemSnapshot "t$t") | ConvertTo-Json -Compress
+    Add-Content -Path $log -Value "SNAP $snap" -Encoding UTF8
+    if (-not (Get-GuestProcess)) { Say 'QEMU завершился во время замера'; break }
+  }
+}
+if (-not (Get-GuestProcess)) { Finish 'QEMU завершился во время замера' }
 Say 'Gate 0 по памяти гостя (два снимка с паузой 60 с)'
 & (Join-Path $PSScriptRoot 'Measure.ps1') -Mode pagestat 2>&1 | ForEach-Object { Add-Content -Path $log -Value "$_" -Encoding UTF8 }
 $last = Get-Content (Join-Path $Work 'em-pager.log') -Tail 1 -ErrorAction SilentlyContinue

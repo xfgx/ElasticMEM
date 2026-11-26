@@ -19,7 +19,11 @@ impl Sim {
 
 impl Ops for Sim {
     fn map(&self, gpa: u64, _h: *mut u8, len: usize, _w: bool) -> bool {
+        // как настоящий WHP: повторное отображение уже отображённого диапазона — ошибка
         let p = self.pg(gpa);
+        if self.mapped.borrow()[p..p + len / PAGE].iter().any(|&m| m) {
+            return false;
+        }
         self.mapped.borrow_mut()[p..p + len / PAGE].fill(true);
         true
     }
@@ -280,4 +284,40 @@ fn coaccess_prefetch_cuts_restore_exits() {
     eprintln!("coaccess: restore exits without prefetch {without}, with {with}; prefetched={} checks={} hits={} active={}", st.prefetched, st.pf_checks, st.pf_check_hits, st.pf_active);
     assert!(st.prefetched > 0 && st.pf_active, "{st:?}");
     assert!(with * 10 < without * 8, "exits with prefetch {with}, without {without}");
+}
+
+/// Два vCPU получают exit по одному и тому же кластеру: первый его возвращает, второй приходит, когда кластер уже
+/// Resident и отображён. Второй exit тоже должен считаться обработанным (повторить инструкцию), а не уйти в QEMU
+/// как MMIO — на настоящем госте это давало «Unimplemented handler for PUSH» и синий экран.
+#[test]
+fn second_vcpu_exit_on_already_restored_cluster_is_handled() {
+    let (_mem, sim, mut core) = setup(2, false);
+    let (mut probe, mut idle) = (Vec::new(), Vec::new());
+    core.candidates(0, 1000, 1000, &mut probe, &mut idle);
+    for &(ri, cl) in &probe {
+        core.begin_probe(ri, cl, 0, &sim);
+    }
+    let (ri, cl) = probe[0];
+    // probing: оба vCPU получили exit, обрабатываются по очереди
+    assert!(core.on_exit(ri, cl, 10, 0, &sim).unwrap());
+    assert!(core.on_exit(ri, cl, 10, 0, &sim).unwrap(), "второй exit по уже возвращённому кластеру");
+    // evicted: то же самое
+    probe.clear();
+    idle.clear();
+    core.candidates(5000, 1000, 1000, &mut probe, &mut idle);
+    for &(ri, cl) in &probe {
+        core.begin_probe(ri, cl, 5000, &sim);
+    }
+    probe.clear();
+    core.candidates(9000, 0, 1000, &mut probe, &mut idle);
+    let mut ev = None;
+    for &(ri, cl) in &idle {
+        if core.evict(ri, cl, 9000, &sim) && ev.is_none() {
+            ev = Some((ri, cl));
+        }
+    }
+    let (ri, cl) = ev.expect("evicted cluster");
+    assert!(core.on_exit(ri, cl, 9100, 0, &sim).unwrap());
+    assert!(core.on_exit(ri, cl, 9100, 0, &sim).unwrap(), "второй exit по уже восстановленному кластеру");
+    assert!(core.on_host_fault(ri, cl, 9100, 1, &sim).unwrap());
 }

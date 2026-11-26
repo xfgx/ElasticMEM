@@ -25,6 +25,7 @@ EXP WHvMapGpaRange(void *p, void *src, uint64_t gpa, uint64_t size, int flags) {
     while (g_nhot < (int)(g_pages / 32) && g_nhot < (1 << 16) - 16) { uint64_t s = (xr() % (g_pages / 16)) * 16; for (int k = 0; k < 16; k++) g_hot[g_nhot++] = s + k; }
   }
   if ((uint8_t *)src != g_hva + (gpa - g_gpa0)) return 0x80070057;
+  for (uint64_t i = 0; i < size / PG; i++) if (g_map[(gpa - g_gpa0) / PG + i]) return 0x80070057; // как WHP: уже отображено
   for (uint64_t i = 0; i < size / PG; i++) InterlockedExchange(&g_map[(gpa - g_gpa0) / PG + i], 1);
   return 0;
 }
