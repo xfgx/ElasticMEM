@@ -1,29 +1,29 @@
     Updating crates.io index
  Downloading crates ...
-  Downloaded cfg-if v1.0.5
-  Downloaded digest v0.10.7
-  Downloaded version_check v0.9.5
   Downloaded crypto-common v0.1.7
-  Downloaded generic-array v0.14.7
-  Downloaded lz4_flex v0.11.7
-  Downloaded block-buffer v0.10.4
-  Downloaded sha2 v0.10.9
-  Downloaded cpufeatures v0.2.17
   Downloaded typenum v1.20.1
+  Downloaded version_check v0.9.5
+  Downloaded block-buffer v0.10.4
+  Downloaded cfg-if v1.0.5
+  Downloaded generic-array v0.14.7
+  Downloaded cpufeatures v0.2.17
+  Downloaded sha2 v0.10.9
+  Downloaded digest v0.10.7
+  Downloaded lz4_flex v0.11.7
    Compiling version_check v0.9.5
    Compiling typenum v1.20.1
    Compiling cfg-if v1.0.5
    Compiling cpufeatures v0.2.17
    Compiling lz4_flex v0.11.7
    Compiling generic-array v0.14.7
-   Compiling block-buffer v0.10.4
    Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
    Compiling digest v0.10.7
    Compiling sha2 v0.10.9
    Compiling em-cas v0.1.0 (D:\a\ElasticMEM\ElasticMEM\rust\em-cas)
    Compiling em-pager v0.1.0 (D:\a\ElasticMEM\ElasticMEM\rust\em-pager)
    Compiling elastic-arena v0.1.0 (D:\a\ElasticMEM\ElasticMEM\rust\elastic-arena)
-    Finished `release` profile [optimized] target(s) in 42.98s
+    Finished `release` profile [optimized] target(s) in 44.06s
      Running unittests src\lib.rs (rust\target\release\build\elastic-arena/311f90e9433c34dc\out\elastic_arena-311f90e9433c34dc.exe)
 
 running 6 tests
@@ -51,7 +51,7 @@ test tests::plain_config_builds_no_similarity_index ... ok
 test tests::roundtrip_lossless_mixed ... ok
 test tests::compaction_moves_payloads_and_frees_segments ... ok
 
-test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
 
      Running unittests src\lib.rs (rust\target\release\build\em-pager/aa8a592bb69455a1\out\em_pager-aa8a592bb69455a1.exe)
 
@@ -61,7 +61,7 @@ test tests::corrupted_store_fails_closed ... ok
 test tests::pager_is_lossless_under_guest_and_host_access ... ok
 test tests::pager_with_temporal_delta_is_lossless ... ok
 
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
 
    Doc-tests elastic_arena
 

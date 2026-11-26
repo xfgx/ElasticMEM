@@ -1,8 +1,8 @@
-PAGESTAT_RUN sources_pids=42 names=["msedge"] dump=false raw=false synthetic=None private_only=true snapshots=1 interval_ms=30000 max_mib=4096 cas_codec=xpress
-PAGESTAT snap=1 sources=42 pages=89714 resident_mib=350.4 zero_pct=2.0 dup_pct=3.5 dup_cross_pct=2.1 lz4_mib=113.5 lz4_ratio=0.324 xpress_mib=102.9 xpress_ratio=0.293 cas_mib=115.1 cas_ratio=0.328 cas_payload_mib=97.6 cas_meta_mib=12.1 cas_segments_mib=103.0 cas_dedup=3142 cas_delta=3018 cas_full=81247 cas_incompressible=471 cas_errors=0 cas_lossless=PASS
-STORE snap=1 variant=plain total_mib=112.7 payload_mib=102.9 meta_mib=4.1 segments_mib=108.6 ratio=0.322 meta_bytes_per_page=48.2 dedup=0 delta=0 full=87335 incompressible=543
-STORE snap=1 variant=dedup total_mib=111.1 payload_mib=99.8 meta_mib=5.6 segments_mib=105.5 ratio=0.317 meta_bytes_per_page=65.0 dedup=3142 delta=0 full=84260 incompressible=476
-STORE snap=1 variant=cas total_mib=115.1 payload_mib=97.6 meta_mib=12.1 segments_mib=103.0 ratio=0.328 meta_bytes_per_page=141.0 dedup=3142 delta=3018 full=81247 incompressible=471
-STORE snap=1 variant=cas1 total_mib=111.4 payload_mib=98.3 meta_mib=7.2 segments_mib=104.2 ratio=0.318 meta_bytes_per_page=84.0 dedup=3142 delta=1889 full=82376 incompressible=471
-GATE0_FAIR snap=1 codec=xpress plain_mib=112.7 dedup_mib=111.1 cas_mib=115.1 cas1_mib=111.4 dedup_gain_pct=1.4 cas_gain_pct=-2.1 cas1_gain_pct=1.1 delta_extra_gain_pct=-3.6
-GATE0 snap=1 best_plain=xpress best_plain_mib=102.9 cas_mib=115.1 cas_gain_vs_best_plain_pct=-11.9 cas_payload_gain_vs_best_plain_pct=5.1
+PAGESTAT_RUN sources_pids=41 names=["msedge"] dump=false raw=false synthetic=None private_only=true snapshots=1 interval_ms=30000 max_mib=4096 cas_codec=xpress
+PAGESTAT snap=1 sources=41 pages=85681 resident_mib=334.7 zero_pct=2.0 dup_pct=2.8 dup_cross_pct=1.8 lz4_mib=109.5 lz4_ratio=0.327 xpress_mib=98.9 xpress_ratio=0.295 cas_mib=108.7 cas_ratio=0.325 cas_payload_mib=94.5 cas_meta_mib=8.6 cas_segments_mib=100.1 cas_dedup=2414 cas_delta=2677 cas_full=78644 cas_incompressible=269 cas_errors=0 cas_lossless=PASS
+STORE snap=1 variant=plain total_mib=108.6 payload_mib=98.9 meta_mib=3.9 segments_mib=104.7 ratio=0.325 meta_bytes_per_page=48.2 dedup=0 delta=0 full=83670 incompressible=334
+STORE snap=1 variant=dedup total_mib=107.6 payload_mib=96.4 meta_mib=5.4 segments_mib=102.2 ratio=0.321 meta_bytes_per_page=65.8 dedup=2414 delta=0 full=81317 incompressible=273
+STORE snap=1 variant=cas total_mib=108.7 payload_mib=94.5 meta_mib=8.6 segments_mib=100.1 ratio=0.325 meta_bytes_per_page=105.6 dedup=2414 delta=2677 full=78644 incompressible=269
+STORE snap=1 variant=cas1 total_mib=107.9 payload_mib=95.1 meta_mib=7.0 segments_mib=100.9 ratio=0.322 meta_bytes_per_page=85.7 dedup=2414 delta=1629 full=79692 incompressible=269
+GATE0_FAIR snap=1 codec=xpress plain_mib=108.6 dedup_mib=107.6 dedup_gain_pct=1.0 cas_mib=108.7 cas_gain_pct=-0.1 cas1_mib=107.9 cas1_gain_pct=0.7
+GATE0 snap=1 best_plain=xpress best_plain_mib=98.9 cas_mib=108.7 cas_gain_vs_best_plain_pct=-9.9 cas_payload_gain_vs_best_plain_pct=4.4
