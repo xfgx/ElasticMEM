@@ -6,7 +6,7 @@ name: cas-memory
 #  * pager-sim: пейджер гостевой памяти (модель WHP) с настоящими VEH, VirtualFree и остановкой потоков;
 #  * прокси WinHvPlatform.dll: смещения структур по Windows SDK + имитация QEMU поверх модели WHP;
 #  * Gate 0: em-pagestat на настоящих процессах (Edge с реальными сайтами, svchost) — только агрегаты.
-#  Пейджер здесь работает с настройками по умолчанию (zero + dedup + XPRESS, без XOR-delta).
+#  Пейджер здесь работает с настройками по умолчанию (zero + dedup + XPRESS, без XOR-delta, co-access prefetch 8).
 on:
   workflow_dispatch:
   push:
@@ -70,6 +70,13 @@ jobs:
           $env:EM_PAGER_CODEC = "lz4"; Run 'runs64k-c16-lz4'; Remove-Item Env:EM_PAGER_CODEC
           $env:EM_PAGER_CODEC = "auto"; Run 'runs64k-c16-auto'; Remove-Item Env:EM_PAGER_CODEC
           $env:EM_PAGER_SKETCH = "3"; Run 'runs64k-c16-sketch3'; Remove-Item Env:EM_PAGER_SKETCH
+          $env:EM_PAGER_PREFETCH = "0"; Run 'runs64k-c16-noprefetch'; Remove-Item Env:EM_PAGER_PREFETCH
+          # co-access: группы разбросанных кластеров, обходимые в одном порядке; prefetch выкл / вкл
+          function RunLong($name) { & $e 1024 48 180 1000 2>&1 | Tee-Object "out/${{ matrix.os }}-pager-$name.txt"; if ($LASTEXITCODE -ne 0) { throw "pager $name failed" } }
+          $env:EM_SIM_GROUPS = "1"
+          $env:EM_PAGER_PREFETCH = "0"; RunLong 'groups-noprefetch'
+          $env:EM_PAGER_PREFETCH = "8"; RunLong 'groups-prefetch8'
+          Remove-Item Env:EM_SIM_GROUPS, Env:EM_PAGER_PREFETCH
           $env:EM_SIM_SCATTER = "1"; Run 'scatter-c16'
           $env:EM_PAGER_CLUSTER = "1"; Run 'scatter-c1'
       - name: WHP proxy — SDK offsets + QEMU-like harness over a modelled WHP

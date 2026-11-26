@@ -83,6 +83,10 @@ impl std::ops::DerefMut for Mem {
 }
 
 fn setup(mib: usize, ghost: bool) -> (Mem, Sim, Core) {
+    setup_pf(mib, ghost, 0)
+}
+
+fn setup_pf(mib: usize, ghost: bool, prefetch: usize) -> (Mem, Sim, Core) {
     let pages = mib * 256;
     let mut mem = Mem(vec![Pg([0; 512]); pages]);
     let mut r = Rng(42);
@@ -104,7 +108,7 @@ fn setup(mib: usize, ghost: bool) -> (Mem, Sim, Core) {
     }
     let base = mem.as_mut_ptr() as usize;
     let sim = Sim { base, gpa0: 0x1_0000_0000, mapped: RefCell::new(vec![true; pages]), committed: RefCell::new(vec![true; pages]), ro: RefCell::new(vec![false; pages]) };
-    let cfg = Cfg { cluster_pages: 16, idle_ms: 100, min_range_bytes: 1 << 20, keep_ghost: ghost };
+    let cfg = Cfg { cluster_pages: 16, idle_ms: 100, min_range_bytes: 1 << 20, keep_ghost: ghost, prefetch_depth: prefetch, coaccess_ms: 50 };
     let mut core = Core::new(cfg, CasStore::new(Box::new(Lz4), Config::default()));
     assert!(core.add_range(sim.gpa0, base as *mut u8, (pages * PAGE) as u64, true));
     (mem, sim, core)
@@ -215,4 +219,65 @@ fn corrupted_store_fails_closed() {
     }
     let (ri, cl) = victim.expect("some cluster evicted");
     assert!(core.on_exit(ri, cl, 2000, &sim).is_err(), "повреждение должно вернуть ошибку, а не байты");
+}
+
+/// Co-access: гость обходит группы разбросанных кластеров в одном и том же порядке (как связный список).
+/// С prefetch exit'ов на восстановление заметно меньше, данные без потерь.
+fn groups_run(prefetch: usize) -> (u64, Stats) {
+    let (mem, sim, mut core) = setup_pf(64, false, prefetch);
+    let pages = mem.len() / 512;
+    let ncl = pages / 16;
+    let base = sim.base;
+    let mut shadow: Vec<u64> = mem.to_vec();
+    let mut r = Rng(99);
+    let groups: Vec<Vec<usize>> = (0..16).map(|_| (0..8).map(|_| r.next() as usize % ncl).collect()).collect();
+    let (mut probe, mut idle) = (Vec::new(), Vec::new());
+    let mut now = 0u64;
+    let mut restores_by_exit = 0u64;
+    for round in 0..64u64 {
+        let g = &groups[(round % 16) as usize];
+        for &cl in g {
+            now += 1; // обход группы укладывается в окно co-access
+            let p = cl * 16 + 3;
+            let gpa = sim.gpa0 + (p * PAGE) as u64;
+            if !sim.mapped.borrow()[p] {
+                let (ri, c) = core.find_gpa(gpa).unwrap();
+                if core.ranges[ri].st[c] == Cl::Evicted {
+                    restores_by_exit += 1;
+                }
+                assert!(core.on_exit(ri, c, now, &sim).unwrap());
+            }
+            let w = p * 512 + 9;
+            let v = unsafe { *((base + w * 8) as *const u64) };
+            assert_eq!(v, shadow[w]);
+            unsafe { *((base + w * 8) as *mut u64) = v + 1 };
+            shadow[w] = v + 1;
+        }
+        // между раундами пейджер успевает всё пробовать и вытеснить (без пауз для горячих кластеров)
+        for _ in 0..3 {
+            now += 3_000_000;
+            probe.clear();
+            idle.clear();
+            core.candidates(now, 1 << 20, 1 << 20, &mut probe, &mut idle);
+            for &(ri, cl) in &idle {
+                core.evict(ri, cl, now, &sim);
+            }
+            for &(ri, cl) in &probe {
+                core.begin_probe(ri, cl, now, &sim);
+            }
+        }
+    }
+    core.del_range(sim.gpa0, (pages * PAGE) as u64, &sim).unwrap();
+    let bad = (0..pages).filter(|&p| mem[p * 512..(p + 1) * 512] != shadow[p * 512..(p + 1) * 512]).count();
+    assert_eq!(bad, 0);
+    (restores_by_exit, core.stats())
+}
+
+#[test]
+fn coaccess_prefetch_cuts_restore_exits() {
+    let (without, _) = groups_run(0);
+    let (with, st) = groups_run(8);
+    assert!(st.prefetched > 0, "{st:?}");
+    eprintln!("coaccess: restore exits without prefetch {without}, with {with}; prefetched={}", st.prefetched);
+    assert!(with * 2 < without, "exits with prefetch {with}, without {without}");
 }

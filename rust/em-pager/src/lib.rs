@@ -28,11 +28,16 @@ pub struct Cfg {
     pub min_range_bytes: u64,
     /// Временна́я дельта: после восстановления держать прошлые версии страниц базами следующего вытеснения.
     pub keep_ghost: bool,
+    /// Co-access: сколько кластеров по выученной цепочке «после A обычно нужен B» восстанавливать заодно с
+    /// запрошенным (0 — выкл). Один exit WHP стоит ~0,2 мс, восстановление пачкой — одна остановка потоков.
+    pub prefetch_depth: usize,
+    /// Окно (мс): два восстановления ближе этого считаются совместным доступом.
+    pub coaccess_ms: u64,
 }
 
 impl Default for Cfg {
     fn default() -> Self {
-        Cfg { cluster_pages: 16, idle_ms: 2000, min_range_bytes: 64 << 20, keep_ghost: false }
+        Cfg { cluster_pages: 16, idle_ms: 2000, min_range_bytes: 64 << 20, keep_ghost: false, prefetch_depth: 0, coaccess_ms: 50 }
     }
 }
 
@@ -69,6 +74,7 @@ pub struct Range {
     probe_at: Vec<u64>,
     refs: Vec<Ref>,          // по странице
     ghost: Vec<Option<Ref>>, // по странице (только при keep_ghost)
+    pf: Vec<bool>,           // по кластеру: восстановлен prefetch'ем и ещё не тронут гостем
 }
 
 #[derive(Clone, Debug, Default)]
@@ -85,6 +91,12 @@ pub struct Stats {
     pub exit_restores: u64,
     pub host_restores: u64,
     pub ghost_pages: u64,
+    /// Кластеры, восстановленные заранее по цепочке co-access.
+    pub prefetched: u64,
+    /// Из них гость точно трогал: следующая проба такого кластера закончилась попаданием (нижняя оценка —
+    /// обращения до пробы не видны, ведь кластер отображён и exit'а нет).
+    pub prefetch_used: u64,
+
     /// Гистограмма времени восстановления: корзина k — до 2^(k+1) мкс.
     pub restore_us_hist: [u64; 24],
 }
@@ -105,6 +117,9 @@ pub struct Core {
     /// Сколько замок пейджера удерживался, по видам операций (HOLD_NAMES), последние 2048 на вид.
     hold_us: [Vec<u32>; 6],
     hold_n: [usize; 6],
+    /// Выученные цепочки co-access: кластер -> (следующий, уверенность 0..=3).
+    succ: std::collections::HashMap<u64, (u64, u8)>,
+    last_restore: (u64, u64),
 }
 
 pub const HOLD_NAMES: [&str; 6] = ["exit", "veh", "evict", "probe", "scan", "maintain"];
@@ -135,7 +150,7 @@ fn grow(b: u32) -> u32 {
 
 impl Core {
     pub fn new(cfg: Cfg, cas: CasStore) -> Self {
-        Core { cfg, cas, ranges: Vec::new(), st: Stats::default(), cursor: (0, 0), ghost_fifo: Default::default(), ghost_live: 0, scratch: Vec::new(), restore_us: Vec::new(), restore_n: 0, wait_us: Vec::new(), wait_n: 0, hold_us: Default::default(), hold_n: [0; 6] }
+        Core { cfg, cas, ranges: Vec::new(), st: Stats::default(), cursor: (0, 0), ghost_fifo: Default::default(), ghost_live: 0, scratch: Vec::new(), restore_us: Vec::new(), restore_n: 0, wait_us: Vec::new(), wait_n: 0, hold_us: Default::default(), hold_n: [0; 6], succ: Default::default(), last_restore: (u64::MAX, 0) }
     }
 
     fn clb(&self) -> u64 {
@@ -162,6 +177,7 @@ impl Core {
             st: vec![Cl::Resident; n], next_probe: vec![0; n], backoff: vec![0; n], probe_at: vec![0; n],
             refs: vec![Ref::Zero; pages],
             ghost: if self.cfg.keep_ghost { vec![None; pages] } else { Vec::new() },
+            pf: vec![false; n],
         });
         managed
     }
@@ -247,39 +263,105 @@ impl Core {
     /// в буфер, затем — при остановленных остальных потоках — коммит и копирование: никто не увидит
     /// закоммиченную, но ещё не заполненную страницу.
     fn restore(&mut self, ri: usize, cl: usize, ops: &dyn Ops) -> Result<(), CasError> {
-        let (_, h) = self.cl_addr(ri, cl);
+        self.restore_batch(&[(ri, cl)], ops)
+    }
+
+    /// Восстановить пачку Evicted-кластеров за одну остановку потоков.
+    fn restore_batch(&mut self, cls: &[(usize, usize)], ops: &dyn Ops) -> Result<(), CasError> {
         let n = self.cfg.cluster_pages;
+        let cb = n * PAGE;
         let mut buf = std::mem::take(&mut self.scratch);
-        buf.resize(n * PAGE, 0);
-        for k in 0..n {
-            let r = self.ranges[ri].refs[cl * n + k];
-            if let Err(e) = self.cas.get(r, &mut buf[k * PAGE..(k + 1) * PAGE]) {
-                self.scratch = buf;
-                return Err(e);
+        buf.resize(cb * cls.len(), 0);
+        for (j, &(ri, cl)) in cls.iter().enumerate() {
+            for k in 0..n {
+                let r = self.ranges[ri].refs[cl * n + k];
+                if let Err(e) = self.cas.get(r, &mut buf[j * cb + k * PAGE..j * cb + (k + 1) * PAGE]) {
+                    self.scratch = buf;
+                    return Err(e);
+                }
             }
         }
         ops.freeze();
-        let ok = ops.commit(h, n * PAGE);
-        if ok {
-            unsafe { std::ptr::copy_nonoverlapping(buf.as_ptr(), h, n * PAGE) };
+        let mut ok = true;
+        for (j, &(ri, cl)) in cls.iter().enumerate() {
+            let (_, h) = self.cl_addr(ri, cl);
+            if !ops.commit(h, cb) {
+                ok = false;
+                break;
+            }
+            unsafe { std::ptr::copy_nonoverlapping(buf.as_ptr().add(j * cb), h, cb) };
         }
         ops.thaw();
         self.scratch = buf;
         if !ok {
             return Err(CasError::NoMemory);
         }
-        for k in 0..n {
-            let pi = cl * n + k;
-            let r = std::mem::replace(&mut self.ranges[ri].refs[pi], Ref::Zero);
-            if self.cfg.keep_ghost && r != Ref::Zero {
-                self.ranges[ri].ghost[pi] = Some(r);
-                self.ghost_live += 1;
-                self.ghost_fifo.push_back((ri, pi));
+        for &(ri, cl) in cls {
+            for k in 0..n {
+                let pi = cl * n + k;
+                let r = std::mem::replace(&mut self.ranges[ri].refs[pi], Ref::Zero);
+                if self.cfg.keep_ghost && r != Ref::Zero {
+                    self.ranges[ri].ghost[pi] = Some(r);
+                    self.ghost_live += 1;
+                    self.ghost_fifo.push_back((ri, pi));
+                } else {
+                    self.cas.release(r);
+                }
+            }
+            self.ranges[ri].st[cl] = Cl::Resident;
+        }
+        Ok(())
+    }
+
+    fn ckey(ri: usize, cl: usize) -> u64 {
+        (ri as u64) << 32 | cl as u64
+    }
+
+    /// Запомнить совместный доступ: восстановление `key` вскоре после предыдущего восстановления.
+    fn note_coaccess(&mut self, key: u64, now: u64) {
+        let (prev, t) = self.last_restore;
+        if prev != u64::MAX && prev != key && now.saturating_sub(t) <= self.cfg.coaccess_ms {
+            let e = self.succ.entry(prev).or_insert((key, 0));
+            if e.0 == key {
+                e.1 = (e.1 + 1).min(3);
+            } else if e.1 > 0 {
+                e.1 -= 1;
             } else {
-                self.cas.release(r);
+                *e = (key, 1);
             }
         }
-        self.ranges[ri].st[cl] = Cl::Resident;
+        self.last_restore = (key, now);
+    }
+
+    /// Demand-восстановление кластера + prefetch по выученной цепочке (только Evicted). Звено с уверенностью 0
+    /// (последнее наблюдение ему противоречило) цепочку обрывает.
+    fn restore_with_prefetch(&mut self, ri: usize, cl: usize, now: u64, ops: &dyn Ops) -> Result<(), CasError> {
+        let key = Self::ckey(ri, cl);
+        self.note_coaccess(key, now);
+        let mut batch = vec![(ri, cl)];
+        let mut cur = key;
+        for _ in 0..self.cfg.prefetch_depth {
+            let Some(&(nx, conf)) = self.succ.get(&cur) else { break };
+            if conf < 1 {
+                break;
+            }
+            let (nri, ncl) = ((nx >> 32) as usize, (nx & 0xffff_ffff) as usize);
+            if nri >= self.ranges.len() || ncl >= self.ranges[nri].st.len() || batch.contains(&(nri, ncl)) {
+                break;
+            }
+            if self.ranges[nri].st[ncl] == Cl::Evicted {
+                batch.push((nri, ncl));
+            }
+            cur = nx;
+        }
+        self.restore_batch(&batch, ops)?;
+        self.ranges[ri].pf[cl] = false;
+        for &(pri, pcl) in &batch[1..] {
+            self.map_cl(pri, pcl, ops);
+            self.mark_hot(pri, pcl, now);
+            self.ranges[pri].pf[pcl] = true;
+            self.st.prefetched += 1;
+        }
         Ok(())
     }
 
@@ -302,11 +384,14 @@ impl Core {
                 }
                 self.ranges[ri].st[cl] = Cl::Resident;
                 self.st.probe_hits += 1;
+                if std::mem::take(&mut self.ranges[ri].pf[cl]) {
+                    self.st.prefetch_used += 1; // кластер из prefetch'а гостю действительно понадобился
+                }
                 self.mark_hot(ri, cl, now);
                 Ok(true)
             }
             Cl::Evicted => {
-                self.restore(ri, cl, ops)?;
+                self.restore_with_prefetch(ri, cl, now, ops)?;
                 let ok = self.map_cl(ri, cl, ops);
                 self.st.exit_restores += 1;
                 self.mark_hot(ri, cl, now);
@@ -319,7 +404,7 @@ impl Core {
     pub fn on_host_fault(&mut self, ri: usize, cl: usize, now: u64, ops: &dyn Ops) -> Result<bool, CasError> {
         match self.ranges[ri].st[cl] {
             Cl::Evicted => {
-                self.restore(ri, cl, ops)?;
+                self.restore_with_prefetch(ri, cl, now, ops)?;
                 self.map_cl(ri, cl, ops);
                 self.st.host_restores += 1;
                 self.mark_hot(ri, cl, now);
@@ -441,6 +526,7 @@ impl Core {
             return false;
         }
         self.ranges[ri].refs[cl * n..cl * n + n].copy_from_slice(&refs[..n]);
+        self.ranges[ri].pf[cl] = false;
         ops.decommit(h, n * PAGE);
         self.ranges[ri].st[cl] = Cl::Evicted;
         self.st.evictions += 1;

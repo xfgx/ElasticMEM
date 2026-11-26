@@ -2,7 +2,8 @@
 //! фоновый компактор с бюджетом проб по доле возвратов и журнал с реальными счётчиками памяти процесса.
 //! Переменные окружения: EM_PAGER_CLUSTER (страниц в кластере, 16), EM_PAGER_IDLE_MS (2000),
 //! EM_PAGER_MIN_MIB (64), EM_PAGER_GHOST (0/1), EM_PAGER_GHOST_MIB (64), EM_PAGER_CODEC (xpress|lz4),
-//! EM_PAGER_DEDUP (1), EM_PAGER_DELTA (0), EM_PAGER_SKETCH (1), EM_PAGER_START_DELAY_S (60), EM_PAGER_TARGET_HITS (20),
+//! EM_PAGER_DEDUP (1), EM_PAGER_DELTA (0), EM_PAGER_SKETCH (1), EM_PAGER_PREFETCH (8 — co-access prefetch),
+//! EM_PAGER_COACCESS_MS (50), EM_PAGER_START_DELAY_S (60), EM_PAGER_TARGET_HITS (20),
 //! EM_PAGER_LOG (em-pager.log).
 
 use crate::{Cfg, Cl, Core, Ops};
@@ -219,6 +220,8 @@ fn make_core() -> Core {
         idle_ms: env_u64("EM_PAGER_IDLE_MS", 2000),
         min_range_bytes: env_u64("EM_PAGER_MIN_MIB", 64) << 20,
         keep_ghost: env_u64("EM_PAGER_GHOST", 0) == 1,
+        prefetch_depth: env_u64("EM_PAGER_PREFETCH", 8).min(64) as usize,
+        coaccess_ms: env_u64("EM_PAGER_COACCESS_MS", 50),
     };
     let name = std::env::var("EM_PAGER_CODEC").unwrap_or_else(|_| "xpress".into());
     let cc = Config {
@@ -432,13 +435,13 @@ fn line(p: &Pager) -> String {
     let qw = |f: f64| crate::quantile(&wt, f);
     let mib = |b: u64| b as f64 / 1048576.0;
     format!(
-        "t_s={} guest_mib={} resident_cl={} probing_cl={} evicted_cl={} evicted_mib={:.1} store_mib={:.1} payload_mib={:.1} tables_mib={:.1} saved_mib={:.1} zero_pages={} dedup={} delta={} temporal={} full={} incompressible={} ghost_pages={} probes={} probe_hits={} evictions={} rollbacks={} exit_restores={} host_restores={} restore_p50_us={} restore_p99_us={} lock_wait_p50_us={} lock_wait_p99_us={} crc_failures={} segments_released={} proc_private_mib={:.1} proc_ws_mib={:.1} hold_p99/max_us={}",
+        "t_s={} guest_mib={} resident_cl={} probing_cl={} evicted_cl={} evicted_mib={:.1} store_mib={:.1} payload_mib={:.1} tables_mib={:.1} saved_mib={:.1} zero_pages={} dedup={} delta={} temporal={} full={} incompressible={} ghost_pages={} probes={} probe_hits={} evictions={} rollbacks={} exit_restores={} host_restores={} prefetched={} prefetch_used={} restore_p50_us={} restore_p99_us={} lock_wait_p50_us={} lock_wait_p99_us={} crc_failures={} segments_released={} proc_private_mib={:.1} proc_ws_mib={:.1} hold_p99/max_us={}",
         (now_ms() - p.start_ms) / 1000,
         s.guest_bytes >> 20, s.resident_cl, s.probing_cl, s.evicted_cl,
         mib(evicted_b), mib(store_b), mib(cs.payload_bytes), mib(meta_b),
         (evicted_b as f64 - store_b as f64 - meta_b as f64) / 1048576.0,
         s.zero_pages_evicted, cs.put_dedup, cs.put_delta, cs.put_temporal, cs.put_full, cs.put_incompressible, s.ghost_pages,
-        s.probes, s.probe_hits, s.evictions, s.evict_rollbacks, s.exit_restores, s.host_restores, q(0.5), q(0.99), qw(0.5), qw(0.99),
+        s.probes, s.probe_hits, s.evictions, s.evict_rollbacks, s.exit_restores, s.host_restores, s.prefetched, s.prefetch_used, q(0.5), q(0.99), qw(0.5), qw(0.99),
         cs.crc_failures, cs.segments_released, pv, ws, hold_s.join(",")
     )
 }

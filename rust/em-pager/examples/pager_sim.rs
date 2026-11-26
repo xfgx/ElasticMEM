@@ -5,7 +5,9 @@
 //! В конце вся память сверяется с эталоном байт в байт.
 //!
 //! pager-sim.exe [guest_mib=512] [hot_mib=48] [secs=60] [idle_ms=1000]; EM_SIM_SCATTER=1 — горячие страницы
-//! вразброс по одной (худший случай для кластеров 64 КиБ).
+//! вразброс по одной (худший случай для кластеров 64 КиБ); EM_SIM_GROUPS=1 — co-access: 64 группы по 8
+//! разбросанных кластеров, каждую секунду vCPU обходят свою группу в одном и том же порядке (как связные
+//! структуры), группа возвращается раз в 64 с — то есть успевает уйти в хранилище.
 
 #[cfg(not(windows))]
 fn main() {
@@ -28,6 +30,7 @@ fn main() {
     let secs = *a.get(2).unwrap_or(&60);
     let idle_ms = *a.get(3).unwrap_or(&1000);
     let scatter = std::env::var("EM_SIM_SCATTER").as_deref() == Ok("1");
+    let groups_mode = std::env::var("EM_SIM_GROUPS").as_deref() == Ok("1");
     for (k, v) in [("EM_PAGER_START_DELAY_S", "0".to_string()), ("EM_PAGER_IDLE_MS", idle_ms.to_string()), ("EM_PAGER_MIN_MIB", "1".to_string())] {
         if std::env::var(k).is_err() {
             std::env::set_var(k, v);
@@ -71,7 +74,10 @@ fn main() {
     let init: Arc<Vec<u8>> = Arc::new(mem.to_vec());
     let gpa0: u64 = 0x1_0000_0000;
     let clp = std::env::var("EM_PAGER_CLUSTER").ok().and_then(|v| v.parse().ok()).unwrap_or(16usize);
-    println!("SIM guest_mib={guest_mib} hot_mib={hot_mib} secs={secs} idle_ms={idle_ms} scatter={scatter} cluster_pages={clp}");
+    println!("SIM guest_mib={guest_mib} hot_mib={hot_mib} secs={secs} idle_ms={idle_ms} scatter={scatter} groups={groups_mode} cluster_pages={clp}");
+    let ncl = pages / clp;
+    let groups: Arc<Vec<Vec<usize>>> = Arc::new((0..64).map(|_| (0..8).map(|_| rng() as usize % ncl).collect()).collect());
+    let t_start = Instant::now();
     assert_eq!(win::sim_init(gpa0, pages), 0);
     win::em_pager_add_ram(gpa0, ram, bytes as u64, 1);
     let (priv0, _) = win::proc_mem();
@@ -100,6 +106,8 @@ fn main() {
     let mut threads = Vec::new();
     for t in 0..3usize {
         let (stop, exits, bad, hot, sh) = (stop.clone(), exits.clone(), bad_reads.clone(), hot.clone(), shadows[t].clone());
+        let groups = groups.clone();
+        let mut gi = 0usize;
         threads.push(std::thread::spawn(move || {
             let mut r = 0x1234_5678u64 + t as u64 * 977;
             let mut nx = move || {
@@ -113,7 +121,16 @@ fn main() {
             while !stop.load(Ordering::Relaxed) {
                 // vCPU: горячий набор, изредка случайная страница; «устройство» (DMA-буферы) — тоже в основном горячий набор
                 let cold = if t == 2 { nx() % 64 == 0 } else { nx() % 8192 == 0 };
-                let p = if cold { nx() as usize % pages } else { hot[nx() as usize % hot.len()] };
+                let p = if groups_mode && t < 2 {
+                    // обход активной группы по порядку
+                    let g = &groups[(t_start.elapsed().as_millis() / 1000) as usize % groups.len()];
+                    gi = (gi + 1) % g.len();
+                    g[gi] * clp + (nx() as usize % clp)
+                } else if cold {
+                    nx() as usize % pages
+                } else {
+                    hot[nx() as usize % hot.len()]
+                };
                 if t < 2 {
                     let gpa = gpa0 + (p * PAGE + off) as u64;
                     if !win::sim_is_mapped(gpa) {
