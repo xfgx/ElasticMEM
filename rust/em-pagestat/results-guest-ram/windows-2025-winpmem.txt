@@ -1,6 +1,37 @@
+deviceguard vbs_status=2 services_running=0
+--- mode -2 exit=1 s=0
 WinPmem64
-Extracting driver to C:\Users\RUNNER~1\AppData\Local\Temp\pmeC81A.tmp
+Extracting driver to C:\Users\RUNNER~1\AppData\Local\Temp\pme9BE3.tmp
 Driver Unloaded.
-Deleting C:\Users\RUNNER~1\AppData\Local\Temp\pmeC81A.tmp
+Deleting C:\Users\RUNNER~1\AppData\Local\Temp\pme9BE3.tmp
 Driver Unloaded.
-acquire_s=0 image_gib=0
+image_gib=0
+--- mode -1 exit=1 s=0
+WinPmem64
+Extracting driver to C:\Users\RUNNER~1\AppData\Local\Temp\pme9C12.tmp
+Driver Unloaded.
+Deleting C:\Users\RUNNER~1\AppData\Local\Temp\pme9C12.tmp
+Driver Unloaded.
+image_gib=0
+--- mode -0 exit=1 s=0
+WinPmem64
+Extracting driver to C:\Users\RUNNER~1\AppData\Local\Temp\pme9C22.tmp
+Driver Unloaded.
+Deleting C:\Users\RUNNER~1\AppData\Local\Temp\pme9C22.tmp
+Driver Unloaded.
+image_gib=0
+CI 3116: Signature information for Code Integrity policy ID {d2bda982-ccf6-4344-ac5b-0b44427b6
+CI 3099: Refreshed and activated Code Integrity policy {d2bda982-ccf6-4344-ac5b-0b44427b6816} Microsoft Windows Driver Policy. id 10.0.29520.0. Statu
+CI 3116: Signature information for Code Integrity policy ID {a072029f-588b-4b5e-b7f9-05aad67df
+CI 3099: Refreshed and activated Code Integrity policy {a072029f-588b-4b5e-b7f9-05aad67df687} Microsoft Windows Virtualization Based Security Policy. id 10.0.29663.0. Statu
+CI 3116: Signature information for Code Integrity policy ID {784c4414-79f4-4c32-a6a5-f0fb42a51
+CI 3099: Refreshed and activated Code Integrity policy {784c4414-79f4-4c32-a6a5-f0fb42a51d0d} Microsoft Windows Cross Certificates for Code Integrity Exceptions Policy. id 10.29480.0.0. Statu
+CI 3085: Code Integrity will disable WHQL driver enforcement for this boot session. Settings 
+CI 3116: Signature information for Code Integrity policy ID {d2bda982-ccf6-4344-ac5b-0b44427b6
+CI 3099: Refreshed and activated Code Integrity policy {d2bda982-ccf6-4344-ac5b-0b44427b6816} Microsoft Windows Driver Policy. id 10.0.29520.0. Statu
+CI 3116: Signature information for Code Integrity policy ID {a072029f-588b-4b5e-b7f9-05aad67df
+SCM 7036: The WaaSMedicSvc service entered the stopped state.
+SCM 7036: The Portable Device Enumerator Service service entered the stopped state.
+SCM 7036: The Device Setup Manager service entered the stopped state.
+SCM 7036: The Software Protection service entered the stopped state.
+SCM 7036: The Clipboard User Service_b9ff7 service entered the running state.
