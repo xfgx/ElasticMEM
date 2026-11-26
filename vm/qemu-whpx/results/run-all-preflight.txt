@@ -5,5 +5,5 @@
 Диск: ; прошивка: uefi; память гостя: 4096 МиБ
 ИТОГ: есть что исправить (см. строки НЕТ/НУЖНО)
 
-Отчёт для отправки: C:\Users\runneradmin\Desktop\ElasticMem-report-20261126-2043.zip
-report_zip=ElasticMem-report-20261126-2043.zip bytes=496
+Отчёт для отправки: C:\Users\runneradmin\Desktop\ElasticMem-report-20261126-2132.zip
+report_zip=ElasticMem-report-20261126-2132.zip bytes=496
