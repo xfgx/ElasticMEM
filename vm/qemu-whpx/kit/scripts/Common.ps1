@@ -31,7 +31,8 @@ function Get-MemSnapshot([string]$tag) {
 }
 
 function Write-Report([string]$name, [string[]]$lines) {
-  $path = Join-Path ([Environment]::GetFolderPath('Desktop')) ("ElasticMem-$name-{0:yyyyMMdd-HHmm}.txt" -f (Get-Date))
+  $dir = if ($env:EM_REPORT_DIR) { $env:EM_REPORT_DIR } else { [Environment]::GetFolderPath('Desktop') }
+  $path = Join-Path $dir ("ElasticMem-$name-{0:yyyyMMdd-HHmm}.txt" -f (Get-Date))
   $lines | Set-Content -Path $path -Encoding UTF8
   Write-Host ""
   Write-Host "Отчёт: $path"

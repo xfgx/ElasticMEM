@@ -94,6 +94,17 @@ jobs:
           $z = "ElasticMem-QEMU-WHPX-kit.zip"
           Compress-Archive -Path kit/* -DestinationPath $z -CompressionLevel Optimal
           (Get-FileHash $z -Algorithm SHA256).Hash + "  " + $z + "  " + (Get-Item $z).Length | Tee-Object out/kit-sha256.txt
+      - name: Run-All preflight from the assembled kit (no Hyper-V VMs on the runner — must finish gracefully)
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force kt -ErrorAction SilentlyContinue
+          Expand-Archive ElasticMem-QEMU-WHPX-kit.zip -DestinationPath kt
+          powershell -NoProfile -ExecutionPolicy Bypass -File kt/Run-All.ps1 -PreflightOnly 2>&1 | Tee-Object out/run-all-preflight.txt
+          $z = Get-ChildItem ([Environment]::GetFolderPath('Desktop')), $env:USERPROFILE -Filter 'ElasticMem-report-*.zip' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $z) { throw "no report zip" }
+          "report_zip=$($z.Name) bytes=$($z.Length)" | Tee-Object -Append out/run-all-preflight.txt
+          if (-not (Select-String -Path out/run-all-preflight.txt -Pattern 'ИТОГ' -Quiet)) { throw "preflight did not finish" }
+          $global:LASTEXITCODE = 0
       - uses: actions/upload-artifact@v4
         with: { name: ElasticMem-QEMU-WHPX-kit, path: ElasticMem-QEMU-WHPX-kit.zip }
       - name: Publish kit as prerelease

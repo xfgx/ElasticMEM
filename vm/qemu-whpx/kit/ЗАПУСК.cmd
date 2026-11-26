@@ -3,6 +3,7 @@ chcp 65001 >nul
 cd /d "%~dp0"
 echo ElasticMem: Windows-гость в QEMU/WHPX и сжатие его памяти
 echo.
+echo  0 - ПОЛНАЯ ПРОВЕРКА одной кнопкой (рекомендуется): гость с пейджером, замеры, zip-отчёт
 echo  1 - Запустить гостя (обычный QEMU, дорожка 1)
 echo  2 - Запустить гостя с пейджером em-pager (дорожка 2)
 echo  3 - Открыть приложение гостя окном (RemoteApp)
@@ -12,6 +13,7 @@ echo  6 - Gate 0 по памяти гостя (zero/dedup/delta)
 echo  7 - Gate 0 по приложениям на этом ПК (без ВМ)
 echo.
 set /p c=Выбор: 
+if "%c%"=="0" powershell -NoProfile -ExecutionPolicy Bypass -File Run-All.ps1 & goto end
 if "%c%"=="1" goto s1
 if "%c%"=="2" goto s2
 if "%c%"=="3" goto s3
