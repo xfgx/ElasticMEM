@@ -100,6 +100,33 @@ pub struct Core {
     scratch: Vec<u8>,
     restore_us: Vec<u32>, // последние 8192 времени восстановления (мкс) для точных квантилей
     restore_n: usize,
+    wait_us: Vec<u32>, // последние 8192 ожиданий замка пейджера vCPU-потоком (мкс)
+    wait_n: usize,
+    /// Сколько замок пейджера удерживался, по видам операций (HOLD_NAMES), последние 2048 на вид.
+    hold_us: [Vec<u32>; 6],
+    hold_n: [usize; 6],
+}
+
+pub const HOLD_NAMES: [&str; 6] = ["exit", "veh", "evict", "probe", "scan", "maintain"];
+
+fn ring_push(v: &mut Vec<u32>, n: &mut usize, us: u64) {
+    let u = us.min(u32::MAX as u64) as u32;
+    if v.len() < 8192 {
+        v.push(u);
+    } else {
+        v[*n % 8192] = u;
+    }
+    *n += 1;
+}
+
+/// Квантиль по выборке (мкс).
+pub fn quantile(v: &[u32], q: f64) -> u64 {
+    if v.is_empty() {
+        return 0;
+    }
+    let mut v = v.to_vec();
+    v.sort_unstable();
+    v[((v.len() as f64 * q) as usize).min(v.len() - 1)] as u64
 }
 
 fn grow(b: u32) -> u32 {
@@ -108,7 +135,7 @@ fn grow(b: u32) -> u32 {
 
 impl Core {
     pub fn new(cfg: Cfg, cas: CasStore) -> Self {
-        Core { cfg, cas, ranges: Vec::new(), st: Stats::default(), cursor: (0, 0), ghost_fifo: Default::default(), ghost_live: 0, scratch: Vec::new(), restore_us: Vec::new(), restore_n: 0 }
+        Core { cfg, cas, ranges: Vec::new(), st: Stats::default(), cursor: (0, 0), ghost_fifo: Default::default(), ghost_live: 0, scratch: Vec::new(), restore_us: Vec::new(), restore_n: 0, wait_us: Vec::new(), wait_n: 0, hold_us: Default::default(), hold_n: [0; 6] }
     }
 
     fn clb(&self) -> u64 {
@@ -438,24 +465,37 @@ impl Core {
         self.cas.compact(max_moves)
     }
 
-    /// Квантиль времени восстановления (мкс) по последним 8192 восстановлениям.
-    pub fn restore_quantile_us(&self, q: f64) -> u64 {
-        if self.restore_us.is_empty() {
-            return 0;
+    /// Выборки задержек (восстановление целиком, ожидание замка) — копии, чтобы считать квантили вне замка.
+    pub fn latency_samples(&self) -> (Vec<u32>, Vec<u32>) {
+        (self.restore_us.clone(), self.wait_us.clone())
+    }
+
+    pub fn record_hold_us(&mut self, op: usize, us: u64) {
+        let v = &mut self.hold_us[op];
+        let u = us.min(u32::MAX as u64) as u32;
+        if v.len() < 2048 {
+            v.push(u);
+        } else {
+            v[self.hold_n[op] % 2048] = u;
         }
-        let mut v = self.restore_us.clone();
-        v.sort_unstable();
-        v[((v.len() as f64 * q) as usize).min(v.len() - 1)] as u64
+        self.hold_n[op] += 1;
+    }
+
+    pub fn hold_samples(&self) -> [Vec<u32>; 6] {
+        self.hold_us.clone()
+    }
+
+    pub fn record_wait_us(&mut self, us: u64) {
+        ring_push(&mut self.wait_us, &mut self.wait_n, us);
+    }
+
+    /// Всего кластеров под управлением.
+    pub fn clusters(&self) -> usize {
+        self.ranges.iter().map(|r| r.st.len()).sum()
     }
 
     pub fn record_restore_us(&mut self, us: u64) {
-        let u = us.min(u32::MAX as u64) as u32;
-        if self.restore_us.len() < 8192 {
-            self.restore_us.push(u);
-        } else {
-            self.restore_us[self.restore_n % 8192] = u;
-        }
-        self.restore_n += 1;
+        ring_push(&mut self.restore_us, &mut self.restore_n, us);
         let k = (64 - us.max(1).leading_zeros() as usize).saturating_sub(1).min(23);
         self.st.restore_us_hist[k] += 1;
     }

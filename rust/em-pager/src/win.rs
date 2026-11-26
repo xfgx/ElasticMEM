@@ -255,6 +255,20 @@ fn init(hv: Hv) -> i32 {
 }
 
 impl Pager {
+    fn qpc(&self) -> i64 {
+        let mut t = 0i64;
+        unsafe { QueryPerformanceCounter(&mut t) };
+        t
+    }
+    /// Операция под замком пейджера с учётом времени удержания (вид op из HOLD_NAMES).
+    fn with_core<R>(&self, op: usize, f: impl FnOnce(&mut Core) -> R) -> R {
+        let mut c = self.core.lock().unwrap();
+        let t0 = self.qpc();
+        let r = f(&mut c);
+        let us = self.us_since(t0);
+        c.record_hold_us(op, us);
+        r
+    }
     fn logln(&self, s: &str) {
         if let Some(f) = self.log.lock().unwrap().as_mut() {
             let _ = writeln!(f, "{s}");
@@ -321,7 +335,15 @@ pub extern "C" fn em_pager_mem_exit(gpa: u64, _access: u32) -> i32 {
     let mut c = p.core.lock().unwrap();
     let Some((ri, cl)) = c.find_gpa(gpa) else { return 0 };
     let was_evicted = c.ranges[ri].st[cl] == Cl::Evicted;
-    match c.on_exit(ri, cl, now_ms(), &p.ops) {
+    if was_evicted {
+        let wait = p.us_since(t0);
+        c.record_wait_us(wait);
+    }
+    let th = p.qpc();
+    let res = c.on_exit(ri, cl, now_ms(), &p.ops);
+    let hold = p.us_since(th);
+    c.record_hold_us(0, hold);
+    match res {
         Ok(true) => {
             if was_evicted {
                 let us = p.us_since(t0);
@@ -369,29 +391,32 @@ pub fn stop() {
 
 pub fn stats_line() -> String {
     let Some(p) = PAGER.get() else { return String::new() };
-    let c = p.core.lock().unwrap();
-    line(p, &c)
+    line(p)
 }
 
-fn line(p: &Pager, c: &Core) -> String {
-    let s = c.stats();
-    let cs = c.cas.stats();
-    let clb = (c.cfg.cluster_pages * 4096) as u64;
+/// Строка журнала. Под замком только копируются счётчики; квантили и форматирование — после.
+fn line(p: &Pager) -> String {
+    let (s, cs, clb, meta_b, (rs, wt), holds) = {
+        let c = p.core.lock().unwrap();
+        let meta_b = c.ranges.iter().map(|r| r.st.len() as u64 * 24 + (r.st.len() * c.cfg.cluster_pages) as u64 * 12).sum::<u64>();
+        (c.stats(), c.cas.stats(), (c.cfg.cluster_pages * 4096) as u64, meta_b, c.latency_samples(), c.hold_samples())
+    };
+    let hold_s: Vec<String> = crate::HOLD_NAMES.iter().zip(&holds).map(|(n, v)| format!("{n}:{}/{}", crate::quantile(v, 0.99), v.iter().max().copied().unwrap_or(0))).collect();
     let evicted_b = s.evicted_cl * clb;
     let store_b = cs.total_bytes();
-    let meta_b = c.ranges.iter().map(|r| r.st.len() as u64 * 24 + (r.st.len() * c.cfg.cluster_pages) as u64 * 12).sum::<u64>();
     let (pv, ws) = proc_mem();
-    let q = |f: f64| c.restore_quantile_us(f);
+    let q = |f: f64| crate::quantile(&rs, f);
+    let qw = |f: f64| crate::quantile(&wt, f);
     let mib = |b: u64| b as f64 / 1048576.0;
     format!(
-        "t_s={} guest_mib={} resident_cl={} probing_cl={} evicted_cl={} evicted_mib={:.1} store_mib={:.1} payload_mib={:.1} tables_mib={:.1} saved_mib={:.1} zero_pages={} dedup={} delta={} temporal={} full={} incompressible={} ghost_pages={} probes={} probe_hits={} evictions={} rollbacks={} exit_restores={} host_restores={} restore_p50_us={} restore_p99_us={} crc_failures={} segments_released={} proc_private_mib={:.1} proc_ws_mib={:.1}",
+        "t_s={} guest_mib={} resident_cl={} probing_cl={} evicted_cl={} evicted_mib={:.1} store_mib={:.1} payload_mib={:.1} tables_mib={:.1} saved_mib={:.1} zero_pages={} dedup={} delta={} temporal={} full={} incompressible={} ghost_pages={} probes={} probe_hits={} evictions={} rollbacks={} exit_restores={} host_restores={} restore_p50_us={} restore_p99_us={} lock_wait_p50_us={} lock_wait_p99_us={} crc_failures={} segments_released={} proc_private_mib={:.1} proc_ws_mib={:.1} hold_p99/max_us={}",
         (now_ms() - p.start_ms) / 1000,
         s.guest_bytes >> 20, s.resident_cl, s.probing_cl, s.evicted_cl,
         mib(evicted_b), mib(store_b), mib(cs.payload_bytes), mib(meta_b),
         (evicted_b as f64 - store_b as f64 - meta_b as f64) / 1048576.0,
         s.zero_pages_evicted, cs.put_dedup, cs.put_delta, cs.put_temporal, cs.put_full, cs.put_incompressible, s.ghost_pages,
-        s.probes, s.probe_hits, s.evictions, s.evict_rollbacks, s.exit_restores, s.host_restores, q(0.5), q(0.99),
-        cs.crc_failures, cs.segments_released, pv, ws
+        s.probes, s.probe_hits, s.evictions, s.evict_rollbacks, s.exit_restores, s.host_restores, q(0.5), q(0.99), qw(0.5), qw(0.99),
+        cs.crc_failures, cs.segments_released, pv, ws, hold_s.join(",")
     )
 }
 
@@ -416,14 +441,20 @@ fn compactor() {
         let now = now_ms();
         probe.clear();
         idle.clear();
-        p.core.lock().unwrap().candidates(now, budget as usize, 65536, &mut probe, &mut idle);
+        // сканирование кусками по 4096 кластеров: каждый кусок — отдельный короткий захват замка
+        let total = p.core.lock().unwrap().clusters();
+        let mut scanned = 0;
+        while scanned < total && probe.len() < budget as usize {
+            p.with_core(4, |c| c.candidates(now, budget as usize, 4096, &mut probe, &mut idle));
+            scanned += 4096;
+        }
         // по одному кластеру под замком: exit'ы vCPU ждут не дольше одной операции над кластером
         for &(ri, cl) in &idle {
-            p.core.lock().unwrap().evict(ri, cl, now, &p.ops);
+            p.with_core(2, |c| c.evict(ri, cl, now, &p.ops));
         }
         let mut n = 0u64;
         for &(ri, cl) in &probe {
-            if p.core.lock().unwrap().begin_probe(ri, cl, now, &p.ops) {
+            if p.with_core(3, |c| c.begin_probe(ri, cl, now, &p.ops)) {
                 n += 1;
             }
         }
@@ -437,11 +468,15 @@ fn compactor() {
         }
         probed_prev = n;
         if now >= last_maint + 1000 {
-            p.core.lock().unwrap().maintain(4096, ghost_budget);
+            for _ in 0..16 {
+                if p.with_core(5, |c| c.maintain(256, ghost_budget)) < 256 {
+                    break;
+                }
+            }
             last_maint = now;
         }
         if now >= last_log + 5000 {
-            let l = line(p, &p.core.lock().unwrap());
+            let l = line(p);
             p.logln(&format!("EM_PAGER {l} budget={}", budget as u64));
             last_log = now;
         }
@@ -473,7 +508,11 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
         Err(_) => return CONTINUE_SEARCH,
     };
     let Some((ri, cl)) = c.find_hva(a) else { return CONTINUE_SEARCH };
-    match c.on_host_fault(ri, cl, now_ms(), &p.ops) {
+    let th = p.qpc();
+    let res = c.on_host_fault(ri, cl, now_ms(), &p.ops);
+    let hold = p.us_since(th);
+    c.record_hold_us(1, hold);
+    match res {
         Ok(true) => {
             // отказ по закоммиченной RW-памяти повторяется без конца — значит, он не наш
             let again = LAST_EXIT.with(|l| {
