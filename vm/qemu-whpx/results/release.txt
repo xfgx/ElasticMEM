@@ -1,1 +1,1 @@
-https://github.com/xfgx/ElasticMEM/releases/tag/qemu-whpx-kit-45675326967
+https://github.com/xfgx/ElasticMEM/releases/tag/qemu-whpx-kit-45772788922
