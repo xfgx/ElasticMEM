@@ -61,6 +61,13 @@ jobs:
           Run 'cas-mutate-ghost' @(512, 48, 32, 40)
           $env:EM_GHOST = "0"
           Run 'cas-mutate-noghost' @(512, 48, 32, 40)
+          Remove-Item Env:EM_MUTATE, Env:EM_GHOST
+          # параллельные потоки трогают холодные страницы во время восстановления (гонка «страница видна до заполнения»)
+          $env:EM_THREADS = "3"
+          Run 'cas-threads3' @(1024, 96, 64, 40)
+          Remove-Item Env:EM_STORE
+          Run 'classic-threads3' @(1024, 96, 64, 40)
+          Remove-Item Env:EM_THREADS
       - name: Arena view probe (section with two views — release methods and coherence)
         shell: pwsh
         run: |
