@@ -61,6 +61,12 @@ jobs:
           Run 'cas-mutate-ghost' @(512, 48, 32, 40)
           $env:EM_GHOST = "0"
           Run 'cas-mutate-noghost' @(512, 48, 32, 40)
+      - name: Arena view probe (section with two views — release methods and coherence)
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path rust/Cargo.toml -p elastic-arena --example view-probe
+          & rust/target/release/examples/view-probe.exe 512 2>&1 | Tee-Object "out/${{ matrix.os }}-view-probe.txt"
+          if ($LASTEXITCODE -ne 0) { throw "views not coherent" }
       - name: Pager-sim (guest RAM pager, modelled WHP, real VEH / VirtualFree / thread freeze)
         shell: pwsh
         run: |

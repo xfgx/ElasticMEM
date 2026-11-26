@@ -14,3 +14,7 @@ em-cas = { path = "../em-cas" }
 name = "arena-bench"
 path = "examples/arena_bench.rs"
 
+
+[[example]]
+name = "view-probe"
+path = "examples/view_probe.rs"
