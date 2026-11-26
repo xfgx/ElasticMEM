@@ -94,6 +94,39 @@ jobs:
           $z = "ElasticMem-QEMU-WHPX-kit.zip"
           Compress-Archive -Path kit/* -DestinationPath $z -CompressionLevel Optimal
           (Get-FileHash $z -Algorithm SHA256).Hash + "  " + $z + "  " + (Get-Item $z).Length | Tee-Object out/kit-sha256.txt
+      - name: Prepare-Disk on a synthetic VHDX (real SYSTEM hive copy; offline registry edits verified)
+        shell: pwsh
+        run: |
+          $v = "$env:RUNNER_TEMP\guest.vhdx"
+          "create vdisk file=$v maximum=2048 type=expandable`nselect vdisk file=$v`nattach vdisk`ncreate partition primary`nformat fs=ntfs quick label=GUEST`nassign`ndetach vdisk" | Set-Content dp.txt -Encoding ascii
+          diskpart /s dp.txt | Out-Null
+          $img = Mount-DiskImage -ImagePath $v -StorageType VHDX -PassThru | Get-DiskImage
+          $letter = (Get-Disk -Number $img.Number | Get-Partition | Where-Object DriveLetter | Select-Object -First 1).DriveLetter
+          New-Item -ItemType Directory -Force "${letter}:\Windows\System32\config" | Out-Null
+          reg.exe save HKLM\SYSTEM "${letter}:\Windows\System32\config\SYSTEM" /y | Out-Null
+          Dismount-DiskImage -ImagePath $v | Out-Null
+          # «как в чужом госте»: выключить драйвер и RDP в копии куста, затем Prepare-Disk должен всё вернуть
+          $img = Mount-DiskImage -ImagePath $v -StorageType VHDX -PassThru | Get-DiskImage
+          $letter = (Get-Disk -Number $img.Number | Get-Partition | Where-Object DriveLetter | Select-Object -First 1).DriveLetter
+          reg.exe load HKLM\EMT "${letter}:\Windows\System32\config\SYSTEM" | Out-Null
+          $cs = 'HKLM:\EMT\ControlSet{0:D3}' -f (Get-ItemProperty HKLM:\EMT\Select).Current
+          Set-ItemProperty "$cs\Services\storahci" -Name Start -Value 3
+          Set-ItemProperty "$cs\Control\Terminal Server" -Name fDenyTSConnections -Value 1
+          [gc]::Collect(); reg.exe unload HKLM\EMT | Out-Null
+          Dismount-DiskImage -ImagePath $v | Out-Null
+          powershell -NoProfile -ExecutionPolicy Bypass -File vm/qemu-whpx/kit/Prepare-Disk.ps1 -Vhdx $v 2>&1 | Tee-Object out/prepare-disk.txt
+          $img = Mount-DiskImage -ImagePath $v -StorageType VHDX -PassThru | Get-DiskImage
+          $letter = (Get-Disk -Number $img.Number | Get-Partition | Where-Object DriveLetter | Select-Object -First 1).DriveLetter
+          reg.exe load HKLM\EMT "${letter}:\Windows\System32\config\SYSTEM" | Out-Null
+          $cs = 'HKLM:\EMT\ControlSet{0:D3}' -f (Get-ItemProperty HKLM:\EMT\Select).Current
+          $start = (Get-ItemProperty "$cs\Services\storahci").Start
+          $deny = (Get-ItemProperty "$cs\Control\Terminal Server").fDenyTSConnections
+          $bak = Test-Path "${letter}:\Windows\System32\config\SYSTEM.elasticmem.bak"
+          [gc]::Collect(); reg.exe unload HKLM\EMT | Out-Null
+          Dismount-DiskImage -ImagePath $v | Out-Null
+          "verify storahci_start=$start fDenyTSConnections=$deny backup=$bak" | Tee-Object -Append out/prepare-disk.txt
+          if ($start -ne 0 -or $deny -ne 0 -or -not $bak) { throw "Prepare-Disk did not apply the changes" }
+          $global:LASTEXITCODE = 0
       - name: Run-All preflight from the assembled kit (no Hyper-V VMs on the runner — must finish gracefully)
         shell: pwsh
         run: |

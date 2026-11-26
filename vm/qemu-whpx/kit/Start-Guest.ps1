@@ -23,6 +23,7 @@ param(
 . (Join-Path $PSScriptRoot 'scripts\Common.ps1')
 
 if (-not (Test-Path $Qemu)) { throw "Не найден $Qemu" }
+if (-not (Test-Path $Vhdx)) { throw "Нет файла диска гостя: $Vhdx (сетевые диски и subst в окне администратора не видны)" }
 $Vhdx = (Resolve-Path $Vhdx).Path
 if (Get-GuestProcess) { throw 'QEMU-гость уже запущен (см. qemu.pid). Сначала завершите его.' }
 

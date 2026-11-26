@@ -54,6 +54,8 @@ if (-not $Vhdx) {
         $vm = $vms[$n - 1]
         $Vhdx = $vm.Disk
         if ($vm.Gen -eq 1) { $fw = 'bios' }
+        $snaps = @(Get-VMSnapshot -VMName $vm.Name -ErrorAction SilentlyContinue)
+        if ($snaps.Count -gt 0) { Say "ВНИМАНИЕ: у ВМ есть контрольные точки ($($snaps.Count)). Текущее состояние лежит в разностном диске .avhdx, а QEMU разностные VHDX не читает. Удалите контрольные точки в Hyper-V (их изменения сольются в основной диск) или укажите -Vhdx на нужный диск." }
         if ($MemoryMiB -eq 0) { $MemoryMiB = [Math]::Max(2048, [Math]::Min(8192, $vm.MemMiB)) }
         if ($vm.State -ne 'Off') {
           $a = Read-Host "ВМ '$($vm.Name)' сейчас $($vm.State). Выключить её штатно (Stop-VM)? [y/N]"
@@ -64,6 +66,72 @@ if (-not $Vhdx) {
   } catch { Say "Hyper-V недоступен ($($_.Exception.Message)) — укажите -Vhdx"; if (-not $PreflightOnly) { $ok = $false } }
 }
 if ($MemoryMiB -eq 0) { $MemoryMiB = 4096 }
+# Диск должен быть виден из ЭТОГО окна: сетевые диски и диски, подключённые через subst, в окне администратора
+# не видны (другой сеанс входа), даже если Hyper-V их показывает.
+while ($Vhdx -and -not (Test-Path $Vhdx)) {
+  Say "НЕТ: файл диска '$Vhdx' не найден из этого окна."
+  Say '  Возможные причины: диск перемещён/удалён; буква диска — сетевой диск или subst (в окне администратора не видна); внешний диск не подключён.'
+  if ($PreflightOnly) { $ok = $false; break }
+  $Vhdx = (Read-Host 'Введите полный путь к .vhdx (можно UNC \\сервер\папка\диск.vhdx), Enter — отмена').Trim('"', ' ')
+  if (-not $Vhdx) { Finish 'путь к диску гостя не указан' }
+}
+if ($Vhdx -and $Vhdx -match '\.avhdx
+Say "Диск: $Vhdx; прошивка: $fw; память гостя: $MemoryMiB МиБ"
+if ($PreflightOnly) { Finish $(if ($ok) { 'предварительные проверки пройдены' } else { 'есть что исправить (см. строки НЕТ/НУЖНО)' }) }
+if (-not $ok) { Finish 'предварительные проверки не пройдены' }
+Write-Host ''
+Say 'Диску гостя нужна подготовка для QEMU: загрузочный драйвер AHCI (иначе синий экран INACCESSIBLE_BOOT_DEVICE) и разрешённый RDP.'
+$a = Read-Host 'Подготовить диск автоматически с хоста, без загрузки гостя (рекомендуется; делается резервная копия куста SYSTEM)? [Y/n]'
+if ($a -notmatch '^[nNнН]') {
+  try {
+    & (Join-Path $PSScriptRoot 'Prepare-Disk.ps1') -Vhdx $Vhdx 2>&1 | ForEach-Object { Say "$_" }
+  } catch { Say "Prepare-Disk: $($_.Exception.Message)"; Finish 'не удалось подготовить диск автоматически — запустите Prepare-Guest.ps1 внутри гостя в Hyper-V и повторите' }
+} else {
+  $a = Read-Host 'Тогда Prepare-Guest.ps1 уже запускался внутри гостя? [y/N]'
+  if ($a -notmatch '^[yYдД]') { Finish 'подготовьте диск: пункт 0 с автоматической подготовкой, либо Prepare-Guest.ps1 внутри гостя в Hyper-V' }
+}
+
+# ---------- запуск ----------
+$irq = 'on'
+$started = $false
+for ($try = 1; $try -le 2 -and -not $started; $try++) {
+  try {
+    & (Join-Path $PSScriptRoot 'Start-Guest.ps1') -Vhdx $Vhdx -Mode pager -Firmware $fw -MemoryMiB $MemoryMiB -Irqchip $irq 2>&1 | ForEach-Object { Say "$_" }
+    $started = [bool](Get-GuestProcess)
+  } catch { Say "Start-Guest: $($_.Exception.Message)" }
+  if (-not $started) {
+    $err = Get-Content (Join-Path $Work 'qemu-err.txt') -Raw -ErrorAction SilentlyContinue
+    if ($irq -eq 'on' -and "$err" -match 'nested virtualization|kernel-irqchip|irqchip') { Say 'Повтор с -Irqchip off'; $irq = 'off' } else { break }
+  }
+}
+if (-not $started) { Finish 'QEMU не запустился (см. qemu-err.txt в отчёте)' }
+
+# ---------- ожидание загрузки гостя ----------
+Say "Жду загрузки гостя (RDP на 127.0.0.1:13389, до $BootTimeoutMin мин). В окне QEMU виден ход загрузки."
+$t0 = Get-Date
+$booted = $false
+while (((Get-Date) - $t0).TotalMinutes -lt $BootTimeoutMin) {
+  if (-not (Get-GuestProcess)) { break }
+  try { $c = New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1', 13389); $c.Close(); $booted = $true; break } catch { }
+  Start-Sleep -Seconds 10
+}
+Say ("Загрузка: {0} за {1:N0} с" -f $(if ($booted) { 'гость отвечает по RDP' } else { 'не дождался' }), ((Get-Date) - $t0).TotalSeconds)
+if (-not (Get-GuestProcess)) { Finish 'QEMU завершился во время загрузки (если на экране был синий экран INACCESSIBLE_BOOT_DEVICE — не запускали Prepare-Guest.ps1)' }
+if (-not $booted) { Say 'RDP не ответил: замеряю всё равно (возможно, в госте выключен RDP)' }
+
+# ---------- замеры ----------
+if ($Rdp) { & (Join-Path $PSScriptRoot 'Open-App.ps1') -Rdp $Rdp }
+Say "Замер пейджера $Minutes мин. Пользуйтесь приложением гостя как обычно (окно — пункт 3 меню или ваш .rdp)."
+& (Join-Path $PSScriptRoot 'Measure.ps1') -Mode track2 -Seconds ($Minutes * 60) 2>&1 | ForEach-Object { Add-Content -Path $log -Value "$_" -Encoding UTF8 }
+Say 'Gate 0 по памяти гостя (два снимка с паузой 60 с)'
+& (Join-Path $PSScriptRoot 'Measure.ps1') -Mode pagestat 2>&1 | ForEach-Object { Add-Content -Path $log -Value "$_" -Encoding UTF8 }
+$last = Get-Content (Join-Path $Work 'em-pager.log') -Tail 1 -ErrorAction SilentlyContinue
+Say "Последняя строка пейджера: $last"
+Write-Host ''
+$a = Read-Host 'Завершить гостя? Выключите Windows в госте сами (Пуск -> Завершение работы) и нажмите Enter, или введите k, чтобы завершить QEMU принудительно'
+if ($a -eq 'k') { $q = Get-GuestProcess; if ($q) { Stop-Process -Id $q.Id -Force } }
+Finish 'проверка завершена'
+) { Say "НЕТ: '$Vhdx' — разностный диск контрольной точки. QEMU его не читает: удалите контрольные точки ВМ в Hyper-V и укажите основной .vhdx"; $ok = $false }
 Say "Диск: $Vhdx; прошивка: $fw; память гостя: $MemoryMiB МиБ"
 if ($PreflightOnly) { Finish $(if ($ok) { 'предварительные проверки пройдены' } else { 'есть что исправить (см. строки НЕТ/НУЖНО)' }) }
 if (-not $ok) { Finish 'предварительные проверки не пройдены' }
