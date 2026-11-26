@@ -2,7 +2,7 @@
 //! фоновый компактор с бюджетом проб по доле возвратов и журнал с реальными счётчиками памяти процесса.
 //! Переменные окружения: EM_PAGER_CLUSTER (страниц в кластере, 16), EM_PAGER_IDLE_MS (2000),
 //! EM_PAGER_MIN_MIB (64), EM_PAGER_GHOST (0/1), EM_PAGER_GHOST_MIB (64), EM_PAGER_CODEC (xpress|lz4),
-//! EM_PAGER_DEDUP / EM_PAGER_DELTA (1), EM_PAGER_START_DELAY_S (60), EM_PAGER_TARGET_HITS (20),
+//! EM_PAGER_DEDUP (1), EM_PAGER_DELTA (0), EM_PAGER_SKETCH (1), EM_PAGER_START_DELAY_S (60), EM_PAGER_TARGET_HITS (20),
 //! EM_PAGER_LOG (em-pager.log).
 
 use crate::{Cfg, Cl, Core, Ops};
@@ -223,7 +223,8 @@ fn make_core() -> Core {
     let name = std::env::var("EM_PAGER_CODEC").unwrap_or_else(|_| "xpress".into());
     let cc = Config {
         dedup: env_u64("EM_PAGER_DEDUP", 1) == 1,
-        delta: env_u64("EM_PAGER_DELTA", 1) == 1,
+        // Gate 0 на настоящей памяти: XOR-delta ни разу не окупила свой индекс — по умолчанию выключена
+        delta: env_u64("EM_PAGER_DELTA", 0) == 1,
         sketch_features: env_u64("EM_PAGER_SKETCH", 1).clamp(1, 3) as usize,
         ..Config::default()
     };
