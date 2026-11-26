@@ -55,7 +55,8 @@ if (-not $Vhdx) {
         $Vhdx = $vm.Disk
         if ($vm.Gen -eq 1) { $fw = 'bios' }
         $snaps = @(Get-VMSnapshot -VMName $vm.Name -ErrorAction SilentlyContinue)
-        if ($snaps.Count -gt 0) { Say "ВНИМАНИЕ: у ВМ есть контрольные точки ($($snaps.Count)). Текущее состояние лежит в разностном диске .avhdx, а QEMU разностные VHDX не читает. Удалите контрольные точки в Hyper-V (их изменения сольются в основной диск) или укажите -Vhdx на нужный диск." }
+        if ($snaps.Count -gt 0) { Say "У ВМ есть контрольные точки ($($snaps.Count)); для QEMU будет собрана отдельная полная копия диска." }
+        if ($v = Get-VM -Name $vm.Name -ErrorAction SilentlyContinue) { if ($v.AutomaticCheckpointsEnabled) { Say 'Подсказка: у ВМ включены автоматические контрольные точки — каждый запуск в Hyper-V создаёт новый .avhdx (Hyper-V: Параметры ВМ -> Контрольные точки).' } }
         if ($MemoryMiB -eq 0) { $MemoryMiB = [Math]::Max(2048, [Math]::Min(8192, $vm.MemMiB)) }
         if ($vm.State -ne 'Off') {
           $a = Read-Host "ВМ '$($vm.Name)' сейчас $($vm.State). Выключить её штатно (Stop-VM)? [y/N]"
@@ -75,7 +76,46 @@ while ($Vhdx -and -not (Test-Path $Vhdx)) {
   $Vhdx = (Read-Host 'Введите полный путь к .vhdx (можно UNC \\сервер\папка\диск.vhdx), Enter — отмена').Trim('"', ' ')
   if (-not $Vhdx) { Finish 'путь к диску гостя не указан' }
 }
-if ($Vhdx -and $Vhdx -match '\.avhdx$') { Say "НЕТ: '$Vhdx' — разностный диск контрольной точки. QEMU его не читает: удалите контрольные точки ВМ в Hyper-V и укажите основной .vhdx"; $ok = $false }
+# Разностный диск (контрольная точка, .avhdx): QEMU его не читает. Собираем из цепочки отдельную полную копию
+# штатным Convert-VHD — диски ВМ и её контрольные точки при этом не меняются.
+$vhdInfo = $null
+if ($Vhdx -and (Test-Path $Vhdx)) { try { Import-Module Hyper-V -ErrorAction Stop; $vhdInfo = Get-VHD -Path $Vhdx -ErrorAction Stop } catch { } }
+$isDiff = ($vhdInfo -and "$($vhdInfo.VhdType)" -eq 'Differencing') -or ($Vhdx -match '\.avhdx$')
+if ($isDiff) {
+  Say "Диск '$Vhdx' — разностный (контрольная точка). QEMU читает только полный диск."
+  $chainOk = $true
+  $cur = $vhdInfo
+  $used = 0
+  while ($cur) {
+    $used += $cur.FileSize
+    Say ("  цепочка: {0} ({1}, {2:N1} ГиБ)" -f $cur.Path, $cur.VhdType, ($cur.FileSize / 1GB))
+    if ("$($cur.VhdType)" -ne 'Differencing') { break }
+    if (-not $cur.ParentPath -or -not (Test-Path $cur.ParentPath)) { Say "НЕТ: родительский диск '$($cur.ParentPath)' не найден — цепочка контрольных точек разорвана"; $chainOk = $false; break }
+    try { $cur = Get-VHD -Path $cur.ParentPath -ErrorAction Stop } catch { Say "НЕТ: не читается '$($cur.ParentPath)': $($_.Exception.Message)"; $chainOk = $false; break }
+  }
+  if (-not $vhdInfo) { Say 'НЕТ: без модуля Hyper-V цепочку не собрать — удалите контрольные точки ВМ в Hyper-V и укажите основной .vhdx'; $chainOk = $false }
+  if (-not $chainOk) { $ok = $false }
+  elseif (-not $PreflightOnly) {
+    $flat = Join-Path (Split-Path $Vhdx) 'ElasticMem-qemu-copy.vhdx'
+    $drive = (Get-Item (Split-Path $Vhdx)).PSDrive
+    $freeGiB = if ($drive.Free) { [int]($drive.Free / 1GB) } else { -1 }
+    $needGiB = [int][Math]::Ceiling($used / 1GB)
+    if ((Test-Path $flat) -and (Get-Item $flat).LastWriteTime -gt (Get-Item $Vhdx).LastWriteTime) {
+      $q = Read-Host "Есть копия для QEMU новее контрольной точки: $flat. Использовать её? [Y/n]"
+      if ($q -notmatch '^[nNнН]') { $Vhdx = $flat } else { Remove-Item $flat -Force }
+    }
+    if ($Vhdx -ne $flat) {
+      Say "Нужно до ~$needGiB ГиБ свободного места на $($drive.Name):, свободно $freeGiB ГиБ."
+      $q = Read-Host "Собрать полную копию диска для QEMU в $flat (оригинал ВМ не меняется, займёт несколько минут)? [Y/n]"
+      if ($q -match '^[nNнН]') { Finish 'нужна полная копия диска или ВМ без контрольных точек' }
+      if ($freeGiB -ge 0 -and $freeGiB -lt $needGiB) { Finish "мало места на $($drive.Name): для копии (нужно ~$needGiB ГиБ)" }
+      $t0 = Get-Date
+      try { Convert-VHD -Path $Vhdx -DestinationPath $flat -VHDType Dynamic -ErrorAction Stop } catch { Say "Convert-VHD: $($_.Exception.Message)"; Finish 'не удалось собрать копию диска' }
+      Say ("Копия собрана за {0:N0} с: {1}" -f ((Get-Date) - $t0).TotalSeconds, $flat)
+      $Vhdx = $flat
+    }
+  }
+}
 Say "Диск: $Vhdx; прошивка: $fw; память гостя: $MemoryMiB МиБ"
 if ($PreflightOnly) { Finish $(if ($ok) { 'предварительные проверки пройдены' } else { 'есть что исправить (см. строки НЕТ/НУЖНО)' }) }
 if (-not $ok) { Finish 'предварительные проверки не пройдены' }
