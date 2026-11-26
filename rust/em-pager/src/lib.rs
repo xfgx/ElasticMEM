@@ -93,6 +93,14 @@ pub struct Stats {
     pub ghost_pages: u64,
     /// Кластеры, восстановленные заранее по цепочке co-access.
     pub prefetched: u64,
+    /// Самопроверка предсказаний (каждое 8-е и все, пока точность потока низкая, не выполняются, а только
+    /// проверяются: был ли предсказанный кластер запрошен вскоре). Prefetch потока включён при точности ≥ 50 %;
+    /// pf_active — состояние для vCPU гостя (поток 0).
+    pub pf_checks: u64,
+    pub pf_check_hits: u64,
+    pub pf_active: bool,
+    /// Точность самопроверки для vCPU гостя (поток 0): попадания / проверки с затуханием, в процентах.
+    pub pf_vcpu_acc_pct: u32,
     /// Из них гость точно трогал: следующая проба такого кластера закончилась попаданием (нижняя оценка —
     /// обращения до пробы не видны, ведь кластер отображён и exit'а нет).
     pub prefetch_used: u64,
@@ -117,9 +125,15 @@ pub struct Core {
     /// Сколько замок пейджера удерживался, по видам операций (HOLD_NAMES), последние 2048 на вид.
     hold_us: [Vec<u32>; 6],
     hold_n: [usize; 6],
-    /// Выученные цепочки co-access: кластер -> (следующий, уверенность 0..=3).
-    succ: std::collections::HashMap<u64, (u64, u8)>,
-    last_restore: (u64, u64),
+    /// Выученные множества co-access: кластер A -> до 8 кластеров, которые восстанавливались в окне после A
+    /// (с числом таких случаев). Множество, а не цепочка: порядок обращений разных vCPU от раза к разу разный.
+    succ: std::collections::HashMap<u64, Vec<(u64, u8)>>,
+    /// Недавние восстановления по потоку обучения (vCPU гостя — один поток, VMM — свои): (кластер, время).
+    last_restore: std::collections::HashMap<u32, std::collections::VecDeque<(u64, u64)>>,
+    pending: Vec<(u64, u64, u32)>, // предсказания на проверке: (кластер, срок, поток-предсказатель)
+    acc: std::collections::HashMap<u32, (f64, f64)>, // по потоку: (попадания, проверки) с затуханием
+    pf_n: u64,
+    shadow_until: u64, // пока идёт проверка, prefetch не выполняется вовсе — иначе он сам «съедал» бы проверяемые запросы
 }
 
 pub const HOLD_NAMES: [&str; 6] = ["exit", "veh", "evict", "probe", "scan", "maintain"];
@@ -150,7 +164,7 @@ fn grow(b: u32) -> u32 {
 
 impl Core {
     pub fn new(cfg: Cfg, cas: CasStore) -> Self {
-        Core { cfg, cas, ranges: Vec::new(), st: Stats::default(), cursor: (0, 0), ghost_fifo: Default::default(), ghost_live: 0, scratch: Vec::new(), restore_us: Vec::new(), restore_n: 0, wait_us: Vec::new(), wait_n: 0, hold_us: Default::default(), hold_n: [0; 6], succ: Default::default(), last_restore: (u64::MAX, 0) }
+        Core { cfg, cas, ranges: Vec::new(), st: Stats::default(), cursor: (0, 0), ghost_fifo: Default::default(), ghost_live: 0, scratch: Vec::new(), restore_us: Vec::new(), restore_n: 0, wait_us: Vec::new(), wait_n: 0, hold_us: Default::default(), hold_n: [0; 6], succ: Default::default(), last_restore: Default::default(), pending: Vec::new(), acc: Default::default(), pf_n: 0, shadow_until: 0 }
     }
 
     fn clb(&self) -> u64 {
@@ -317,42 +331,100 @@ impl Core {
         (ri as u64) << 32 | cl as u64
     }
 
-    /// Запомнить совместный доступ: восстановление `key` вскоре после предыдущего восстановления.
-    fn note_coaccess(&mut self, key: u64, now: u64) {
-        let (prev, t) = self.last_restore;
-        if prev != u64::MAX && prev != key && now.saturating_sub(t) <= self.cfg.coaccess_ms {
-            let e = self.succ.entry(prev).or_insert((key, 0));
-            if e.0 == key {
-                e.1 = (e.1 + 1).min(3);
-            } else if e.1 > 0 {
-                e.1 -= 1;
-            } else {
-                *e = (key, 1);
+    /// Запомнить совместный доступ: `key` восстановлен в окне coaccess_ms после недавних восстановлений потока.
+    fn note_coaccess(&mut self, stream: u32, key: u64, now: u64) {
+        if self.last_restore.len() > 4096 {
+            self.last_restore.clear();
+        }
+        let w = self.cfg.coaccess_ms;
+        let recent = self.last_restore.entry(stream).or_default();
+        while recent.front().is_some_and(|&(_, t)| now.saturating_sub(t) > w) || recent.len() > 16 {
+            recent.pop_front();
+        }
+        let prevs: Vec<u64> = recent.iter().map(|&(k, _)| k).filter(|&k| k != key).collect();
+        recent.push_back((key, now));
+        for prev in prevs {
+            let set = self.succ.entry(prev).or_default();
+            match set.iter().position(|e| e.0 == key) {
+                Some(i) => set[i].1 = set[i].1.saturating_add(1).min(8),
+                None if set.len() < 8 => set.push((key, 1)),
+                None => {
+                    // вытеснить самый редкий член, остальным «состарить» счёт
+                    let (i, _) = set.iter().enumerate().min_by_key(|(_, e)| e.1).unwrap();
+                    set[i] = (key, 1);
+                    for e in set.iter_mut() {
+                        e.1 = e.1.saturating_sub(1).max(1);
+                    }
+                }
             }
         }
-        self.last_restore = (key, now);
     }
 
-    /// Demand-восстановление кластера + prefetch по выученной цепочке (только Evicted). Звено с уверенностью 0
-    /// (последнее наблюдение ему противоречило) цепочку обрывает.
-    fn restore_with_prefetch(&mut self, ri: usize, cl: usize, now: u64, ops: &dyn Ops) -> Result<(), CasError> {
+    /// Demand-восстановление кластера + prefetch его множества co-access (только Evicted, самые частые первыми).
+    fn restore_with_prefetch(&mut self, ri: usize, cl: usize, now: u64, stream: u32, ops: &dyn Ops) -> Result<(), CasError> {
         let key = Self::ckey(ri, cl);
-        self.note_coaccess(key, now);
+        self.note_coaccess(stream, key, now);
+        // проверка ранее сделанных предсказаний: запрос этого кластера — попадание; просроченные — промахи
+        if let Some(i) = self.pending.iter().position(|&(k, d, _)| k == key && now <= d) {
+            let (_, _, ps) = self.pending.swap_remove(i);
+            let a = self.acc.entry(ps).or_insert((0.0, 0.0));
+            a.0 += 1.0;
+            a.1 += 1.0;
+            self.st.pf_checks += 1;
+            self.st.pf_check_hits += 1;
+        }
+        let mut expired = Vec::new();
+        self.pending.retain(|&(_, d, ps)| {
+            if now > d {
+                expired.push(ps);
+            }
+            now <= d
+        });
+        for ps in expired {
+            self.acc.entry(ps).or_insert((0.0, 0.0)).1 += 1.0;
+            self.st.pf_checks += 1;
+        }
+        for a in self.acc.values_mut() {
+            if a.1 > 256.0 {
+                *a = (a.0 / 2.0, a.1 / 2.0);
+            }
+        }
+        if self.acc.len() > 4096 {
+            self.acc.clear();
+        }
         let mut batch = vec![(ri, cl)];
-        let mut cur = key;
-        for _ in 0..self.cfg.prefetch_depth {
-            let Some(&(nx, conf)) = self.succ.get(&cur) else { break };
-            if conf < 1 {
-                break;
+        if let Some(set) = self.succ.get(&key) {
+            let mut members: Vec<(u64, u8)> = set.clone();
+            members.sort_by(|a, b| b.1.cmp(&a.1));
+            for (nx, _) in members.into_iter().take(self.cfg.prefetch_depth) {
+                let (nri, ncl) = ((nx >> 32) as usize, (nx & 0xffff_ffff) as usize);
+                if nri < self.ranges.len() && ncl < self.ranges[nri].st.len() && self.ranges[nri].st[ncl] == Cl::Evicted && !batch.contains(&(nri, ncl)) {
+                    batch.push((nri, ncl));
+                }
             }
-            let (nri, ncl) = ((nx >> 32) as usize, (nx & 0xffff_ffff) as usize);
-            if nri >= self.ranges.len() || ncl >= self.ranges[nri].st.len() || batch.contains(&(nri, ncl)) {
-                break;
+        }
+        // Выполнять prefetch, только пока самопроверка подтверждает точность ≥ 50 % (не меньше 16 проверок);
+        // каждая 8-я цепочка всё равно идёт на проверку, чтобы оценка не устаревала.
+        if batch.len() > 1 {
+            self.pf_n += 1;
+            let a = self.acc.get(&stream).copied().unwrap_or((0.0, 0.0));
+            let active = a.1 >= 16.0 && a.0 >= 0.5 * a.1;
+            if stream == 0 {
+                self.st.pf_active = active;
             }
-            if self.ranges[nri].st[ncl] == Cl::Evicted {
-                batch.push((nri, ncl));
+            if !active || self.pf_n % 8 == 0 || now < self.shadow_until {
+                let deadline = now + self.cfg.coaccess_ms * (batch.len() as u64);
+                self.shadow_until = self.shadow_until.max(deadline);
+                for &(pri, pcl) in &batch[1..] {
+                    let k = Self::ckey(pri, pcl);
+                    if let Some(i) = self.pending.iter().position(|p| p.0 == k) {
+                        self.pending[i].1 = self.pending[i].1.max(deadline); // уже на проверке — одно предсказание
+                    } else if self.pending.len() < 256 {
+                        self.pending.push((k, deadline, stream));
+                    }
+                }
+                batch.truncate(1);
             }
-            cur = nx;
         }
         self.restore_batch(&batch, ops)?;
         self.ranges[ri].pf[cl] = false;
@@ -372,7 +444,8 @@ impl Core {
     }
 
     /// Memory-access exit гостя по GPA этого кластера. Ok(true) — повторить инструкцию.
-    pub fn on_exit(&mut self, ri: usize, cl: usize, now: u64, ops: &dyn Ops) -> Result<bool, CasError> {
+    /// `stream` — кто обращается (vCPU / поток): для обучения цепочек co-access.
+    pub fn on_exit(&mut self, ri: usize, cl: usize, now: u64, stream: u32, ops: &dyn Ops) -> Result<bool, CasError> {
         match self.ranges[ri].st[cl] {
             Cl::Resident => {
                 // другой vCPU уже вернул кластер — или отображение пропало не по нашей вине: отобразить ещё раз
@@ -391,7 +464,7 @@ impl Core {
                 Ok(true)
             }
             Cl::Evicted => {
-                self.restore_with_prefetch(ri, cl, now, ops)?;
+                self.restore_with_prefetch(ri, cl, now, stream, ops)?;
                 let ok = self.map_cl(ri, cl, ops);
                 self.st.exit_restores += 1;
                 self.mark_hot(ri, cl, now);
@@ -401,10 +474,10 @@ impl Core {
     }
 
     /// Обращение самого VMM к памяти Evicted-кластера (access violation). Ok(true) — повторить инструкцию.
-    pub fn on_host_fault(&mut self, ri: usize, cl: usize, now: u64, ops: &dyn Ops) -> Result<bool, CasError> {
+    pub fn on_host_fault(&mut self, ri: usize, cl: usize, now: u64, stream: u32, ops: &dyn Ops) -> Result<bool, CasError> {
         match self.ranges[ri].st[cl] {
             Cl::Evicted => {
-                self.restore_with_prefetch(ri, cl, now, ops)?;
+                self.restore_with_prefetch(ri, cl, now, stream, ops)?;
                 self.map_cl(ri, cl, ops);
                 self.st.host_restores += 1;
                 self.mark_hot(ri, cl, now);
@@ -603,6 +676,9 @@ impl Core {
             }
         }
         s.ghost_pages = self.ghost_live as u64;
+        if let Some(a) = self.acc.get(&0) {
+            s.pf_vcpu_acc_pct = if a.1 > 0.0 { (100.0 * a.0 / a.1) as u32 } else { 0 };
+        }
         s
     }
 }

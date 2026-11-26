@@ -132,7 +132,7 @@ fn run(ghost: bool) -> Stats {
             let gpa = sim.gpa0 + (p * PAGE) as u64;
             if !sim.mapped.borrow()[p] {
                 let (ri, cl) = core.find_gpa(gpa).unwrap();
-                assert!(core.on_exit(ri, cl, now, &sim).unwrap());
+                assert!(core.on_exit(ri, cl, now, 0, &sim).unwrap());
             }
             assert!(sim.mapped.borrow()[p] && sim.committed.borrow()[p], "guest saw unmapped/decommitted page");
             let w = p * 512 + 7;
@@ -146,7 +146,7 @@ fn run(ghost: bool) -> Stats {
             let p = r.next() as usize % pages;
             if !sim.committed.borrow()[p] || sim.ro.borrow()[p] {
                 let (ri, cl) = core.find_hva(base + p * PAGE).unwrap();
-                assert!(core.on_host_fault(ri, cl, now, &sim).unwrap());
+                assert!(core.on_host_fault(ri, cl, now, 1, &sim).unwrap());
             }
             let w = p * 512 + 300;
             let v = unsafe { *((base + w * 8) as *const u64) };
@@ -218,7 +218,7 @@ fn corrupted_store_fails_closed() {
         }
     }
     let (ri, cl) = victim.expect("some cluster evicted");
-    assert!(core.on_exit(ri, cl, 2000, &sim).is_err(), "повреждение должно вернуть ошибку, а не байты");
+    assert!(core.on_exit(ri, cl, 2000, 0, &sim).is_err(), "повреждение должно вернуть ошибку, а не байты");
 }
 
 /// Co-access: гость обходит группы разбросанных кластеров в одном и том же порядке (как связный список).
@@ -245,7 +245,7 @@ fn groups_run(prefetch: usize) -> (u64, Stats) {
                 if core.ranges[ri].st[c] == Cl::Evicted {
                     restores_by_exit += 1;
                 }
-                assert!(core.on_exit(ri, c, now, &sim).unwrap());
+                assert!(core.on_exit(ri, c, now, 0, &sim).unwrap());
             }
             let w = p * 512 + 9;
             let v = unsafe { *((base + w * 8) as *const u64) };
@@ -277,7 +277,7 @@ fn groups_run(prefetch: usize) -> (u64, Stats) {
 fn coaccess_prefetch_cuts_restore_exits() {
     let (without, _) = groups_run(0);
     let (with, st) = groups_run(8);
-    assert!(st.prefetched > 0, "{st:?}");
-    eprintln!("coaccess: restore exits without prefetch {without}, with {with}; prefetched={}", st.prefetched);
-    assert!(with * 2 < without, "exits with prefetch {with}, without {without}");
+    eprintln!("coaccess: restore exits without prefetch {without}, with {with}; prefetched={} checks={} hits={} active={}", st.prefetched, st.pf_checks, st.pf_check_hits, st.pf_active);
+    assert!(st.prefetched > 0 && st.pf_active, "{st:?}");
+    assert!(with * 10 < without * 8, "exits with prefetch {with}, without {without}");
 }
