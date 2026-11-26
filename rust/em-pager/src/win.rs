@@ -209,9 +209,20 @@ fn make_core() -> Core {
         min_range_bytes: env_u64("EM_PAGER_MIN_MIB", 64) << 20,
         keep_ghost: env_u64("EM_PAGER_GHOST", 0) == 1,
     };
-    let codec = em_cas::by_name(&std::env::var("EM_PAGER_CODEC").unwrap_or_else(|_| "xpress".into()));
-    let cc = Config { dedup: env_u64("EM_PAGER_DEDUP", 1) == 1, delta: env_u64("EM_PAGER_DELTA", 1) == 1, ..Config::default() };
-    Core::new(cfg, CasStore::new(codec, cc))
+    let name = std::env::var("EM_PAGER_CODEC").unwrap_or_else(|_| "xpress".into());
+    let cc = Config {
+        dedup: env_u64("EM_PAGER_DEDUP", 1) == 1,
+        delta: env_u64("EM_PAGER_DELTA", 1) == 1,
+        sketch_features: env_u64("EM_PAGER_SKETCH", 1).clamp(1, 3) as usize,
+        ..Config::default()
+    };
+    // auto: холодные кластеры — XPRESS (плотнее), тёплые (уже возвращавшиеся) — LZ4 (быстрее распаковка)
+    let cas = if name == "auto" {
+        CasStore::with_alt(em_cas::by_name("xpress"), em_cas::by_name("lz4"), cc)
+    } else {
+        CasStore::new(em_cas::by_name(&name), cc)
+    };
+    Core::new(cfg, cas)
 }
 
 fn init(hv: Hv) -> i32 {
@@ -370,21 +381,10 @@ fn line(p: &Pager, c: &Core) -> String {
     let store_b = cs.total_bytes();
     let meta_b = c.ranges.iter().map(|r| r.st.len() as u64 * 24 + (r.st.len() * c.cfg.cluster_pages) as u64 * 12).sum::<u64>();
     let (pv, ws) = proc_mem();
-    let tot: u64 = s.restore_us_hist.iter().sum();
-    let q = |f: f64| -> u64 {
-        let want = ((tot as f64 * f).ceil() as u64).max(1);
-        let mut acc = 0;
-        for (k, &n) in s.restore_us_hist.iter().enumerate() {
-            acc += n;
-            if acc >= want {
-                return 1u64 << (k + 1);
-            }
-        }
-        0
-    };
+    let q = |f: f64| c.restore_quantile_us(f);
     let mib = |b: u64| b as f64 / 1048576.0;
     format!(
-        "t_s={} guest_mib={} resident_cl={} probing_cl={} evicted_cl={} evicted_mib={:.1} store_mib={:.1} payload_mib={:.1} tables_mib={:.1} saved_mib={:.1} zero_pages={} dedup={} delta={} temporal={} full={} incompressible={} ghost_pages={} probes={} probe_hits={} evictions={} rollbacks={} exit_restores={} host_restores={} restore_p50_us<={} restore_p99_us<={} crc_failures={} segments_released={} proc_private_mib={:.1} proc_ws_mib={:.1}",
+        "t_s={} guest_mib={} resident_cl={} probing_cl={} evicted_cl={} evicted_mib={:.1} store_mib={:.1} payload_mib={:.1} tables_mib={:.1} saved_mib={:.1} zero_pages={} dedup={} delta={} temporal={} full={} incompressible={} ghost_pages={} probes={} probe_hits={} evictions={} rollbacks={} exit_restores={} host_restores={} restore_p50_us={} restore_p99_us={} crc_failures={} segments_released={} proc_private_mib={:.1} proc_ws_mib={:.1}",
         (now_ms() - p.start_ms) / 1000,
         s.guest_bytes >> 20, s.resident_cl, s.probing_cl, s.evicted_cl,
         mib(evicted_b), mib(store_b), mib(cs.payload_bytes), mib(meta_b),

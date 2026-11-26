@@ -184,3 +184,50 @@ fn no_dedup_no_delta_config_is_plain_compression() {
     assert_ne!(a, b);
     assert_eq!(kb, Kind::Full);
 }
+
+#[test]
+fn entry_is_compact() {
+    assert!(std::mem::size_of::<super::Entry>() <= 48, "Entry = {} байт", std::mem::size_of::<super::Entry>());
+}
+
+#[test]
+fn warm_codec_roundtrip_and_mixed_delta() {
+    struct Plain;
+    impl Codec for Plain {
+        fn compress(&self, src: &[u8], dst: &mut [u8]) -> Option<usize> {
+            // «кодек» без сжатия нулей в конце: проверяет, что распаковка берёт кодек записи, а не хранилища
+            let n = src.iter().rposition(|&b| b != 0).map_or(1, |i| i + 1);
+            if n >= src.len() { return None; }
+            dst[..n].copy_from_slice(&src[..n]);
+            dst[n..n + 2].copy_from_slice(&(n as u16).to_le_bytes());
+            Some(n + 2)
+        }
+        fn decompress(&self, src: &[u8], dst: &mut [u8]) -> bool {
+            if src.len() < 2 { return false; }
+            let n = u16::from_le_bytes(src[src.len() - 2..].try_into().unwrap()) as usize;
+            if n + 2 != src.len() || n > dst.len() { return false; }
+            dst[..n].copy_from_slice(&src[..n]);
+            dst[n..].fill(0);
+            true
+        }
+        fn name(&self) -> &'static str { "plain" }
+    }
+    let mut s = CasStore::with_alt(Box::new(Lz4), Box::new(Plain), Config::default());
+    let pages: Vec<Vec<u8>> = (0..400u64).map(|i| { let mut p = heap_page(i % 50, 3); p[PAGE - 64..].fill(0); if i % 3 == 0 { p[10] ^= 1; } p }).collect();
+    let refs: Vec<Ref> = pages.iter().enumerate().map(|(i, p)| if i % 2 == 0 { s.put_warm(p, None).unwrap().0 } else { s.put(p, None).unwrap().0 }).collect();
+    let mut out = vec![0u8; PAGE];
+    for (p, r) in pages.iter().zip(&refs) {
+        s.get(*r, &mut out).unwrap();
+        assert_eq!(&out, p);
+    }
+    assert!(s.codec_name().contains("plain"));
+}
+
+#[test]
+fn plain_config_builds_no_similarity_index() {
+    let mut s = CasStore::new(Box::new(Lz4), Config { dedup: false, delta: false, ..Config::default() });
+    for i in 0..2000u64 {
+        s.put(&heap_page(i, 1), None).unwrap();
+    }
+    assert!(s.sf_index.is_empty() && s.index.is_empty());
+}

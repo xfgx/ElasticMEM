@@ -1,7 +1,9 @@
 //! em-pagestat — Gate 0 для смены единицы хранения. По настоящей памяти считает, сколько дали бы:
 //!  * нулевые страницы; точные дубликаты внутри процесса и между процессами;
 //!  * обычное постраничное сжатие (LZ4, XPRESS — кодек сжатия памяти Windows);
-//!  * em-cas целиком (zero + dedup + XOR-delta к похожей базе) — с проверкой, что всё восстанавливается без потерь;
+//!  * em-cas в четырёх вариантах в одном и том же контейнере (сегменты + записи), чтобы сравнение было честным:
+//!    plain (только сжатие), dedup, cas (dedup + XOR-delta, 3 super-feature), cas1 (1 super-feature);
+//!    каждый вариант проверяется на восстановление без потерь;
 //!  * временна́я дельта: XOR страницы с её же версией из прошлого снимка (--snapshots 2+).
 //! Источники: --pid / --name (живые процессы, только резидентные страницы), --dump (полный минидамп),
 //! --raw (сырой образ, например память гостя), --synthetic МиБ (самопроверка).
@@ -101,8 +103,15 @@ fn main() {
     for snap in 1..=a.snapshots {
         let mut s = Snap::default();
         let mut seen: HashMap<u128, (u32, bool)> = HashMap::new(); // ключ -> (первый источник, был ли в другом)
-        let mut cas = CasStore::new(em_cas::by_name(&a.codec), Config::default());
-        let mut refs: Vec<(Ref, u128)> = Vec::new();
+        let variants: [(&str, Config); 4] = [
+            ("plain", Config { dedup: false, delta: false, ..Config::default() }),
+            ("dedup", Config { dedup: true, delta: false, ..Config::default() }),
+            ("cas", Config::default()),
+            ("cas1", Config { sketch_features: 1, ..Config::default() }),
+        ];
+        let mut stores: Vec<CasStore> = variants.iter().map(|(_, c)| CasStore::new(em_cas::by_name(&a.codec), *c)).collect();
+        let mut refs: Vec<Vec<Ref>> = vec![Vec::new(); stores.len()];
+        let mut keys: Vec<u128> = Vec::new();
         let mut cur: HashMap<(u32, u64), (u128, Vec<u8>)> = HashMap::new();
         let mut cas_err = 0u64;
         {
@@ -130,9 +139,15 @@ fn main() {
                         s.xpress += clen(x.as_ref(), p);
                     }
                 }
-                match cas.put(p, None) {
-                    Ok((r, _)) => refs.push((r, k)),
-                    Err(_) => cas_err += 1,
+                keys.push(k);
+                for (i, st) in stores.iter_mut().enumerate() {
+                    match st.put(p, None) {
+                        Ok((r, _)) => refs[i].push(r),
+                        Err(_) => {
+                            cas_err += 1;
+                            refs[i].push(Ref::Zero);
+                        }
+                    }
                 }
                 if snap > 1 {
                     if let Some((pk, pc)) = prev.get(&(sid, addr)) {
@@ -187,16 +202,19 @@ fn main() {
             }
             let _ = &mut budget;
         }
-        // Проверка без потерь: каждая страница восстанавливается из em-cas и совпадает по SHA-256.
+        // Проверка без потерь: каждая страница восстанавливается из каждого варианта и совпадает по SHA-256.
         let mut bad = 0u64;
         let mut b = vec![0u8; PAGE];
-        for (r, k) in &refs {
-            let ok = cas.get(*r, &mut b).is_ok() && (if *r == Ref::Zero { b.iter().all(|&x| x == 0) } else { em_cas::key(&b) == *k });
-            if !ok {
-                bad += 1;
+        for (i, st) in stores.iter_mut().enumerate() {
+            for (r, k) in refs[i].iter().zip(&keys) {
+                let ok = st.get(*r, &mut b).is_ok() && (if *k == 0 { b.iter().all(|&x| x == 0) } else { em_cas::key(&b) == *k });
+                if !ok {
+                    bad += 1;
+                }
             }
         }
-        let cs = cas.stats();
+        let all: Vec<em_cas::CasStats> = stores.iter().map(|s| s.stats()).collect();
+        let cs = all[2];
         let raw_b = s.pages * PAGE as u64;
         let mib = |x: u64| x as f64 / 1048576.0;
         let pct = |x: u64, of: u64| if of == 0 { 0.0 } else { 100.0 * x as f64 / of as f64 };
@@ -210,6 +228,22 @@ fn main() {
             mib(cs.total_bytes()), ratio(cs.total_bytes()), mib(cs.payload_bytes), mib(cs.meta_bytes), mib(cs.segment_bytes),
             cs.put_dedup, cs.put_delta, cs.put_full, cs.put_incompressible, cas_err,
             if bad == 0 && cas_err == 0 { "PASS".to_string() } else { format!("FAIL({bad})") }
+        );
+        for ((name, _), st) in variants.iter().zip(&all) {
+            println!(
+                "STORE snap={snap} variant={name} total_mib={:.1} payload_mib={:.1} meta_mib={:.1} segments_mib={:.1} ratio={:.3} meta_bytes_per_page={:.1} dedup={} delta={} full={} incompressible={}",
+                mib(st.total_bytes()), mib(st.payload_bytes), mib(st.meta_bytes), mib(st.segment_bytes), ratio(st.total_bytes()),
+                if s.pages == 0 { 0.0 } else { st.meta_bytes as f64 / s.pages as f64 },
+                st.put_dedup, st.put_delta, st.put_full, st.put_incompressible
+            );
+        }
+        let gain = |x: u64, base: u64| if base == 0 { 0.0 } else { 100.0 * (base as f64 - x as f64) / base as f64 };
+        let plain = all[0].total_bytes();
+        println!(
+            "GATE0_FAIR snap={snap} codec={} plain_mib={:.1} dedup_mib={:.1} cas_mib={:.1} cas1_mib={:.1} dedup_gain_pct={:.1} cas_gain_pct={:.1} cas1_gain_pct={:.1} delta_extra_gain_pct={:.1}",
+            a.codec, mib(plain), mib(all[1].total_bytes()), mib(all[2].total_bytes()), mib(all[3].total_bytes()),
+            gain(all[1].total_bytes(), plain), gain(all[2].total_bytes(), plain), gain(all[3].total_bytes(), plain),
+            gain(all[2].total_bytes(), all[1].total_bytes())
         );
         let (best_name, best) = if xp.is_some() && s.xpress < s.lz4 { ("xpress", s.xpress) } else { ("lz4", s.lz4) };
         // Честное сравнение: обычному сжатию нулевые страницы тоже ничего не стоят (их и так не храним).
@@ -229,7 +263,7 @@ fn main() {
         if bad != 0 || cas_err != 0 {
             std::process::exit(1);
         }
-        drop(cas);
+        drop(stores);
         prev = cur;
         if snap < a.snapshots {
             std::thread::sleep(std::time::Duration::from_millis(a.interval_ms));

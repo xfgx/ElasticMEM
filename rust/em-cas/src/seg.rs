@@ -57,6 +57,7 @@ struct Seg {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(C, packed(2))] // 6 байт: запись хранилища укладывается в 48
 pub struct Loc {
     pub seg: u32,
     pub slot: u16,

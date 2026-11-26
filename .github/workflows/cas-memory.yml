@@ -67,6 +67,8 @@ jobs:
           function Run($name) { & $e 1024 48 60 1000 2>&1 | Tee-Object "out/${{ matrix.os }}-pager-$name.txt"; if ($LASTEXITCODE -ne 0) { throw "pager $name failed" } }
           Run 'runs64k-c16-xpress'
           $env:EM_PAGER_CODEC = "lz4"; Run 'runs64k-c16-lz4'; Remove-Item Env:EM_PAGER_CODEC
+          $env:EM_PAGER_CODEC = "auto"; Run 'runs64k-c16-auto'; Remove-Item Env:EM_PAGER_CODEC
+          $env:EM_PAGER_SKETCH = "3"; Run 'runs64k-c16-sketch3'; Remove-Item Env:EM_PAGER_SKETCH
           $env:EM_SIM_SCATTER = "1"; Run 'scatter-c16'
           $env:EM_PAGER_CLUSTER = "1"; Run 'scatter-c1'
       - name: WHP proxy — SDK offsets + QEMU-like harness over a modelled WHP

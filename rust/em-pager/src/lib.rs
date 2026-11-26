@@ -98,6 +98,8 @@ pub struct Core {
     ghost_fifo: std::collections::VecDeque<(usize, usize)>,
     ghost_live: usize,
     scratch: Vec<u8>,
+    restore_us: Vec<u32>, // последние 8192 времени восстановления (мкс) для точных квантилей
+    restore_n: usize,
 }
 
 fn grow(b: u32) -> u32 {
@@ -106,7 +108,7 @@ fn grow(b: u32) -> u32 {
 
 impl Core {
     pub fn new(cfg: Cfg, cas: CasStore) -> Self {
-        Core { cfg, cas, ranges: Vec::new(), st: Stats::default(), cursor: (0, 0), ghost_fifo: Default::default(), ghost_live: 0, scratch: Vec::new() }
+        Core { cfg, cas, ranges: Vec::new(), st: Stats::default(), cursor: (0, 0), ghost_fifo: Default::default(), ghost_live: 0, scratch: Vec::new(), restore_us: Vec::new(), restore_n: 0 }
     }
 
     fn clb(&self) -> u64 {
@@ -363,7 +365,11 @@ impl Core {
         for k in 0..n {
             let pi = cl * n + k;
             let hint = if self.cfg.keep_ghost { self.ranges[ri].ghost[pi] } else { None };
-            match self.cas.put(&src[k * PAGE..(k + 1) * PAGE], hint) {
+            // Phase-aware: кластер, который уже возвращали (тёплый), сжимается быстрым кодеком (если задан),
+            // холодный — плотным. Без второго кодека put_warm == put.
+            let page = &src[k * PAGE..(k + 1) * PAGE];
+            let res = if self.ranges[ri].backoff[cl] > 0 { self.cas.put_warm(page, hint) } else { self.cas.put(page, hint) };
+            match res {
                 Ok((r, kind)) => {
                     refs[k] = r;
                     match kind {
@@ -432,7 +438,24 @@ impl Core {
         self.cas.compact(max_moves)
     }
 
+    /// Квантиль времени восстановления (мкс) по последним 8192 восстановлениям.
+    pub fn restore_quantile_us(&self, q: f64) -> u64 {
+        if self.restore_us.is_empty() {
+            return 0;
+        }
+        let mut v = self.restore_us.clone();
+        v.sort_unstable();
+        v[((v.len() as f64 * q) as usize).min(v.len() - 1)] as u64
+    }
+
     pub fn record_restore_us(&mut self, us: u64) {
+        let u = us.min(u32::MAX as u64) as u32;
+        if self.restore_us.len() < 8192 {
+            self.restore_us.push(u);
+        } else {
+            self.restore_us[self.restore_n % 8192] = u;
+        }
+        self.restore_n += 1;
         let k = (64 - us.max(1).leading_zeros() as usize).saturating_sub(1).min(23);
         self.st.restore_us_hist[k] += 1;
     }

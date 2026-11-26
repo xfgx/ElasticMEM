@@ -9,7 +9,7 @@ param(
   [int]$Cpus = 2,
   [ValidateSet('plain', 'pager')][string]$Mode = 'plain',
   [ValidateSet('uefi', 'bios')][string]$Firmware = 'uefi',
-  [ValidateSet('xpress', 'lz4')][string]$Codec = 'xpress',
+  [ValidateSet('xpress', 'lz4', 'auto')][string]$Codec = 'xpress',
   [int]$Cluster = 16,
   [int]$IdleMs = 2000,
   [int]$StartDelayS = 90,

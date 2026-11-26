@@ -59,11 +59,13 @@ pub struct Config {
     pub verify: bool,
     /// Дельту принимаем, только если она меньше `delta_max_pct`% от обычного сжатия.
     pub delta_max_pct: usize,
+    /// Сколько super-feature скетча индексировать (1..=3). Меньше — дешевле индекс, реже находится база.
+    pub sketch_features: usize,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { dedup: true, delta: true, verify: true, delta_max_pct: 50 }
+        Config { dedup: true, delta: true, verify: true, delta_max_pct: 50, sketch_features: 3 }
     }
 }
 
@@ -114,16 +116,58 @@ struct Entry {
     len: u16,
     kind: EKind,
     has_sf: bool,
+    alt: bool, // payload сжат вторым кодеком (тёплые страницы: быстрее распаковка)
+}
+
+const CHUNK: usize = 4096;
+
+/// Таблица записей кусками по 4096: рост без удвоения ёмкости, перерасход не больше одного куска.
+#[derive(Default)]
+struct Ents(Vec<Vec<Entry>>);
+
+impl Ents {
+    fn len(&self) -> usize {
+        self.0.last().map_or(0, |c| (self.0.len() - 1) * CHUNK + c.len())
+    }
+    fn get(&self, i: usize) -> Option<&Entry> {
+        self.0.get(i / CHUNK).and_then(|c| c.get(i % CHUNK))
+    }
+    fn push(&mut self, e: Entry) {
+        if self.0.last().map_or(true, |c| c.len() == CHUNK) {
+            self.0.push(Vec::with_capacity(CHUNK));
+        }
+        self.0.last_mut().unwrap().push(e);
+    }
+    fn bytes(&self) -> usize {
+        self.0.len() * CHUNK * std::mem::size_of::<Entry>()
+    }
+}
+
+impl std::ops::Index<usize> for Ents {
+    type Output = Entry;
+    fn index(&self, i: usize) -> &Entry {
+        &self.0[i / CHUNK][i % CHUNK]
+    }
+}
+impl std::ops::IndexMut<usize> for Ents {
+    fn index_mut(&mut self, i: usize) -> &mut Entry {
+        &mut self.0[i / CHUNK][i % CHUNK]
+    }
+}
+
+fn sf_key(j: usize, sf: u32) -> u32 {
+    sf.rotate_left(j as u32 * 11) ^ (j as u32).wrapping_mul(0x9E37_79B9)
 }
 
 pub struct CasStore {
     codec: Box<dyn Codec>,
+    alt: Option<Box<dyn Codec>>,
     cfg: Config,
     heap: Heap,
-    ents: Vec<Entry>,
+    ents: Ents,
     free_ents: Vec<u32>,
     index: HashMap<u64, u32>, // первые 64 бита SHA-256 -> запись (совпадение сверяется побайтово)
-    sf_index: HashMap<u64, u32>,
+    sf_index: HashMap<u32, u32>,
     st: CasStats,
 }
 
@@ -218,11 +262,28 @@ fn xor_into(dst: &mut [u8], a: &[u8], b: &[u8]) {
 
 impl CasStore {
     pub fn new(codec: Box<dyn Codec>, cfg: Config) -> Self {
-        CasStore { codec, cfg, heap: Heap::default(), ents: Vec::new(), free_ents: Vec::new(), index: HashMap::new(), sf_index: HashMap::new(), st: CasStats::default() }
+        CasStore { codec, alt: None, cfg, heap: Heap::default(), ents: Ents::default(), free_ents: Vec::new(), index: HashMap::new(), sf_index: HashMap::new(), st: CasStats::default() }
     }
 
-    pub fn codec_name(&self) -> &'static str {
-        self.codec.name()
+    /// Хранилище с двумя кодеками: `codec` для холодных страниц, `alt` — для тёплых (put_warm).
+    pub fn with_alt(codec: Box<dyn Codec>, alt: Box<dyn Codec>, cfg: Config) -> Self {
+        let mut s = Self::new(codec, cfg);
+        s.alt = Some(alt);
+        s
+    }
+
+    fn codec_of(&self, alt: bool) -> &dyn Codec {
+        match (&self.alt, alt) {
+            (Some(a), true) => a.as_ref(),
+            _ => self.codec.as_ref(),
+        }
+    }
+
+    pub fn codec_name(&self) -> String {
+        match &self.alt {
+            Some(a) => format!("{}+{}(warm)", self.codec.name(), a.name()),
+            None => self.codec.name().to_string(),
+        }
     }
     pub fn config(&self) -> Config {
         self.cfg
@@ -250,14 +311,14 @@ impl CasStore {
         match e.kind {
             EKind::Raw => dst.copy_from_slice(payload),
             EKind::Full => {
-                if !self.codec.decompress(payload, dst) {
+                if !self.codec_of(e.alt).decompress(payload, dst) {
                     return Err(CasError::Decode);
                 }
             }
             EKind::Delta => {
                 self.decode(e.base, dst)?;
                 let mut x = [0u8; PAGE];
-                if !self.codec.decompress(payload, &mut x) {
+                if !self.codec_of(e.alt).decompress(payload, &mut x) {
                     return Err(CasError::Decode);
                 }
                 for i in 0..PAGE {
@@ -320,8 +381,8 @@ impl CasStore {
             self.index.remove(&e.key);
         }
         if e.has_sf {
-            for j in 0..3 {
-                let k = (j as u64) << 32 | e.sf[j] as u64;
+            for j in 0..self.cfg.sketch_features.min(3) {
+                let k = sf_key(j, e.sf[j]);
                 if self.sf_index.get(&k) == Some(&id) {
                     self.sf_index.remove(&k);
                 }
@@ -339,11 +400,12 @@ impl CasStore {
         }
     }
 
-    fn new_entry(&mut self, kind: EKind, base: u32, crc: u32, key: u64, payload: &[u8], sf: Option<[u32; 3]>) -> Result<Ref, CasError> {
+    #[allow(clippy::too_many_arguments)]
+    fn new_entry(&mut self, kind: EKind, base: u32, crc: u32, key: u64, payload: &[u8], sf: Option<[u32; 3]>, alt: bool) -> Result<Ref, CasError> {
         let id = match self.free_ents.pop() {
             Some(id) => id,
             None => {
-                self.ents.push(Entry { key: 0, base: 0, gen: 0, refcnt: 0, crc: 0, sf: [0; 3], loc: Loc { seg: 0, slot: 0 }, len: 0, kind: EKind::Free, has_sf: false });
+                self.ents.push(Entry { key: 0, base: 0, gen: 0, refcnt: 0, crc: 0, sf: [0; 3], loc: Loc { seg: 0, slot: 0 }, len: 0, kind: EKind::Free, has_sf: false, alt: false });
                 (self.ents.len() - 1) as u32
             }
         };
@@ -356,10 +418,11 @@ impl CasStore {
         };
         self.heap.bytes_mut(loc, payload.len()).copy_from_slice(payload);
         let gen = self.ents[id as usize].gen;
-        self.ents[id as usize] = Entry { key, base, gen, refcnt: 1, crc, sf: sf.unwrap_or([0; 3]), loc, len: payload.len() as u16, kind, has_sf: sf.is_some() };
+        let sf = if self.cfg.delta { sf } else { None }; // без дельты индекс похожести не нужен
+        self.ents[id as usize] = Entry { key, base, gen, refcnt: 1, crc, sf: sf.unwrap_or([0; 3]), loc, len: payload.len() as u16, kind, has_sf: sf.is_some(), alt };
         if let Some(sf) = sf {
-            for j in 0..3 {
-                self.sf_index.insert((j as u64) << 32 | sf[j] as u64, id);
+            for j in 0..self.cfg.sketch_features.min(3) {
+                self.sf_index.insert(sf_key(j, sf[j]), id);
             }
         }
         if self.cfg.dedup {
@@ -373,15 +436,21 @@ impl CasStore {
     /// Сохранить страницу. `hint` — необязательная база (прошлая версия этой же страницы): временна́я дельта.
     /// Возвращает ссылку (refcount +1 у вызывающего) и то, чем стала страница.
     pub fn put(&mut self, page: &[u8], hint: Option<Ref>) -> Result<(Ref, Kind), CasError> {
-        self.put_inner(page, hint, true).map(|r| r.unwrap())
+        self.put_inner(page, hint, true, false).map(|r| r.unwrap())
+    }
+
+    /// put для тёплой страницы: payload сжимается вторым кодеком (если он задан в with_alt).
+    pub fn put_warm(&mut self, page: &[u8], hint: Option<Ref>) -> Result<(Ref, Kind), CasError> {
+        self.put_inner(page, hint, true, true).map(|r| r.unwrap())
     }
 
     /// Как put, но несжимаемую страницу без дубликата и без дельты не сохраняет: Ok(None) — держите её у себя.
     pub fn put_compressible(&mut self, page: &[u8], hint: Option<Ref>) -> Result<Option<(Ref, Kind)>, CasError> {
-        self.put_inner(page, hint, false)
+        self.put_inner(page, hint, false, false)
     }
 
-    fn put_inner(&mut self, page: &[u8], hint: Option<Ref>, keep_raw: bool) -> Result<Option<(Ref, Kind)>, CasError> {
+    fn put_inner(&mut self, page: &[u8], hint: Option<Ref>, keep_raw: bool, warm: bool) -> Result<Option<(Ref, Kind)>, CasError> {
+        let alt = warm && self.alt.is_some();
         let page = &page[..PAGE];
         if is_zero(page) {
             self.st.put_zero += 1;
@@ -402,8 +471,8 @@ impl CasStore {
         }
         let crc = crc32(page);
         let mut full = [0u8; PAGE];
-        let flen = self.codec.compress(page, &mut full);
-        let sf = sketch(page);
+        let flen = self.codec_of(alt).compress(page, &mut full);
+        let sf = if self.cfg.delta { sketch(page) } else { None };
         let mut best: Option<(u32, usize, bool, [u8; PAGE])> = None;
         if self.cfg.delta {
             let limit = flen.unwrap_or(PAGE) * self.cfg.delta_max_pct / 100;
@@ -412,8 +481,8 @@ impl CasStore {
                 cands.push((h, true));
             }
             if let Some(sf) = sf {
-                for j in 0..3 {
-                    if let Some(&id) = self.sf_index.get(&((j as u64) << 32 | sf[j] as u64)) {
+                for j in 0..self.cfg.sketch_features.min(3) {
+                    if let Some(&id) = self.sf_index.get(&sf_key(j, sf[j])) {
                         if !cands.iter().any(|c| c.0 == id) {
                             cands.push((id, false));
                         }
@@ -430,7 +499,7 @@ impl CasStore {
                 let mut x = [0u8; PAGE];
                 xor_into(&mut x, page, &tmp);
                 let mut d = [0u8; PAGE];
-                if let Some(n) = self.codec.compress(&x, &mut d) {
+                if let Some(n) = self.codec_of(alt).compress(&x, &mut d) {
                     if n < limit && best.as_ref().map_or(true, |b| n < b.1) {
                         best = Some((id, n, temporal, d));
                     }
@@ -439,7 +508,7 @@ impl CasStore {
         }
         if let Some((base, n, temporal, d)) = best {
             self.ents[base as usize].refcnt += 1;
-            match self.new_entry(EKind::Delta, base, crc, k, &d[..n], None) {
+            match self.new_entry(EKind::Delta, base, crc, k, &d[..n], None, alt) {
                 Ok(r) => {
                     if temporal { self.st.put_temporal += 1 } else { self.st.put_delta += 1 }
                     return Ok(Some((r, if temporal { Kind::Temporal } else { Kind::Delta })));
@@ -452,7 +521,7 @@ impl CasStore {
         }
         match flen {
             Some(n) => {
-                let r = self.new_entry(EKind::Full, 0, crc, k, &full[..n], sf)?;
+                let r = self.new_entry(EKind::Full, 0, crc, k, &full[..n], sf, alt)?;
                 self.st.put_full += 1;
                 Ok(Some((r, Kind::Full)))
             }
@@ -461,7 +530,7 @@ impl CasStore {
                 if !keep_raw {
                     return Ok(None);
                 }
-                let r = self.new_entry(EKind::Raw, 0, crc, k, page, sf)?;
+                let r = self.new_entry(EKind::Raw, 0, crc, k, page, sf, false)?;
                 Ok(Some((r, Kind::Raw)))
             }
         }
@@ -485,7 +554,7 @@ impl CasStore {
         s.compact_moves = self.heap.moves;
         s.segments_released = self.heap.released;
         let idx = |n: usize, kv: usize| (n as f64 * (kv as f64 + 1.0) / 0.875) as u64; // hashbrown: ~7/8 заполнения
-        s.meta_bytes = (self.ents.capacity() * std::mem::size_of::<Entry>()) as u64
+        s.meta_bytes = self.ents.bytes() as u64
             + idx(self.index.capacity(), 8 + 4)
             + idx(self.sf_index.capacity(), 8 + 4)
             + (self.free_ents.capacity() * 4) as u64;
