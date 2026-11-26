@@ -198,6 +198,17 @@ pub struct Pager {
 
 static PAGER: OnceLock<Pager> = OnceLock::new();
 
+/// Сколько vCPU/VEH-потоков ждут замок пейджера. Замок не честный: компактор, который берёт его тысячи раз
+/// подряд на короткие операции, иначе «перехватывает» его у ждущего vCPU на десятки миллисекунд.
+static WAITERS: AtomicUsize = AtomicUsize::new(0);
+
+fn lock_urgent(p: &Pager) -> std::sync::MutexGuard<'_, Core> {
+    WAITERS.fetch_add(1, Ordering::SeqCst);
+    let c = p.core.lock().unwrap();
+    WAITERS.fetch_sub(1, Ordering::SeqCst);
+    c
+}
+
 fn env_u64(k: &str, d: u64) -> u64 {
     std::env::var(k).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(d)
 }
@@ -262,6 +273,13 @@ impl Pager {
     }
     /// Операция под замком пейджера с учётом времени удержания (вид op из HOLD_NAMES).
     fn with_core<R>(&self, op: usize, f: impl FnOnce(&mut Core) -> R) -> R {
+        // фоновая работа уступает замок срочным (exit vCPU, VEH)
+        for _ in 0..10_000 {
+            if WAITERS.load(Ordering::SeqCst) == 0 {
+                break;
+            }
+            std::thread::yield_now();
+        }
         let mut c = self.core.lock().unwrap();
         let t0 = self.qpc();
         let r = f(&mut c);
@@ -332,7 +350,7 @@ pub extern "C" fn em_pager_mem_exit(gpa: u64, _access: u32) -> i32 {
     let Some(p) = PAGER.get() else { return 0 };
     let mut t0 = 0i64;
     unsafe { QueryPerformanceCounter(&mut t0) };
-    let mut c = p.core.lock().unwrap();
+    let mut c = lock_urgent(p);
     let Some((ri, cl)) = c.find_gpa(gpa) else { return 0 };
     let was_evicted = c.ranges[ri].st[cl] == Cl::Evicted;
     if was_evicted {
@@ -503,10 +521,7 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
     if !(0..16).any(|i| a >= p.hva_lo[i].load(Ordering::Acquire) && a < p.hva_hi[i].load(Ordering::Acquire)) {
         return CONTINUE_SEARCH;
     }
-    let mut c = match p.core.lock() {
-        Ok(c) => c,
-        Err(_) => return CONTINUE_SEARCH,
-    };
+    let mut c = lock_urgent(p);
     let Some((ri, cl)) = c.find_hva(a) else { return CONTINUE_SEARCH };
     let th = p.qpc();
     let res = c.on_host_fault(ri, cl, now_ms(), &p.ops);
