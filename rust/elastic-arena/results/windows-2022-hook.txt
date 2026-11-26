@@ -1,6 +1,6 @@
 dll_injected=1
-alloc_base=0x1ab0d720000 size_mib=512
-FRAMES n=1800 p50_ms=0.231 p99_ms=1.196 max_ms=4.488 over16ms=0
+alloc_base=0x144b6610000 size_mib=512
+FRAMES n=1800 p50_ms=0.394 p99_ms=1.811 max_ms=5.230 over16ms=0
 LOSSLESS mismatched_bytes=0 verdict=PASS
 --- arena report ---
 hook_installed=1
@@ -9,11 +9,11 @@ served_allocs=1
 passed_allocs=0
 regions=1
 logical_mib=512.0
-resident_mib=492.8
-compressed_mib=19.2
-store_mib=7.8
-physical_mib=500.6
-saved_pct=2.2
+resident_mib=473.0
+compressed_mib=39.0
+store_mib=15.8
+physical_mib=488.9
+saved_pct=4.5
 peak_compressed_mib=464.0
 peak_saved_pct=53.8
 last_compacted_pages=0
@@ -24,11 +24,11 @@ served_allocs=1
 passed_allocs=0
 regions=1
 logical_mib=512.0
-resident_mib=492.8
-compressed_mib=19.2
-store_mib=7.8
-physical_mib=500.6
-saved_pct=2.2
+resident_mib=473.0
+compressed_mib=39.0
+store_mib=15.8
+physical_mib=488.9
+saved_pct=4.5
 peak_compressed_mib=464.0
 peak_saved_pct=53.8
 last_compacted_pages=0
