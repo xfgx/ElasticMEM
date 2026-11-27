@@ -3,6 +3,7 @@ storahci: загрузочный (Start=0)
 stornvme: загрузочный (Start=0)
 RDP разрешён
 Правила брандмауэра для RDP включены: 0
+Гость: Windows Server 2022 Datacenter 21H2 (сборка 20348), тип установки: Server
 RemoteApp: разрешено окно отдельной программы (fDisabledAllowList=1, fAllowUnlistedRemotePrograms=1)
 EDGE_GUEST_PATH=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
 RemoteApp: Edge опубликован как ElasticMem-Edge
