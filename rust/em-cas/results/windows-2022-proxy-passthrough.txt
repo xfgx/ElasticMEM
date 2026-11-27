@@ -1,4 +1,4 @@
-DISKIO ops=1286 api_failures=0 readback_mismatch=0 final_mismatch_pages=0
-HARNESS ram_mib=256 secs=20 runs=6863 mmio_exits_leaked_to_qemu=0 guest_accesses=219723 guest_exits=0 guest_saw_decommitted=0 guest_wrong_bytes=0
+DISKIO ops=1294 api_failures=0 readback_mismatch=0 final_mismatch_pages=0
+HARNESS ram_mib=256 secs=20 runs=10016 mmio_exits_leaked_to_qemu=0 guest_accesses=320668 guest_exits=0 guest_saw_decommitted=0 guest_wrong_bytes=0
 PROC private_mib start=514.2 min=514.2 end=643.8
 LOSSLESS host_side_bad_pages=0 guest_side_bad_pages=0 verdict=PASS
