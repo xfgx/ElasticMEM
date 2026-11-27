@@ -30,23 +30,23 @@ File Type: DLL
          11    A 00001460 WHvGetVirtualProcessorState
          12    B 000014D0 WHvGetVirtualProcessorXsaveState
          13    C 00001540 WHvMapGpaRange
-         14    D 00003DF0 WHvRequestInterrupt
-         15    E 00003E60 WHvResetPartition
-         16    F 00003ED0 WHvRunVirtualProcessor
-         17   10 00004920 WHvSetPartitionProperty
-         18   11 00004990 WHvSetVirtualProcessorInterruptControllerState2
-         19   12 00004A00 WHvSetVirtualProcessorRegisters
-         20   13 00004A70 WHvSetVirtualProcessorState
-         21   14 00004AE0 WHvSetVirtualProcessorXsaveState
-         22   15 00004B50 WHvSetupPartition
-         23   16 00004BC0 WHvSuspendPartitionTime
-         24   17 00004C30 WHvTranslateGva
-         25   18 00004CA0 WHvUnmapGpaRange
+         14    D 00004100 WHvRequestInterrupt
+         15    E 00004170 WHvResetPartition
+         16    F 000041E0 WHvRunVirtualProcessor
+         17   10 00004C30 WHvSetPartitionProperty
+         18   11 00004CA0 WHvSetVirtualProcessorInterruptControllerState2
+         19   12 00004D10 WHvSetVirtualProcessorRegisters
+         20   13 00004D80 WHvSetVirtualProcessorState
+         21   14 00004DF0 WHvSetVirtualProcessorXsaveState
+         22   15 00004E60 WHvSetupPartition
+         23   16 00004ED0 WHvSuspendPartitionTime
+         24   17 00004F40 WHvTranslateGva
+         25   18 00004FB0 WHvUnmapGpaRange
 
   Summary
 
         1000 .data
         2000 .pdata
-        C000 .rdata
+        D000 .rdata
         1000 .reloc
-       38000 .text
+       39000 .text
