@@ -3,7 +3,7 @@
 #  * загрузочные драйверы AHCI/NVMe (storahci, stornvme: Start=0) — иначе в QEMU INACCESSIBLE_BOOT_DEVICE;
 #  * разрешает RDP (fDenyTSConnections=0) и включает входящие правила брандмауэра для порта 3389.
 # Перед изменением копирует куст SYSTEM рядом (SYSTEM.elasticmem.bak). Диск после работы отключается.
-param([Parameter(Mandatory = $true)][string]$Vhdx)
+param([Parameter(Mandatory = $true)][string]$Vhdx, [switch]$DisableAutoLogon)
 $ErrorActionPreference = 'Stop'
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Запустите от администратора' }
 if (-not (Test-Path $Vhdx)) { throw "Нет файла $Vhdx" }
@@ -65,7 +65,18 @@ try {
     $k = "Registry::$swHive\Microsoft\Windows NT\CurrentVersion\Terminal Server\TSAppAllowList"
     if (-not (Test-Path $k)) { New-Item $k -Force | Out-Null }
     Set-ItemProperty $k -Name fDisabledAllowList -Value 1 -Type DWord
-    Write-Host 'RemoteApp: разрешено окно отдельной программы (fDisabledAllowList=1)'
+    $pol = "Registry::$swHive\Policies\Microsoft\Windows NT\Terminal Services"
+    if (-not (Test-Path $pol)) { New-Item $pol -Force | Out-Null }
+    Set-ItemProperty $pol -Name fAllowUnlistedRemotePrograms -Value 1 -Type DWord
+    Write-Host 'RemoteApp: разрешено окно отдельной программы (fDisabledAllowList=1, fAllowUnlistedRemotePrograms=1)'
+    # Автовход: Windows сам входит в рабочий стол при загрузке. В клиентской Windows один сеанс на пользователя,
+    # и RemoteApp подключается к этому уже открытому рабочему столу — окно программы не появляется.
+    $wl = "Registry::$swHive\Microsoft\Windows NT\CurrentVersion\Winlogon"
+    $auto = "$((Get-ItemProperty $wl -ErrorAction SilentlyContinue).AutoAdminLogon)"
+    if ($auto -eq '1' -and $DisableAutoLogon) {
+      Set-ItemProperty $wl -Name AutoAdminLogon -Value '0'
+      Write-Host 'Автовход в гостя отключён (AutoAdminLogon=0)'
+    } else { Write-Host "AutoAdminLogon=$(if ($auto) { $auto } else { '0' })" }
   } else { Write-Host 'RemoteApp: куст SOFTWARE не загрузился — окно отдельной программы может не открыться' }
   Write-Host 'Готово: диск подготовлен для QEMU.'
 } finally {

@@ -79,6 +79,8 @@ if ($Headless) { $qa += @('-display', 'none') } else { $qa += @('-display', 'sdl
 $qa = $qa | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
 
 $log = Join-Path $Work 'em-pager.log'
+# журнал пейджера — свой на каждый запуск (прошлый -> em-pager.prev.log): иначе диагноз читал бы чужие FATAL
+if (Test-Path $log) { Move-Item $log (Join-Path $Work 'em-pager.prev.log') -Force }
 if ($Mode -eq 'pager') {
   $env:EM_PAGER = '1'
   $env:EM_PAGER_LOG = $log

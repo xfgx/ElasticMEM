@@ -172,7 +172,12 @@ Say 'Диску гостя нужна подготовка для QEMU: загр
 $a = Read-Host 'Подготовить диск автоматически с хоста, без загрузки гостя (рекомендуется; делается резервная копия куста SYSTEM)? [Y/n]'
 if ($a -notmatch '^[nNнН]') {
   try {
-    & (Join-Path $PSScriptRoot 'Prepare-Disk.ps1') -Vhdx $Vhdx 2>&1 | ForEach-Object { Say "$_" }
+    $pd = @(& (Join-Path $PSScriptRoot 'Prepare-Disk.ps1') -Vhdx $Vhdx *>&1 | ForEach-Object { Say "$_"; "$_" })
+    if ($pd -contains 'AutoAdminLogon=1') {
+      Say 'В госте включён автовход: с ним окно «только Edge» не откроется (RemoteApp подключается к уже открытому рабочему столу).'
+      $q = Read-Host 'Отключить автовход в госте? Вход будет по паролю учётной записи гостя [Y/n]'
+      if ($q -notmatch '^[nNнН]') { & (Join-Path $PSScriptRoot 'Prepare-Disk.ps1') -Vhdx $Vhdx -DisableAutoLogon *>&1 | ForEach-Object { Say "$_" } }
+    }
   } catch { Say "Prepare-Disk: $($_.Exception.Message)"; Finish 'не удалось подготовить диск автоматически — запустите Prepare-Guest.ps1 внутри гостя в Hyper-V и повторите' }
 } else {
   $a = Read-Host 'Тогда Prepare-Guest.ps1 уже запускался внутри гостя? [y/N]'
@@ -256,7 +261,15 @@ if (-not $booted) { Say 'RDP не ответил: замеряю всё равн
 if ($Rdp) { & (Join-Path $PSScriptRoot 'Open-App.ps1') -Rdp $Rdp }
 elseif ($booted -and $View -eq 'app') {
   & (Join-Path $PSScriptRoot 'Open-App.ps1') -Program $edge 2>&1 | ForEach-Object { Say "$_" }
-  Say 'Открываю только окно Edge из гостя. Введите логин и пароль учётной записи гостя. Если окно не открылось — диск не подготовлен для RemoteApp (ответьте Y на вопрос о подготовке диска) или Edge установлен в другую папку.'
+  Say 'Открываю только окно Edge из гостя. Введите логин и пароль учётной записи гостя; предупреждение о неизвестном издателе подключения — нормально, нажмите «Подключить».'
+  $q = Read-Host 'Окно Edge открылось? Если нет, введите n — откроется весь рабочий стол гостя [Y/n]'
+  if ($q -match '^[nNнН]') {
+    Say 'Окно Edge не открылось — открываю весь рабочий стол гостя. Частые причины: автовход в госте (уже открыт рабочий стол), диск не подготовлен для RemoteApp, Edge в другой папке.'
+    # закрыть только наше окно RemoteApp (app.rdp), другие подключения RDP на этом ПК не трогать
+    Get-CimInstance Win32_Process -Filter "Name='mstsc.exe'" -ErrorAction SilentlyContinue | Where-Object { "$($_.CommandLine)" -match 'app\.rdp' } |
+      ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Process mstsc.exe -ArgumentList '/v:127.0.0.1:13389'
+  }
 }
 elseif ($booted) {
   Start-Process mstsc.exe -ArgumentList '/v:127.0.0.1:13389'
