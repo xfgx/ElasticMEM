@@ -1,25 +1,25 @@
 --- method=discard mib=512
-SNAP written via app view         ws_mib=1027 private_mib=2 sys_avail_mib=13458 sys_commit_mib=2863
-SNAP after release                ws_mib=3 private_mib=2 sys_avail_mib=13966 sys_commit_mib=2867
-RELEASE method=discard rc=0 ws_freed_mib=1024 sys_avail_gain_mib=508 sys_commit_delta_mib=4
-SNAP refilled via filler view     ws_mib=1027 private_mib=2 sys_avail_mib=13456 sys_commit_mib=2867
-COHERENT method=discard alias_mismatch=0 after_refill_mismatch=0 refill_cost_avail_mib=510
+SNAP written via app view         ws_mib=1026 private_mib=2 sys_avail_mib=13535 sys_commit_mib=2801
+SNAP after release                ws_mib=3 private_mib=2 sys_avail_mib=14038 sys_commit_mib=2805
+RELEASE method=discard rc=0 ws_freed_mib=1023 sys_avail_gain_mib=503 sys_commit_delta_mib=4
+SNAP refilled via filler view     ws_mib=1027 private_mib=2 sys_avail_mib=13529 sys_commit_mib=2805
+COHERENT method=discard alias_mismatch=0 after_refill_mismatch=0 refill_cost_avail_mib=509
 --- method=mem_reset mib=512
-SNAP written via app view         ws_mib=1027 private_mib=2 sys_avail_mib=13456 sys_commit_mib=2867
-SNAP after release                ws_mib=3 private_mib=2 sys_avail_mib=13968 sys_commit_mib=2867
+SNAP written via app view         ws_mib=1027 private_mib=2 sys_avail_mib=13533 sys_commit_mib=2805
+SNAP after release                ws_mib=3 private_mib=2 sys_avail_mib=14045 sys_commit_mib=2805
 RELEASE method=mem_reset rc=0 ws_freed_mib=1024 sys_avail_gain_mib=512 sys_commit_delta_mib=0
-SNAP refilled via filler view     ws_mib=1027 private_mib=2 sys_avail_mib=13456 sys_commit_mib=2868
-COHERENT method=mem_reset alias_mismatch=0 after_refill_mismatch=0 refill_cost_avail_mib=512
+SNAP refilled via filler view     ws_mib=1027 private_mib=2 sys_avail_mib=13532 sys_commit_mib=2805
+COHERENT method=mem_reset alias_mismatch=0 after_refill_mismatch=0 refill_cost_avail_mib=513
 --- method=offer mib=512
-SNAP written via app view         ws_mib=1027 private_mib=2 sys_avail_mib=13472 sys_commit_mib=2869
-SNAP after release                ws_mib=3 private_mib=2 sys_avail_mib=13968 sys_commit_mib=2869
-RELEASE method=offer rc=0 ws_freed_mib=1024 sys_avail_gain_mib=496 sys_commit_delta_mib=0
-SNAP refilled via filler view     ws_mib=1027 private_mib=2 sys_avail_mib=13456 sys_commit_mib=2869
+SNAP written via app view         ws_mib=1027 private_mib=2 sys_avail_mib=13542 sys_commit_mib=2805
+SNAP after release                ws_mib=3 private_mib=2 sys_avail_mib=14039 sys_commit_mib=2805
+RELEASE method=offer rc=0 ws_freed_mib=1024 sys_avail_gain_mib=497 sys_commit_delta_mib=0
+SNAP refilled via filler view     ws_mib=1027 private_mib=2 sys_avail_mib=13527 sys_commit_mib=2806
 COHERENT method=offer alias_mismatch=0 after_refill_mismatch=0 refill_cost_avail_mib=512
 --- method=unlock_only mib=512
-SNAP written via app view         ws_mib=1027 private_mib=2 sys_avail_mib=13468 sys_commit_mib=2869
-SNAP after release                ws_mib=3 private_mib=2 sys_avail_mib=13451 sys_commit_mib=2872
-RELEASE method=unlock_only rc=0 ws_freed_mib=1024 sys_avail_gain_mib=-17 sys_commit_delta_mib=3
-SNAP refilled via filler view     ws_mib=1027 private_mib=2 sys_avail_mib=13451 sys_commit_mib=2872
-COHERENT method=unlock_only alias_mismatch=0 after_refill_mismatch=0 refill_cost_avail_mib=0
+SNAP written via app view         ws_mib=1027 private_mib=2 sys_avail_mib=13540 sys_commit_mib=2806
+SNAP after release                ws_mib=3 private_mib=2 sys_avail_mib=13524 sys_commit_mib=2806
+RELEASE method=unlock_only rc=0 ws_freed_mib=1024 sys_avail_gain_mib=-16 sys_commit_delta_mib=0
+SNAP refilled via filler view     ws_mib=1027 private_mib=2 sys_avail_mib=13525 sys_commit_mib=2803
+COHERENT method=unlock_only alias_mismatch=0 after_refill_mismatch=0 refill_cost_avail_mib=-1
 VIEWS coherent=PASS

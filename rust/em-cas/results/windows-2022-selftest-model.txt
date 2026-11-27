@@ -1,2 +1,2 @@
 SELFTEST start ram_mib=512 secs=40 vcpus=2 window_mib=8 region_mib=256
-SELFTEST segments=4913 other_exits=0 last_other_reason=0 run_failures=0 mismatched_counters=0 lost_increments=0 code_intact=1 verdict=PASS
+SELFTEST segments=4961 other_exits=0 last_other_reason=0 run_failures=0 mismatched_counters=0 lost_increments=0 code_intact=1 verdict=PASS
