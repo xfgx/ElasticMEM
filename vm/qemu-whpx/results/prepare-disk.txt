@@ -3,5 +3,6 @@ storahci: загрузочный (Start=0)
 stornvme: загрузочный (Start=0)
 RDP разрешён
 Правила брандмауэра для RDP включены: 0
+RemoteApp: куст SOFTWARE не загрузился — окно отдельной программы может не открыться
 Готово: диск подготовлен для QEMU.
 verify storahci_start=0 fDenyTSConnections=0 backup=True
