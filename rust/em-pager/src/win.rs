@@ -406,12 +406,23 @@ pub extern "C" fn em_pager_prepare_io(addr: usize, len: usize) {
     if len == 0 || !(0..16).any(|i| addr < p.hva_hi[i].load(Ordering::Acquire) && addr + len > p.hva_lo[i].load(Ordering::Acquire)) {
         return;
     }
-    let mut c = lock_urgent(p);
-    if c.prepare_io(addr, len, now_ms(), &p.ops).is_err() {
-        p.fail_closed("io buffer restore");
+    let mut since = None;
+    loop {
+        let mut c = lock_urgent(p);
+        match c.prepare_io(addr, len, now_ms(), &p.ops) {
+            Ok(_) => return,
+            Err(em_cas::CasError::NoMemory) => {
+                drop(c);
+                if !wait_for_memory(p, "io", &mut since) {
+                    p.fail_closed("io buffer restore NoMemory");
+                }
+            }
+            Err(e) => p.fail_closed(&format!("io buffer restore {e:?}")),
+        }
     }
 }
 
+thread_local! { static NOMEM_SINCE: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) }; }
 thread_local! { static LAST_EXIT: std::cell::Cell<(u64, u32)> = const { std::cell::Cell::new((u64::MAX, 0)) }; }
 
 /// Memory-access exit vCPU. 1 — наш кластер обработан (повторить инструкцию), 0 — не наш (MMIO для VMM).
@@ -442,7 +453,23 @@ pub extern "C" fn em_pager_mem_exit(gpa: u64, access_info: u32) -> i32 {
     let th = p.qpc();
     // Все vCPU — один поток обучения co-access (гость один, его обращения связаны между vCPU),
     // обращения самого VMM через VEH — отдельные потоки по id (это эмуляция устройств, у неё свой порядок).
-    let res = c.on_exit(ri, cl, now_ms(), 0, &p.ops);
+    let (mut ri, mut cl) = (ri, cl);
+    let mut since = None;
+    let res = loop {
+        match c.on_exit(ri, cl, now_ms(), 0, &p.ops) {
+            Err(em_cas::CasError::NoMemory) => {
+                drop(c);
+                if !wait_for_memory(p, "exit", &mut since) {
+                    p.fail_closed("exit restore NoMemory");
+                }
+                c = lock_urgent(p);
+                // пока замок был отпущен, диапазоны могли поменяться
+                let Some(f) = c.find_gpa(gpa) else { return exit_retry(p, gpa) };
+                (ri, cl) = f;
+            }
+            r => break r,
+        }
+    };
     let hold = p.us_since(th);
     c.record_hold_us(0, hold);
     match res {
@@ -467,8 +494,27 @@ pub extern "C" fn em_pager_mem_exit(gpa: u64, access_info: u32) -> i32 {
             }
             exit_retry(p, gpa)
         }
-        Err(_) => p.fail_closed("exit restore"),
+        Err(e) => p.fail_closed(&format!("exit restore {e:?}")),
     }
+}
+
+/// Нехватка памяти ОС при восстановлении (VirtualAlloc MEM_COMMIT отказал: исчерпан лимит выделения системы —
+/// например, параллельно другой процесс занял много памяти). Это временно и без потерь: байты кластера остались в
+/// хранилище. Поток ждёт (замок пейджера отпущен) и повторяет до 120 с; FATAL — только если память так и не нашлась.
+const NOMEM_WAIT_MS: u64 = 120_000;
+static NOMEM_WAITS: AtomicU64 = AtomicU64::new(0);
+
+fn wait_for_memory(p: &Pager, what: &str, since: &mut Option<u64>) -> bool {
+    let now = now_ms();
+    let t0 = *since.get_or_insert(now);
+    if now - t0 > NOMEM_WAIT_MS {
+        return false;
+    }
+    if now == t0 && NOMEM_WAITS.fetch_add(1, Ordering::Relaxed) < 32 {
+        p.logln(&format!("EM_PAGER nomem {what}: ОС не дала память под восстановление, жду и повторяю (до {} с)", NOMEM_WAIT_MS / 1000));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    true
 }
 
 /// Повторить инструкцию гостя (1). Страховка от бесконечного цикла exit'ов по одному адресу.
@@ -675,6 +721,7 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
     c.record_hold_us(1, hold);
     match res {
         Ok(true) => {
+            NOMEM_SINCE.with(|s| s.set(None));
             // отказ по закоммиченной RW-памяти повторяется без конца — значит, он не наш
             let again = LAST_EXIT.with(|l| {
                 let (g, n) = l.get();
@@ -685,6 +732,14 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
             if again { CONTINUE_SEARCH } else { CONTINUE_EXECUTION }
         }
         Ok(false) => CONTINUE_SEARCH,
-        Err(_) => p.fail_closed("host-side restore"),
+        Err(em_cas::CasError::NoMemory) => {
+            // временная нехватка памяти ОС: подождать и повторить ту же инструкцию VMM (снова отказ -> снова сюда)
+            drop(c);
+            let mut since = NOMEM_SINCE.with(|s| s.get());
+            let waited = wait_for_memory(p, "host", &mut since);
+            NOMEM_SINCE.with(|s| s.set(since));
+            if waited { CONTINUE_EXECUTION } else { p.fail_closed("host-side restore NoMemory") }
+        }
+        Err(e) => p.fail_closed(&format!("host-side restore {e:?}")),
     }
 }

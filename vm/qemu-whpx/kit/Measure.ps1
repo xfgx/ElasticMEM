@@ -37,7 +37,7 @@ switch ($Mode) {
   'pagestat' {
     $q = Get-GuestProcess; if (-not $q) { throw 'QEMU-гость не запущен' }
     Write-Host 'Читаю резидентную память гостя (только расчёт в памяти, наружу — только агрегаты). Два снимка с паузой 60 с.'
-    & $pagestat --pid $q.Id --private-only --snapshots 2 --interval-ms 60000 --max-mib 32768 --variants plain,dedup 2>&1 | ForEach-Object { $out.Add("$_"); $_ } | Out-Host
+    & $pagestat --pid $q.Id --private-only --snapshots 2 --interval-ms 60000 --max-mib 1024 --variants plain,dedup 2>&1 | ForEach-Object { $out.Add("$_"); $_ } | Out-Host
   }
   'host' {
     $names = 'msedge', 'chrome', 'firefox', 'Telegram', 'Discord', 'Code', 'steamwebhelper', 'browser'

@@ -9,6 +9,8 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 if (-not (Test-Path $Vhdx)) { throw "Нет файла $Vhdx" }
 $Vhdx = (Resolve-Path $Vhdx).Path
 $hive = 'HKLM\EMGUEST'
+$swHive = 'HKLM\EMGUESTSW'
+$swLoaded = $false
 $mounted = $false
 $loaded = $false
 try {
@@ -54,8 +56,21 @@ try {
     }
   }
   Write-Host "Правила брандмауэра для RDP включены: $n"
+  # RemoteApp: окно одной программы гостя (браузера) вместо всего рабочего стола. В клиентских Windows список
+  # разрешённых программ пуст — разрешаем запуск любой программы по пути (fDisabledAllowList=1, куст SOFTWARE).
+  $swFile = Join-Path $win 'Windows\System32\config\SOFTWARE'
+  if (Test-Path $swFile) { & reg.exe load $swHive $swFile 2>$null | Out-Null }
+  if ((Test-Path $swFile) -and $LASTEXITCODE -eq 0) {
+    $swLoaded = $true
+    $k = "Registry::$swHive\Microsoft\Windows NT\CurrentVersion\Terminal Server\TSAppAllowList"
+    if (-not (Test-Path $k)) { New-Item $k -Force | Out-Null }
+    Set-ItemProperty $k -Name fDisabledAllowList -Value 1 -Type DWord
+    Write-Host 'RemoteApp: разрешено окно отдельной программы (fDisabledAllowList=1)'
+  } else { Write-Host 'RemoteApp: куст SOFTWARE не загрузился — окно отдельной программы может не открыться' }
   Write-Host 'Готово: диск подготовлен для QEMU.'
 } finally {
-  if ($loaded) { [gc]::Collect(); [gc]::WaitForPendingFinalizers(); & reg.exe unload $hive | Out-Null }
+  if ($loaded -or $swLoaded) { [gc]::Collect(); [gc]::WaitForPendingFinalizers() }
+  if ($swLoaded) { & reg.exe unload $swHive | Out-Null }
+  if ($loaded) { & reg.exe unload $hive | Out-Null }
   if ($mounted) { Dismount-DiskImage -ImagePath $Vhdx | Out-Null }
 }

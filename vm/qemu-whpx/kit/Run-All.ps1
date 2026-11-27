@@ -6,7 +6,9 @@
 #   -Rdp           : ваш .rdp для окна приложения (иначе окно не открывается автоматически)
 #   -Minutes       : сколько минут мерить пейджер, пока вы пользуетесь приложением (по умолчанию 10)
 #   -Mode          : pager (по умолчанию) или plain — тот же гость без пейджера, для сравнения, если гость падает
-param([switch]$PreflightOnly, [string]$Vhdx, [string]$Rdp, [int]$Minutes = 10, [int]$MemoryMiB = 0, [int]$BootTimeoutMin = 15, [ValidateSet('pager', 'plain')][string]$Mode = 'pager')
+#   -View          : app — только окно браузера Edge из гостя (RemoteApp, QEMU без своего окна); desktop — весь
+#                    рабочий стол гостя (mstsc) и окно QEMU. Без параметра — вопрос перед запуском
+param([switch]$PreflightOnly, [string]$Vhdx, [string]$Rdp, [int]$Minutes = 10, [int]$MemoryMiB = 0, [int]$BootTimeoutMin = 15, [ValidateSet('pager', 'plain')][string]$Mode = 'pager', [ValidateSet('', 'app', 'desktop')][string]$View = '')
 . (Join-Path $PSScriptRoot 'scripts\Common.ps1')
 $ErrorActionPreference = 'Continue'
 $runStart = Get-Date
@@ -193,13 +195,24 @@ if ($Mode -eq 'pager' -and (Test-Path $st)) {
   else { Say 'Самопроверка не выполнилась (см. строку выше) — продолжаю.' }
 }
 
+# ---------- как показывать гостя ----------
+if (-not $View) {
+  if ($Rdp) { $View = 'desktop' }
+  else {
+    $a = Read-Host 'Показывать: 1 — только окно браузера Edge из гостя (без окна QEMU, легче), 2 — весь рабочий стол гостя [1/2]'
+    $View = if ($a -match '^\s*2') { 'desktop' } else { 'app' }
+  }
+}
+$edge = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+Say $(if ($View -eq 'app') { "Вид: только окно Edge (RemoteApp), QEMU без своего окна" } else { 'Вид: весь рабочий стол гостя' })
+
 # ---------- запуск ----------
 $irq = 'on'
 $started = $false
 $guestRun = $true
 for ($try = 1; $try -le 2 -and -not $started; $try++) {
   try {
-    & (Join-Path $PSScriptRoot 'Start-Guest.ps1') -Vhdx $Vhdx -ResetOverlay -Mode $Mode -Firmware $fw -MemoryMiB $MemoryMiB -Irqchip $irq 2>&1 | ForEach-Object { Say "$_" }
+    & (Join-Path $PSScriptRoot 'Start-Guest.ps1') -Vhdx $Vhdx -ResetOverlay -Mode $Mode -Firmware $fw -MemoryMiB $MemoryMiB -Irqchip $irq -Headless:($View -eq 'app') 2>&1 | ForEach-Object { Say "$_" }
     $started = [bool](Get-GuestProcess)
   } catch { Say "Start-Guest: $($_.Exception.Message)" }
   if (-not $started) {
@@ -241,11 +254,15 @@ if (-not $booted) { Say 'RDP не ответил: замеряю всё равн
 
 # ---------- окно гостя ----------
 if ($Rdp) { & (Join-Path $PSScriptRoot 'Open-App.ps1') -Rdp $Rdp }
+elseif ($booted -and $View -eq 'app') {
+  & (Join-Path $PSScriptRoot 'Open-App.ps1') -Program $edge 2>&1 | ForEach-Object { Say "$_" }
+  Say 'Открываю только окно Edge из гостя. Введите логин и пароль учётной записи гостя. Если окно не открылось — диск не подготовлен для RemoteApp (ответьте Y на вопрос о подготовке диска) или Edge установлен в другую папку.'
+}
 elseif ($booted) {
   Start-Process mstsc.exe -ArgumentList '/v:127.0.0.1:13389'
   Say 'Открыл удалённый рабочий стол гостя (mstsc). Войдите учётной записью администратора гостя.'
 }
-Say 'Войти в гостя можно и прямо в окне QEMU. Запустите там приложения, которыми пользуетесь (браузер и т. п.).'
+if ($View -eq 'desktop') { Say 'Войти в гостя можно и прямо в окне QEMU. Запустите там приложения, которыми пользуетесь (браузер и т. п.).' }
 # (переменные PowerShell не различают регистр: $mode — это тот же $Mode с ValidateSet, поэтому другое имя)
 $what = if ($Mode -eq 'pager') { 'пейджера' } else { 'гостя без пейджера' }
 Say "Замер $what $Minutes мин. Пользуйтесь приложениями в госте как обычно."

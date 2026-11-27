@@ -10,6 +10,8 @@ struct Sim {
     mapped: RefCell<Vec<bool>>,
     committed: RefCell<Vec<bool>>,
     ro: RefCell<Vec<bool>>,
+    /// Сколько следующих коммитов отказать (модель исчерпанного лимита выделения памяти ОС).
+    fail_commits: std::cell::Cell<u32>,
 }
 
 impl Sim {
@@ -33,6 +35,10 @@ impl Ops for Sim {
         true
     }
     fn commit(&self, h: *mut u8, len: usize) -> bool {
+        if self.fail_commits.get() > 0 {
+            self.fail_commits.set(self.fail_commits.get() - 1);
+            return false;
+        }
         let p = self.hp(h);
         for k in 0..len / PAGE {
             if !self.committed.borrow()[p + k] {
@@ -111,7 +117,7 @@ fn setup_pf(mib: usize, ghost: bool, prefetch: usize) -> (Mem, Sim, Core) {
         }
     }
     let base = mem.as_mut_ptr() as usize;
-    let sim = Sim { base, gpa0: 0x1_0000_0000, mapped: RefCell::new(vec![true; pages]), committed: RefCell::new(vec![true; pages]), ro: RefCell::new(vec![false; pages]) };
+    let sim = Sim { base, gpa0: 0x1_0000_0000, mapped: RefCell::new(vec![true; pages]), committed: RefCell::new(vec![true; pages]), ro: RefCell::new(vec![false; pages]), fail_commits: std::cell::Cell::new(0) };
     let cfg = Cfg { cluster_pages: 16, idle_ms: 100, min_range_bytes: 1 << 20, keep_ghost: ghost, prefetch_depth: prefetch, coaccess_ms: 50 };
     let mut core = Core::new(cfg, CasStore::new(Box::new(Lz4), Config::default()));
     assert!(core.add_range(sim.gpa0, base as *mut u8, (pages * PAGE) as u64, true));
@@ -369,4 +375,31 @@ fn exit_on_probing_cluster_with_failing_map_is_handled() {
     assert!(core.on_exit(ri, cl, 10, 0, &sim).unwrap(), "exit должен быть обработан");
     assert_eq!(core.ranges[ri].st[cl], Cl::Resident);
     assert!(sim.mapped.borrow()[p..p + core.cfg.cluster_pages].iter().all(|&m| m), "кластер отображён целиком");
+}
+
+/// ОС временно не дала память под восстановление (лимит выделения исчерпан другим процессом): ошибка NoMemory,
+/// кластер остаётся Evicted с байтами в хранилище; повтор, когда память есть, восстанавливает его без потерь.
+/// На настоящем ПК это случилось во время em-pagestat и останавливало QEMU (FATAL).
+#[test]
+fn restore_without_os_memory_is_retryable_and_lossless() {
+    let (mem, sim, mut core) = setup(2, false);
+    let snapshot: Vec<u64> = mem.to_vec();
+    let (mut probe, mut idle) = (Vec::new(), Vec::new());
+    core.candidates(0, 1000, 1000, &mut probe, &mut idle);
+    for &(ri, cl) in &probe {
+        core.begin_probe(ri, cl, 0, &sim);
+    }
+    probe.clear();
+    core.candidates(5000, 0, 1000, &mut probe, &mut idle);
+    let ev: Vec<(usize, usize)> = idle.iter().copied().filter(|&(ri, cl)| core.evict(ri, cl, 5000, &sim)).collect();
+    let (ri, cl) = *ev.iter().find(|&&(ri, cl)| {
+        let n = core.cfg.cluster_pages;
+        snapshot[cl * n * 512..(cl + 1) * n * 512].iter().any(|&x| x != 0) && ri == 0
+    }).expect("evicted non-zero cluster");
+    sim.fail_commits.set(1);
+    assert!(matches!(core.on_exit(ri, cl, 5100, 0, &sim), Err(em_cas::CasError::NoMemory)));
+    assert_eq!(core.ranges[ri].st[cl], Cl::Evicted, "кластер остался в хранилище");
+    assert!(core.on_exit(ri, cl, 5200, 0, &sim).unwrap(), "повтор, когда память есть");
+    let n = core.cfg.cluster_pages;
+    assert_eq!(&mem[cl * n * 512..(cl + 1) * n * 512], &snapshot[cl * n * 512..(cl + 1) * n * 512], "байты без потерь");
 }

@@ -332,6 +332,11 @@ impl Core {
             let (_, h) = self.cl_addr(ri, cl);
             if !ops.commit(h, cb) {
                 ok = false;
+                // ОС не дала память (исчерпан лимит выделения). Уже заполненные кластеры пачки снова отдать ОС:
+                // они остаются Evicted, а запись VMM в закоммиченную страницу затёрлась бы повторным восстановлением.
+                for &(pri, pcl) in &cls[..=j] {
+                    ops.decommit(self.cl_addr(pri, pcl).1, cb);
+                }
                 break;
             }
             unsafe { std::ptr::copy_nonoverlapping(buf.as_ptr().add(j * cb), h, cb) };

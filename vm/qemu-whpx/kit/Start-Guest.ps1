@@ -11,7 +11,8 @@ param(
   [ValidateSet('uefi', 'bios')][string]$Firmware = 'uefi',
   [ValidateSet('xpress', 'lz4', 'auto')][string]$Codec = 'xpress',
   [int]$Cluster = 16,
-  [int]$IdleMs = 2000,
+  [int]$IdleMs = 10000,
+  [int]$TargetHits = 5,
   [int]$StartDelayS = 90,
   [switch]$Ghost,
   [int]$RdpPort = 13389,
@@ -84,12 +85,13 @@ if ($Mode -eq 'pager') {
   $env:EM_PAGER_CODEC = $Codec
   $env:EM_PAGER_CLUSTER = "$Cluster"
   $env:EM_PAGER_IDLE_MS = "$IdleMs"
+  $env:EM_PAGER_TARGET_HITS = "$TargetHits"
   $env:EM_PAGER_START_DELAY_S = "$StartDelayS"
   $env:EM_PAGER_GHOST = if ($Ghost) { '1' } else { '0' }
 } else {
   Remove-Item Env:EM_PAGER -ErrorAction SilentlyContinue
 }
-"$(Get-Date -Format s) start mode=$Mode mem=$MemoryMiB cpus=$Cpus fw=$Firmware codec=$Codec cluster=$Cluster ghost=$Ghost" | Add-Content (Join-Path $Work 'runs.txt')
+"$(Get-Date -Format s) start mode=$Mode mem=$MemoryMiB cpus=$Cpus fw=$Firmware codec=$Codec cluster=$Cluster ghost=$Ghost idle_ms=$IdleMs target_hits=$TargetHits headless=$Headless" | Add-Content (Join-Path $Work 'runs.txt')
 $sp = @{ FilePath = $Qemu; ArgumentList = $qa; WorkingDirectory = $Work; PassThru = $true;
   RedirectStandardOutput = (Join-Path $Work 'qemu-out.txt'); RedirectStandardError = (Join-Path $Work 'qemu-err.txt') }
 $p = Start-Process @sp
