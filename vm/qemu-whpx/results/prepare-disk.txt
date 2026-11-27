@@ -3,6 +3,10 @@ storahci: загрузочный (Start=0)
 stornvme: загрузочный (Start=0)
 RDP разрешён
 Правила брандмауэра для RDP включены: 0
-RemoteApp: куст SOFTWARE не загрузился — окно отдельной программы может не открыться
+RemoteApp: разрешено окно отдельной программы (fDisabledAllowList=1, fAllowUnlistedRemotePrograms=1)
+EDGE_GUEST_PATH=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
+RemoteApp: Edge опубликован как ElasticMem-Edge
+AutoAdminLogon=1
 Готово: диск подготовлен для QEMU.
+verify fDisabledAllowList=1 ElasticMem-Edge.Path=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
 verify storahci_start=0 fDenyTSConnections=0 backup=True
