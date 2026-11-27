@@ -9,6 +9,7 @@
 param([switch]$PreflightOnly, [string]$Vhdx, [string]$Rdp, [int]$Minutes = 10, [int]$MemoryMiB = 0, [int]$BootTimeoutMin = 15, [ValidateSet('pager', 'plain')][string]$Mode = 'pager')
 . (Join-Path $PSScriptRoot 'scripts\Common.ps1')
 $ErrorActionPreference = 'Continue'
+$runStart = Get-Date
 $stamp = '{0:yyyyMMdd-HHmm}' -f (Get-Date)
 $rep = Join-Path $Work "report-$stamp"
 New-Item -ItemType Directory -Force $rep | Out-Null
@@ -37,6 +38,17 @@ function Finish([string]$why) {
   if ("$qe" -match 'Unimplemented handler') { Say 'ДИАГНОЗ: QEMU получил обращение гостя к памяти как к устройству (Unimplemented handler) — признак ошибки пейджера' }
   $pl = Get-Content (Join-Path $Work 'em-pager.log') -Raw -ErrorAction SilentlyContinue
   if ("$pl" -match 'FATAL') { Say 'ДИАГНОЗ: пейджер остановил QEMU (FATAL в em-pager.log), чтобы не испортить память гостя' }
+  foreach ($ln in @(("$pl" -split "`n") | Where-Object { $_ -match '^EM_PAGER (CRASH|PANIC)' } | Select-Object -First 3)) { Say "ДИАГНОЗ: $($ln.Trim())" }
+  # Падение процесса QEMU по журналу Windows (событие 1000 «Application Error»): код исключения, модуль, смещение
+  try {
+    $ev = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1000; StartTime = $runStart } -ErrorAction Stop |
+      Where-Object { "$($_.Properties[0].Value)" -like 'qemu-system-x86_64*' } | Select-Object -First 3)
+    if ($ev.Count) {
+      $ev | ForEach-Object { "$($_.TimeCreated) $($_.Message)" } | Set-Content (Join-Path $rep 'crash-events.txt') -Encoding UTF8
+      $e0 = $ev[0].Properties
+      Say "ДИАГНОЗ: Windows зафиксировал падение QEMU: исключение $($e0[6].Value), модуль $($e0[3].Value), смещение $($e0[7].Value)"
+    }
+  } catch {}
   $tl = @(([regex]'EM_PAGER t_s=(\d+) .*? evicted_mib=([\d.]+) .*? evictions=(\d+)').Matches("$pl"))
   if ($tl.Count) {
     $lt = $tl[$tl.Count - 1]

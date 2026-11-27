@@ -36,6 +36,9 @@ extern "system" {
     fn ResumeThread(h: isize) -> u32;
     fn GetThreadContext(h: isize, ctx: *mut Ctx) -> i32;
     fn CloseHandle(h: isize) -> i32;
+    fn SetUnhandledExceptionFilter(f: usize) -> usize;
+    fn GetModuleHandleExW(flags: u32, addr: *const u16, out: *mut usize) -> i32;
+    fn GetModuleFileNameW(m: usize, buf: *mut u16, n: u32) -> u32;
 }
 
 #[link(name = "ntdll")]
@@ -267,6 +270,16 @@ fn init(hv: Hv) -> i32 {
         return -1;
     }
     unsafe { AddVectoredExceptionHandler(1, veh as *const () as usize) };
+    // Падение процесса VMM (необработанное исключение, panic пейджера) — строка в журнал: иначе после краша QEMU
+    // в журнале пейджера нет ничего, кроме последней строки статистики.
+    unsafe { PREV_FILTER.store(SetUnhandledExceptionFilter(crash_filter as *const () as usize), Ordering::SeqCst) };
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if let Some(p) = PAGER.get() {
+            p.logln_try(&format!("EM_PAGER PANIC {info}"));
+        }
+        prev_hook(info);
+    }));
     let pg = PAGER.get().unwrap();
     let (cfg, codec) = {
         let c = pg.core.lock().unwrap();
@@ -302,6 +315,15 @@ impl Pager {
         let us = self.us_since(t0);
         c.record_hold_us(op, us);
         r
+    }
+    /// Для пути падения: не ждать замок журнала (его может держать упавший поток).
+    fn logln_try(&self, s: &str) {
+        if let Ok(mut g) = self.log.try_lock() {
+            if let Some(f) = g.as_mut() {
+                let _ = writeln!(f, "{s}");
+                let _ = f.flush();
+            }
+        }
     }
     fn logln(&self, s: &str) {
         if let Some(f) = self.log.lock().unwrap().as_mut() {
@@ -530,6 +552,48 @@ fn compactor() {
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
+}
+
+// ------------------------------ падение процесса ------------------------------
+
+static PREV_FILTER: AtomicUsize = AtomicUsize::new(0);
+
+/// Последний шанс перед завершением процесса: код исключения, модуль и смещение, адрес обращения и чем он был
+/// для пейджера (память гостя: состояние кластера). Дальше — прежний фильтр (WER, отчёт Windows).
+unsafe extern "system" fn crash_filter(info: *mut ExceptionPointers) -> i32 {
+    let rec = if info.is_null() { std::ptr::null_mut() } else { (*info).rec };
+    if let (Some(p), false) = (PAGER.get(), rec.is_null()) {
+        let pc = (*rec).address as usize;
+        let (op, a) = if (*rec).nparams >= 2 { ((*rec).info[0], (*rec).info[1]) } else { (usize::MAX, 0) };
+        let mut m = 0usize;
+        // GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | UNCHANGED_REFCOUNT
+        GetModuleHandleExW(4 | 2, pc as *const u16, &mut m);
+        let mut buf = [0u16; 260];
+        let n = if m != 0 { GetModuleFileNameW(m, buf.as_mut_ptr(), 260) as usize } else { 0 };
+        let path = String::from_utf16_lossy(&buf[..n.min(260)]);
+        let module = path.rsplit('\\').next().unwrap_or("?").to_string();
+        let in_ram = (0..16).any(|i| a >= p.hva_lo[i].load(Ordering::Acquire) && a < p.hva_hi[i].load(Ordering::Acquire));
+        let state = if !in_ram {
+            "not-guest-ram".to_string()
+        } else {
+            match p.core.try_lock() {
+                Ok(c) => match c.find_hva(a) {
+                    Some((ri, cl)) => format!("{:?}", c.ranges[ri].st[cl]),
+                    None => "unmanaged".to_string(),
+                },
+                Err(_) => "core-locked".to_string(),
+            }
+        };
+        p.logln_try(&format!(
+            "EM_PAGER CRASH code={:#010x} module={} offset={:#x} access={} addr={:#x} guest_ram={} cluster={} thread={}",
+            (*rec).code, if module.is_empty() { "?" } else { &module }, pc.wrapping_sub(m), op as isize, a, in_ram, state, GetCurrentThreadId()
+        ));
+    }
+    let prev = PREV_FILTER.load(Ordering::SeqCst);
+    if prev != 0 {
+        return std::mem::transmute::<usize, unsafe extern "system" fn(*mut ExceptionPointers) -> i32>(prev)(info);
+    }
+    0 // EXCEPTION_CONTINUE_SEARCH
 }
 
 // ------------------------------ VEH: обращения самого VMM ------------------------------

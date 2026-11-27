@@ -23,7 +23,15 @@ switch ($Mode) {
     $out.Add("START " + ((Get-MemSnapshot 'start') | ConvertTo-Json -Compress))
     Write-Host "Наблюдаю $Seconds с. Пользуйтесь приложением как обычно."
     $t = 0
-    while ($t -lt $Seconds) { Start-Sleep 30; $t += 30; $l = Get-Content $log -Tail 1 -ErrorAction SilentlyContinue; Write-Host $l; $out.Add("$l"); $out.Add("SNAP " + ((Get-MemSnapshot "t$t") | ConvertTo-Json -Compress)) }
+    # каждые 5 с: жив ли QEMU и работает ли ВМ (QMP) — при падении замер прерывается сразу, а не через $Seconds с
+    while ($t -lt $Seconds) {
+      Start-Sleep 5; $t += 5
+      if (-not (Get-GuestProcess)) { Write-Host "QEMU завершился на $t-й секунде замера"; $out.Add("QEMU exited t=$t"); break }
+      $q = Invoke-Qmp 'query-status'
+      if ($q -and $q.PSObject.Properties['return'] -and "$($q.return.status)" -notin 'running', 'prelaunch') { Write-Host "ВМ остановлена на $t-й секунде замера (статус $($q.return.status))"; $out.Add("VM stopped t=$t status=$($q.return.status)"); break }
+      if ($t % 30 -eq 0) { $l = Get-Content $log -Tail 1 -ErrorAction SilentlyContinue; Write-Host $l; $out.Add("$l"); $out.Add("SNAP " + ((Get-MemSnapshot "t$t") | ConvertTo-Json -Compress)) }
+    }
+    $out.Add('--- журнал пейджера (конец) ---'); Get-Content $log -Tail 5 -ErrorAction SilentlyContinue | ForEach-Object { $out.Add($_) }
     $out.Add('--- журнал пейджера (начало) ---'); Get-Content $log -TotalCount 12 -ErrorAction SilentlyContinue | ForEach-Object { $out.Add($_) }
   }
   'pagestat' {
