@@ -1,7 +1,7 @@
 OS windows arena total_mib=1024 hot_mib=96 warm_mib=64 secs=40 codec=xpress store=classic dup_pct=0 near_pct=0 ghost=false mutate=false pages=262144
-FRAMES n=2391 p50_ms=0.438 p99_ms=2.644 p999_ms=40.569 max_ms=60.323 over16ms=8 over50ms=1
-MEM resident_mib=133.5 compressed_mib=658.7 zero_mib=0.0 pinned_mib=231.8 store_mib=192.1 payload_mib=166.1 ratio=0.292
-ENGINE faults=291366 probe_hits=106784 probing_mib=0.0 decompressed=29222 evictions=197851 evicted_by_compactor=197851
-OSMEM ws_start_mib=4.1 ws_end_mib=1596.4 private_end_mib=1298.0 shadow_mib=1024.0 arena_plus_store_mib=568.3 logical_mib=1024.0 saved_mib=455.7 threads=0
+FRAMES n=2382 p50_ms=0.525 p99_ms=3.458 p999_ms=51.445 max_ms=93.322 over16ms=9 over50ms=4
+MEM resident_mib=130.0 compressed_mib=661.4 zero_mib=0.0 pinned_mib=231.8 store_mib=192.9 payload_mib=166.8 ratio=0.292
+ENGINE faults=291262 probe_hits=105484 probing_mib=0.8 decompressed=29118 evictions=198437 evicted_by_compactor=198437
+OSMEM ws_start_mib=4.1 ws_end_mib=1593.8 private_end_mib=1298.1 shadow_mib=1024.0 arena_plus_store_mib=565.7 logical_mib=1024.0 saved_mib=458.3 threads=0
 THREADS n=0 wrong_reads=0
 LOSSLESS mismatched_pages=0 first_bad_page=-1 verdict=PASS

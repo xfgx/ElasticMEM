@@ -1,4 +1,4 @@
-DISKIO ops=3190 api_failures=0 readback_mismatch=0 final_mismatch_pages=0
-HARNESS ram_mib=512 secs=40 runs=155776 mmio_exits_leaked_to_qemu=0 guest_accesses=5066527 guest_exits=3267 guest_saw_decommitted=0 guest_wrong_bytes=0
-PROC private_mib start=1027.8 min=743.6 end=776.1
+DISKIO ops=2799 api_failures=0 readback_mismatch=0 final_mismatch_pages=0
+HARNESS ram_mib=512 secs=40 runs=129728 mmio_exits_leaked_to_qemu=0 guest_accesses=4220844 guest_exits=2889 guest_saw_decommitted=0 guest_wrong_bytes=0
+PROC private_mib start=1027.8 min=747.8 end=774.8
 LOSSLESS host_side_bad_pages=0 guest_side_bad_pages=0 verdict=PASS
