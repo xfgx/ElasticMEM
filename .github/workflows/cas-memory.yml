@@ -107,6 +107,11 @@ jobs:
           ./pt/harness.exe 256 20 2>&1 | Tee-Object "out/${{ matrix.os }}-proxy-passthrough.txt"; if ($LASTEXITCODE -ne 0) { throw "proxy passthrough failed" }
           $env:EM_PAGER = "1"; $env:EM_PAGER_START_DELAY_S = "0"; $env:EM_PAGER_IDLE_MS = "500"; $env:EM_PAGER_LOG = "out/${{ matrix.os }}-proxy-pager-log.txt"
           ./pt/harness.exe 512 40 2>&1 | Tee-Object "out/${{ matrix.os }}-proxy-pager.txt"; if ($LASTEXITCODE -ne 0) { throw "proxy + pager failed" }
+          # whp-selftest (программа для настоящего гипервизора) на модели WHP: та же логика сверки счётчиков
+          cl /nologo /O2 $t/whp_selftest.c /Fe:pt/whp-selftest.exe | Out-Null
+          $env:EM_FAKE_SELFTEST = "1"; $env:EM_PAGER_IDLE_MS = "300"; $env:EM_PAGER_LOG = "out/${{ matrix.os }}-selftest-pager-log.txt"
+          ./pt/whp-selftest.exe 512 40 2 2>&1 | Tee-Object "out/${{ matrix.os }}-selftest-model.txt"; if ($LASTEXITCODE -ne 0) { throw "whp-selftest on the model failed" }
+          Remove-Item Env:EM_FAKE_SELFTEST
       - name: Gate 0 — em-pagestat on real processes (Edge with real sites, svchost)
         shell: pwsh
         run: |

@@ -153,6 +153,22 @@ if ($a -notmatch '^[nNнН]') {
   if ($a -notmatch '^[yYдД]') { Finish 'подготовьте диск: пункт 0 с автоматической подготовкой, либо Prepare-Guest.ps1 внутри гостя в Hyper-V' }
 }
 
+# ---------- самопроверка пейджера на настоящем гипервизоре (без Windows-гостя) ----------
+$st = Join-Path $PSScriptRoot 'whp-selftest.exe'
+if ($Mode -eq 'pager' -and (Test-Path $st)) {
+  Say 'Самопроверка пейджера на этом гипервизоре: маленькая ВМ на 60 с, без Windows-гостя.'
+  $env:EM_PAGER = '1'; $env:EM_PAGER_START_DELAY_S = '0'; $env:EM_PAGER_IDLE_MS = '300'; $env:EM_PAGER_LOG = (Join-Path $rep 'selftest-pager.log')
+  Push-Location $PSScriptRoot
+  $out = & $st 512 60 2 2>&1
+  Pop-Location
+  Remove-Item Env:EM_PAGER, Env:EM_PAGER_START_DELAY_S, Env:EM_PAGER_IDLE_MS, Env:EM_PAGER_LOG -ErrorAction SilentlyContinue
+  $out | ForEach-Object { Say "$_" }
+  $v = "$out"
+  if ($v -match 'verdict=FAIL') { Finish 'самопроверка пейджера на гипервизоре НЕ прошла — гостя с пейджером не запускаю (отчёт с журналом самопроверки)' }
+  elseif ($v -match 'verdict=PASS') { Say 'Самопроверка пройдена.' }
+  else { Say 'Самопроверка не выполнилась (см. строку выше) — продолжаю.' }
+}
+
 # ---------- запуск ----------
 $irq = 'on'
 $started = $false

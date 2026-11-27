@@ -12,7 +12,51 @@ static volatile LONG64 g_err_decommitted, g_err_bytes, g_exits, g_access;
 static uint64_t r_ = 88172645463325252ULL; static uint64_t g_calls, g_q;
 static uint64_t xr(void) { r_ ^= r_ << 13; r_ ^= r_ >> 7; r_ ^= r_ << 17; return r_; }
 #define EXP __declspec(dllexport) HRESULT WINAPI
-EXP WHvGetCapability(int c, void *b, UINT32 n, UINT32 *w) { if (b && n) memset(b, 0, n); if (w) *w = n; return 0; }
+// Режим самопроверки (EM_FAKE_SELFTEST=1): модель выполняет программу whp-selftest (ГПСЧ + inc dword по окну)
+// с теми же exit'ами, что дал бы настоящий гипервизор: обращение к неотображённой странице — memory-access exit.
+static int selftest_mode(void) { static int m = -1; if (m < 0) { char b[8]; m = GetEnvironmentVariableA("EM_FAKE_SELFTEST", b, 8) > 0 && b[0] == '1'; } return m; }
+struct vpst { uint64_t rbx, rcx, rdx, rsi, rdi, rip; uint64_t pending; int has_pending; };
+static struct vpst g_vp[8];
+EXP WHvGetCapability(int c, void *b, UINT32 n, UINT32 *w) { if (b && n) memset(b, 0, n); if (selftest_mode() && c == 0 && b && n >= 4) *(UINT32 *)b = 1; if (w) *w = n; return 0; }
+EXP WHvSetPartitionProperty(void *p, int code, const void *b, UINT32 n) { return 0; }
+EXP WHvCreateVirtualProcessor(void *p, UINT32 vp, UINT32 f) { if (vp < 8) memset(&g_vp[vp], 0, sizeof g_vp[vp]); return 0; }
+EXP WHvDeleteVirtualProcessor(void *p, UINT32 vp) { return 0; }
+EXP WHvSetVirtualProcessorRegisters(void *p, UINT32 vp, const UINT32 *names, UINT32 count, const uint64_t *values) {
+  struct vpst *s = &g_vp[vp & 7];
+  for (UINT32 i = 0; i < count; i++) {
+    uint64_t v = values[i * 2]; // WHV_REGISTER_VALUE — 16 байт, Reg64 в начале
+    switch (names[i]) { case 3: s->rbx = v; break; case 1: s->rcx = v; break; case 2: s->rdx = v; break; case 6: s->rsi = v; break; case 7: s->rdi = v; break; case 0x10: s->rip = v; break; }
+  }
+  return 0;
+}
+static HRESULT run_selftest(UINT32 vp, uint8_t *c) {
+  struct vpst *s = &g_vp[vp & 7];
+  if (s->rip != 0x1000) { *(UINT32 *)c = 4; return 0; } // не наша программа — «unrecoverable»
+  while ((uint32_t)s->rdi) {
+    uint64_t addr;
+    if (s->has_pending) addr = s->pending;
+    else {
+      uint32_t st = (uint32_t)s->rsi * 1664525u + 1013904223u; s->rsi = st;
+      addr = (uint32_t)((((st >> 8) & (uint32_t)s->rcx) << 12) + (uint32_t)s->rbx + (uint32_t)s->rdx);
+    }
+    uint64_t pg = (addr - g_gpa0) / PG;
+    if (!g_map[pg]) {
+      s->pending = addr; s->has_pending = 1;
+      *(UINT32 *)c = 1; *(UINT32 *)(c + 68) = 4 | 1; *(uint64_t *)(c + 72) = addr;
+      InterlockedIncrement64(&g_exits);
+      return 0;
+    }
+    s->has_pending = 0;
+    if ((++g_q & 63) == 0) {
+      MEMORY_BASIC_INFORMATION m; VirtualQuery(g_hva + (addr - g_gpa0), &m, sizeof m);
+      if (m.State != MEM_COMMIT || (m.Protect & PAGE_READWRITE) == 0) { InterlockedIncrement64(&g_err_decommitted); }
+    }
+    InterlockedIncrement((volatile LONG *)(g_hva + (addr - g_gpa0)));
+    s->rdi = (uint32_t)s->rdi - 1;
+  }
+  *(UINT32 *)c = 2; // out 0xE9 -> IO-port exit
+  return 0;
+}
 EXP WHvCreatePartition(void **p) { *p = (void *)0x1234; return 0; }
 EXP WHvSetupPartition(void *p) { return 0; }
 EXP WHvDeletePartition(void *p) { return 0; }
@@ -38,6 +82,7 @@ EXP WHvUnmapGpaRange(void *p, uint64_t gpa, uint64_t size) {
 EXP WHvRunVirtualProcessor(void *p, UINT32 vp, void *ctx, UINT32 size) {
   uint8_t *c = ctx;
   memset(c, 0, size);
+  if (selftest_mode()) return run_selftest(vp, c);
   g_calls++;
   // 32 обращения к горячему набору (прогоны по 64 КиБ) за вызов; холодная страница — раз в 64 вызова
   int n = (g_calls % 64 == 0) ? 33 : 32;
