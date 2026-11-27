@@ -35,9 +35,9 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          cargo build --release --manifest-path rust/Cargo.toml -p em-pagestat -p em-whp-proxy
-          cargo build --release --manifest-path rust/Cargo.toml -p elastic-arena --example arena-bench
-          cargo build --release --manifest-path rust/Cargo.toml -p em-pager --example pager-sim
+          cargo build --release --manifest-path rust/Cargo.toml -p em-pagestat -p em-whp-proxy; if ($LASTEXITCODE -ne 0) { throw "build em-pagestat/em-whp-proxy failed" }
+          cargo build --release --manifest-path rust/Cargo.toml -p elastic-arena --example arena-bench; if ($LASTEXITCODE -ne 0) { throw "build arena-bench failed" }
+          cargo build --release --manifest-path rust/Cargo.toml -p em-pager --example pager-sim; if ($LASTEXITCODE -ne 0) { throw "build pager-sim failed" }
           Get-ChildItem rust/target/release/*.exe, rust/target/release/*.dll | Format-Table Name, Length | Out-String
       - name: Environment
         shell: pwsh
@@ -98,17 +98,17 @@ jobs:
         run: |
           $t = "rust/em-whp-proxy/test"
           New-Item -ItemType Directory -Force pt | Out-Null
-          cl /nologo /O2 $t/offsets.c /Fe:pt/offsets.exe | Out-Null
+          cl /nologo /O2 $t/offsets.c /Fe:pt/offsets.exe | Out-Null; if ($LASTEXITCODE -ne 0) { throw "cl offsets.c failed" }
           ./pt/offsets.exe 2>&1 | Tee-Object "out/${{ matrix.os }}-proxy-offsets.txt"; if ($LASTEXITCODE -ne 0) { throw "offsets differ from SDK" }
-          cl /nologo /O2 /LD $t/fakewhp.c /Fe:pt/fakewhp.dll | Out-Null
-          cl /nologo /O2 $t/harness.c /Fe:pt/harness.exe psapi.lib | Out-Null
+          cl /nologo /O2 /LD $t/fakewhp.c /Fe:pt/fakewhp.dll | Out-Null; if ($LASTEXITCODE -ne 0) { throw "cl fakewhp.c failed" }
+          cl /nologo /O2 $t/harness.c /Fe:pt/harness.exe psapi.lib | Out-Null; if ($LASTEXITCODE -ne 0) { throw "cl harness.c failed" }
           Copy-Item rust/target/release/WinHvPlatform.dll pt/
           $env:EM_WHP_REAL = (Resolve-Path pt/fakewhp.dll).Path
           ./pt/harness.exe 256 20 2>&1 | Tee-Object "out/${{ matrix.os }}-proxy-passthrough.txt"; if ($LASTEXITCODE -ne 0) { throw "proxy passthrough failed" }
           $env:EM_PAGER = "1"; $env:EM_PAGER_START_DELAY_S = "0"; $env:EM_PAGER_IDLE_MS = "500"; $env:EM_PAGER_LOG = "out/${{ matrix.os }}-proxy-pager-log.txt"
           ./pt/harness.exe 512 40 2>&1 | Tee-Object "out/${{ matrix.os }}-proxy-pager.txt"; if ($LASTEXITCODE -ne 0) { throw "proxy + pager failed" }
           # whp-selftest (программа для настоящего гипервизора) на модели WHP: та же логика сверки счётчиков
-          cl /nologo /O2 $t/whp_selftest.c /Fe:pt/whp-selftest.exe | Out-Null
+          cl /nologo /O2 $t/whp_selftest.c /Fe:pt/whp-selftest.exe | Out-Null; if ($LASTEXITCODE -ne 0) { throw "cl whp_selftest.c failed" }
           $env:EM_FAKE_SELFTEST = "1"; $env:EM_PAGER_IDLE_MS = "300"; $env:EM_PAGER_LOG = "out/${{ matrix.os }}-selftest-pager-log.txt"
           ./pt/whp-selftest.exe 512 40 2 2>&1 | Tee-Object "out/${{ matrix.os }}-selftest-model.txt"; if ($LASTEXITCODE -ne 0) { throw "whp-selftest on the model failed" }
           Remove-Item Env:EM_FAKE_SELFTEST

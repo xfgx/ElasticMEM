@@ -24,10 +24,10 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force out, kit | Out-Null
-          cargo build --release --manifest-path rust/Cargo.toml -p em-whp-proxy -p em-pagestat
+          cargo build --release --manifest-path rust/Cargo.toml -p em-whp-proxy -p em-pagestat; if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
           Copy-Item rust/target/release/WinHvPlatform.dll, rust/target/release/em-pagestat.exe kit/
-          cl /nologo /O2 /W3 research\active-trim\probe.c /Fe:kit\probe.exe psapi.lib winmm.lib advapi32.lib | Out-Null
-          cl /nologo /O2 rust\em-whp-proxy\test\whp_selftest.c /Fe:kit\whp-selftest.exe | Out-Null
+          cl /nologo /O2 /W3 research\active-trim\probe.c /Fe:kit\probe.exe psapi.lib winmm.lib advapi32.lib | Out-Null; if ($LASTEXITCODE -ne 0) { throw "cl probe.c failed" }
+          cl /nologo /O2 rust\em-whp-proxy\test\whp_selftest.c /Fe:kit\whp-selftest.exe | Out-Null; if ($LASTEXITCODE -ne 0) { throw "cl whp_selftest.c failed" }
           if (-not (Test-Path kit\whp-selftest.exe)) { throw "whp-selftest build failed" }
           dumpbin /exports kit\WinHvPlatform.dll | Tee-Object out/proxy-exports.txt | Out-Null
           foreach ($s in 'WHvMapGpaRange', 'WHvUnmapGpaRange', 'WHvRunVirtualProcessor', 'WHvGetCapability', 'WHvGetVirtualProcessorCpuidOutput') { if (-not (Select-String -Path out/proxy-exports.txt -Pattern "\b$s\b" -Quiet)) { throw "missing export $s" } }

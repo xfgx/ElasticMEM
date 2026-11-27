@@ -30,8 +30,8 @@ jobs:
       - name: Build workspace (lib + example + launcher + target)
         shell: pwsh
         run: |
-          cargo build --release --manifest-path rust/Cargo.toml --workspace
-          cargo build --release --manifest-path rust/Cargo.toml --example arena-bench
+          cargo build --release --manifest-path rust/Cargo.toml --workspace; if ($LASTEXITCODE -ne 0) { throw "workspace build failed" }
+          cargo build --release --manifest-path rust/Cargo.toml --example arena-bench; if ($LASTEXITCODE -ne 0) { throw "arena-bench build failed" }
           Get-ChildItem rust/target/release -Filter *.dll | Format-Table Name | Out-String
       - name: Environment (memory compression state)
         shell: pwsh

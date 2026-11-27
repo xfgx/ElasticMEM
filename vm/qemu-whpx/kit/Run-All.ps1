@@ -72,7 +72,10 @@ if (-not $Vhdx) {
     else {
       for ($i = 0; $i -lt $vms.Count; $i++) { Say ("  [{0}] {1} ({2}, поколение {3}, {4} МиБ): {5}" -f ($i + 1), $vms[$i].Name, $vms[$i].State, $vms[$i].Gen, $vms[$i].MemMiB, $vms[$i].Disk) }
       if (-not $PreflightOnly) {
-        $n = if ($vms.Count -eq 1) { 1 } else { [int](Read-Host 'Номер ВМ') }
+        $n = 1
+        if ($vms.Count -gt 1) {
+          do { $s = Read-Host "Номер ВМ (1-$($vms.Count))" } until ([int]::TryParse($s.Trim(), [ref]$n) -and $n -ge 1 -and $n -le $vms.Count)
+        }
         $vm = $vms[$n - 1]
         $Vhdx = $vm.Disk
         if ($vm.Gen -eq 1) { $fw = 'bios' }
