@@ -15,6 +15,7 @@ param(
   [int]$StartDelayS = 90,
   [switch]$Ghost,
   [int]$RdpPort = 13389,
+  [int]$QmpPort = 13390,
   [string]$Cpu = 'host',
   [ValidateSet('on', 'off')][string]$Irqchip = 'on',
   [switch]$Headless,
@@ -36,7 +37,22 @@ try {
 if ($busy) { throw "ВМ Hyper-V '$($busy.Name)' запущена с этим диском. Выключите её (Stop-VM) перед запуском в QEMU." }
 
 $overlay = Join-Path $Work 'overlay.qcow2'
-if ($ResetOverlay -and (Test-Path $overlay)) { Remove-Item $overlay }
+$vars = Join-Path $Work 'vars.fd'
+# overlay хранит записи гостя поверх ИМЕННО того содержимого базового диска, на котором был создан. Если база
+# сменилась (другой .vhdx) или менялась после создания overlay (Prepare-Disk, запуск ВМ в Hyper-V), старый overlay
+# поверх неё — испорченная файловая система гостя (синий экран). Такой overlay пересоздаётся.
+if (-not $ResetOverlay -and (Test-Path $overlay)) {
+  $why = $null
+  try {
+    $info = (& $QemuImg info --output=json $overlay 2>$null | Out-String) | ConvertFrom-Json
+    $back = "$($info.'full-backing-filename')"
+    if (-not $back) { $back = "$($info.'backing-filename')" }
+    if (-not $back -or -not (Test-Path $back) -or (Resolve-Path $back).Path -ne $Vhdx) { $why = "создан для другого диска ($back)" }
+    elseif ((Get-Item $Vhdx).LastWriteTime -gt (Get-Item $overlay).CreationTime) { $why = 'базовый диск менялся после его создания' }
+  } catch { $why = "не читается ($($_.Exception.Message))" }
+  if ($why) { Write-Host "overlay.qcow2 $why — создаю заново (записи прошлых запусков отбрасываются)"; $ResetOverlay = $true }
+}
+if ($ResetOverlay) { Remove-Item $overlay, $vars -ErrorAction SilentlyContinue }
 if (-not (Test-Path $overlay)) {
   & $QemuImg create -f qcow2 -F vhdx -b $Vhdx $overlay | Out-Host
   if ($LASTEXITCODE -ne 0) { throw 'qemu-img не смог создать overlay' }
@@ -50,10 +66,9 @@ $fwd = "user,id=n0,hostfwd=tcp:127.0.0.1:" + $RdpPort + "-:3389"
 $qa = @('-name', 'ElasticMem-guest', '-accel', "whpx,kernel-irqchip=$Irqchip", '-cpu', $Cpu, '-smp', "$Cpus", '-m', "$MemoryMiB",
   '-rtc', 'base=localtime', '-usb', '-device', 'usb-tablet',
   '-drive', "file=$overlay,if=none,id=d0,cache=writeback", '-device', 'ahci,id=ahci', '-device', 'ide-hd,drive=d0,bus=ahci.0',
-  '-netdev', $fwd, '-device', 'e1000e,netdev=n0')
+  '-netdev', $fwd, '-device', 'e1000e,netdev=n0', '-qmp', "tcp:127.0.0.1:$QmpPort,server=on,wait=off")
 if ($Firmware -eq 'uefi') {
   $code = Join-Path $Kit 'qemu\share\edk2-x86_64-code.fd'
-  $vars = Join-Path $Work 'vars.fd'
   if (-not (Test-Path $vars)) { Copy-Item (Join-Path $Kit 'qemu\share\edk2-i386-vars.fd') $vars }
   $qa = @('-machine', 'q35') + $qa + @('-drive', "if=pflash,format=raw,readonly=on,file=$code", '-drive', "if=pflash,format=raw,file=$vars")
 } else {

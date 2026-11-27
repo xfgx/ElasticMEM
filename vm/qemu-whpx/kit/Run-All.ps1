@@ -37,6 +37,12 @@ function Finish([string]$why) {
   if ("$qe" -match 'Unimplemented handler') { Say 'ДИАГНОЗ: QEMU получил обращение гостя к памяти как к устройству (Unimplemented handler) — признак ошибки пейджера' }
   $pl = Get-Content (Join-Path $Work 'em-pager.log') -Raw -ErrorAction SilentlyContinue
   if ("$pl" -match 'FATAL') { Say 'ДИАГНОЗ: пейджер остановил QEMU (FATAL в em-pager.log), чтобы не испортить память гостя' }
+  $tl = @(([regex]'EM_PAGER t_s=(\d+) .*? evicted_mib=([\d.]+) .*? evictions=(\d+)').Matches("$pl"))
+  if ($tl.Count) {
+    $lt = $tl[$tl.Count - 1]
+    if ([int]$lt.Groups[3].Value -eq 0) { Say "ДИАГНОЗ: к $($lt.Groups[1].Value)-й секунде пейджер ещё ничего не вытеснил — сбой не из-за вытеснения памяти" }
+    else { Say "Пейджер к $($lt.Groups[1].Value)-й секунде: вытеснено $($lt.Groups[2].Value) МиБ, вытеснений $($lt.Groups[3].Value)" }
+  }
   Say "ИТОГ: $why"
   foreach ($f in 'em-pager.log', 'qemu-err.txt', 'qemu-out.txt', 'runs.txt') { $p = Join-Path $Work $f; if (Test-Path $p) { Copy-Item $p $rep } }
   $desk = [Environment]::GetFolderPath('Desktop')
@@ -177,7 +183,7 @@ $irq = 'on'
 $started = $false
 for ($try = 1; $try -le 2 -and -not $started; $try++) {
   try {
-    & (Join-Path $PSScriptRoot 'Start-Guest.ps1') -Vhdx $Vhdx -Mode $Mode -Firmware $fw -MemoryMiB $MemoryMiB -Irqchip $irq 2>&1 | ForEach-Object { Say "$_" }
+    & (Join-Path $PSScriptRoot 'Start-Guest.ps1') -Vhdx $Vhdx -ResetOverlay -Mode $Mode -Firmware $fw -MemoryMiB $MemoryMiB -Irqchip $irq 2>&1 | ForEach-Object { Say "$_" }
     $started = [bool](Get-GuestProcess)
   } catch { Say "Start-Guest: $($_.Exception.Message)" }
   if (-not $started) {
@@ -187,12 +193,29 @@ for ($try = 1; $try -le 2 -and -not $started; $try++) {
 }
 if (-not $started) { Finish 'QEMU не запустился (см. qemu-err.txt в отчёте)' }
 
+# QEMU не завершается, когда останавливает ВМ (в заголовке окна [Stopped]): статус берём по QMP. При остановке —
+# снимок экрана гостя (на синем экране виден код ошибки) в отчёт, QEMU закрывается, отчёт собирается сразу.
+function Test-GuestStopped([string]$when) {
+  $q = Invoke-Qmp 'query-status'
+  $st = if ($q -and $q.PSObject.Properties['return']) { "$($q.return.status)" } else { '' }
+  if ($st -notin 'internal-error', 'io-error', 'paused', 'shutdown', 'guest-panicked', 'watchdog') { return }
+  $png = Join-Path $rep "screen-$st.png"
+  [void](Invoke-Qmp 'screendump' @{ filename = $png; format = 'png' })
+  Say "QEMU остановил ВМ $when (статус $st). Снимок экрана гостя: $(Split-Path $png -Leaf)"
+  if ($st -eq 'io-error') { Say 'ДИАГНОЗ: ошибка ввода-вывода диска гостя (io-error) — QEMU приостановил ВМ' }
+  if ($st -eq 'guest-panicked') { Say 'ДИАГНОЗ: гость сообщил о панике / процессор гостя в неустранимом состоянии (guest-panicked)' }
+  [void](Invoke-Qmp 'quit')
+  Start-Sleep -Seconds 2
+  Finish "ВМ остановлена $when (статус $st)"
+}
+
 # ---------- ожидание загрузки гостя ----------
 Say "Жду загрузки гостя (RDP на 127.0.0.1:13389, до $BootTimeoutMin мин). В окне QEMU виден ход загрузки."
 $t0 = Get-Date
 $booted = $false
 while (((Get-Date) - $t0).TotalMinutes -lt $BootTimeoutMin) {
   if (-not (Get-GuestProcess)) { break }
+  Test-GuestStopped 'во время загрузки'
   if (Test-Rdp) { $booted = $true; break }
   Start-Sleep -Seconds 10
 }
@@ -219,9 +242,11 @@ if ($mm -eq 'track2') {
     $snap = (Get-MemSnapshot "t$t") | ConvertTo-Json -Compress
     Add-Content -Path $log -Value "SNAP $snap" -Encoding UTF8
     if (-not (Get-GuestProcess)) { Say 'QEMU завершился во время замера'; break }
+    Test-GuestStopped 'во время замера'
   }
 }
 if (-not (Get-GuestProcess)) { Finish 'QEMU завершился во время замера' }
+Test-GuestStopped 'во время замера'
 Say 'Gate 0 по памяти гостя (два снимка с паузой 60 с)'
 & (Join-Path $PSScriptRoot 'Measure.ps1') -Mode pagestat 2>&1 | ForEach-Object { Add-Content -Path $log -Value "$_" -Encoding UTF8 }
 $last = Get-Content (Join-Path $Work 'em-pager.log') -Tail 1 -ErrorAction SilentlyContinue

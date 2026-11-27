@@ -16,6 +16,27 @@ function Get-GuestProcess {
   return Get-Process -Name 'qemu-system-x86_64' -ErrorAction SilentlyContinue | Select-Object -First 1
 }
 
+# Одна команда QMP (монитор QEMU, Start-Guest -QmpPort). Возвращает ответ ({return} или {error}) или $null.
+function Invoke-Qmp([string]$Execute, [hashtable]$Arguments, [int]$Port = 13390) {
+  $c = New-Object Net.Sockets.TcpClient
+  try {
+    $c.ReceiveTimeout = 5000; $c.SendTimeout = 5000
+    $c.Connect('127.0.0.1', $Port)
+    $s = $c.GetStream()
+    $r = New-Object IO.StreamReader($s, (New-Object Text.UTF8Encoding($false)))
+    $w = New-Object IO.StreamWriter($s, (New-Object Text.UTF8Encoding($false)))
+    $w.AutoFlush = $true
+    [void]$r.ReadLine()
+    $res = $null
+    foreach ($m in @(@{ execute = 'qmp_capabilities' }, @{ execute = $Execute })) {
+      if ($Arguments -and $m.execute -eq $Execute) { $m.arguments = $Arguments }
+      $w.WriteLine(($m | ConvertTo-Json -Compress -Depth 5))
+      do { $res = $r.ReadLine() | ConvertFrom-Json } until ($res.PSObject.Properties['return'] -or $res.PSObject.Properties['error'])
+    }
+    return $res
+  } catch { return $null } finally { $c.Close() }
+}
+
 function Get-MemSnapshot([string]$tag) {
   $q = Get-GuestProcess
   $mc = Get-Process -Name 'Memory Compression' -ErrorAction SilentlyContinue
