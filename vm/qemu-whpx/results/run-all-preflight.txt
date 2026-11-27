@@ -1,9 +1,0 @@
-ОС: Microsoft Windows Server 2022 Datacenter 10.0.20348, RAM 16 ГиБ, свободно 13 ГиБ
-Администратор: True
-Платформа низкоуровневой оболочки Windows (HypervisorPlatform): Enabled
-ВМ Hyper-V с дисками не найдены — укажите -Vhdx
-Диск: ; прошивка: uefi; память гостя: 4096 МиБ
-ИТОГ: есть что исправить (см. строки НЕТ/НУЖНО)
-
-Отчёт для отправки: C:\Users\runneradmin\Desktop\ElasticMem-report-20261127-2221.zip
-report_zip=ElasticMem-report-20261127-2221.zip bytes=495
