@@ -1,0 +1,76 @@
+name: guest-ram-gate0
+# Gate 0 по памяти Windows-гостя целиком. Раннер GitHub сам является ВМ Windows Server на Hyper-V, то есть его
+# память — это и есть «память гостя». Снять физический образ драйвером нельзя: на раннерах включены VBS и
+# политика целостности кода, и WinPmem не загружается (проверено, см. FINDINGS). Поэтому меряем из
+# пользовательского режима то, из чего эта память состоит:
+#  * списки страниц ОС (Free & Zero, Standby, Modified) — по счётчикам;
+#  * приватная память ВСЕХ процессов (только резидентные страницы) — em-pagestat --name '*' --private-only:
+#    нули, дубликаты внутри и между процессами, XPRESS, em-cas.
+# Наружу — только агрегаты.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['claude/cas-memory']
+    paths: ['.github/workflows/guest-ram-gate0.yml']
+permissions:
+  contents: write
+jobs:
+  gate0:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build em-pagestat
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          cargo build --release --manifest-path rust/Cargo.toml -p em-pagestat
+      - name: Workload (Edge with real sites) and memory state
+        shell: pwsh
+        run: |
+          $edge = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          $sites = 'https://en.wikipedia.org/wiki/Microsoft_Windows', 'https://github.com/microsoft/terminal', 'https://www.youtube.com/', 'https://developer.mozilla.org/en-US/docs/Web/JavaScript', 'https://news.ycombinator.com/'
+          $i = 0
+          foreach ($u in $sites) { Start-Process -FilePath $edge -ArgumentList @('--headless=new', "--user-data-dir=$env:RUNNER_TEMP\p$i", '--no-first-run', '--window-size=1280,720', $u) | Out-Null; $i++ }
+          Start-Sleep -Seconds 90
+          $o = "out/${{ matrix.os }}-state.txt"
+          (Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, TotalVisibleMemorySize, FreePhysicalMemory | Format-List | Out-String) | Tee-Object $o
+          $c = '\Memory\Free & Zero Page List Bytes', '\Memory\Standby Cache Normal Priority Bytes', '\Memory\Standby Cache Reserve Bytes', '\Memory\Standby Cache Core Bytes', '\Memory\Modified Page List Bytes', '\Memory\Pool Nonpaged Bytes', '\Memory\Pool Paged Resident Bytes', '\Memory\System Driver Resident Bytes', '\Memory\System Code Resident Bytes', '\Memory\Committed Bytes'
+          foreach ($n in $c) { try { $v = (Get-Counter $n -ErrorAction Stop).CounterSamples[0].CookedValue; "{0} = {1:N0} MiB" -f $n, ($v / 1MB) | Tee-Object -Append $o } catch { "$n : n/a" | Tee-Object -Append $o } }
+          $all = Get-Process
+          "processes=$($all.Count) ws_sum_mib=$([int](($all | Measure-Object WorkingSet64 -Sum).Sum/1MB)) private_sum_mib=$([int](($all | Measure-Object PrivateMemorySize64 -Sum).Sum/1MB))" | Tee-Object -Append $o
+          Get-Process msedge -ErrorAction SilentlyContinue | Measure-Object PrivateMemorySize64 -Sum | ForEach-Object { "msedge processes=$($_.Count) private_mib=$([int]($_.Sum/1MB))" } | Tee-Object -Append $o
+      - name: em-pagestat over private memory of all processes (one store variant per pass)
+        shell: pwsh
+        run: |
+          $ps = "rust/target/release/em-pagestat.exe"
+          foreach ($v in 'plain', 'dedup', 'cas1') {
+            & $ps --name '*' --private-only --max-mib 12288 --variants $v 2> "out/${{ matrix.os }}-gate0-$v-errors.txt" | Tee-Object "out/${{ matrix.os }}-gate0-$v.txt"
+            if ($LASTEXITCODE -ne 0) { throw "pagestat $v failed (not lossless?)" }
+          }
+          (Get-Content "out/${{ matrix.os }}-gate0-plain-errors.txt" | Measure-Object).Count | ForEach-Object { "processes_not_readable=$_" } | Tee-Object -Append "out/${{ matrix.os }}-state.txt"
+          Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: "guest-ram-gate0-${{ matrix.os }}", path: out/ }
+  commit:
+    needs: gate0
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dl }
+      - name: Commit results back
+        run: |
+          mkdir -p rust/em-pagestat/results-guest-ram; rm -f rust/em-pagestat/results-guest-ram/*.txt
+          find dl -type f -name '*.txt' ! -name '*-errors.txt' -exec cp {} rust/em-pagestat/results-guest-ram/ \;
+          echo "run: ${{ github.run_id }} sha: ${{ github.sha }} result: ${{ needs.gate0.result }}" > rust/em-pagestat/results-guest-ram/RUN.txt
+          git config user.name "guest-ram-gate0"; git config user.email "actions@users.noreply.github.com"
+          git add -A rust/em-pagestat/results-guest-ram
+          git commit -m "guest-ram-gate0: results of run ${{ github.run_id }}" || exit 0
+          for i in 1 2 3; do git pull --rebase origin ${{ github.ref_name }} && git push origin HEAD:${{ github.ref_name }} && break; sleep 5; done

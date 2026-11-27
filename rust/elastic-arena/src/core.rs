@@ -2,6 +2,19 @@
 //! Никаких системных вызовов — только логика «что хранить и кого вытеснять», поэтому тестируется на любой ОС.
 
 use crate::codec::{Packed, PageCodec, PAGE};
+use em_cas::{CasStore, Kind, Ref};
+use std::collections::VecDeque;
+
+/// Хранилище content-addressed (em-cas) вместо собственного: zero / dedup / XOR-delta / временна́я дельта.
+struct Cas {
+    store: CasStore,
+    refs: Vec<Ref>,
+    /// Временна́я дельта: после восстановления держим прошлую версию страницы как базу следующего вытеснения.
+    ghost: Vec<Option<Ref>>,
+    ghost_fifo: VecDeque<usize>, // порядок появления; записи могут быть устаревшими (ghost[q] уже None)
+    ghost_live: usize,
+    ghost_max: usize,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum State {
@@ -81,6 +94,7 @@ impl Store {
 
 pub struct Table {
     codec: Box<dyn PageCodec>,
+    cas: Option<Cas>,
     state: Vec<State>,
     slot: Vec<Slot>,
     stamp: Vec<u64>,
@@ -107,6 +121,9 @@ pub enum Fault {
     AlreadyResident,
     /// Попадание в пробу: байты на месте, вызывающий должен лишь вернуть PAGE_READWRITE.
     ProbeHit,
+    /// Хранилище не смогло восстановить страницу без потерь (CRC / устаревшая ссылка). dst не годится,
+    /// состояние не изменено: вызывающий обязан остановиться, а не продолжать с неверными байтами.
+    Corrupt,
 }
 
 /// Пауза перед повторной пробой страницы, которую тронули: 2 с, ×2, до 2 мин.
@@ -124,6 +141,7 @@ impl Table {
         });
         Table {
             codec,
+            cas: None,
             state: vec![State::Zero; pages],
             slot,
             stamp: vec![0; pages],
@@ -144,6 +162,22 @@ impl Table {
         }
     }
 
+    /// Таблица поверх em-cas. `ghost_pages` — сколько прошлых версий страниц держать для временно́й дельты (0 — выкл).
+    pub fn new_cas(store: CasStore, pages: usize, ghost_pages: usize) -> Self {
+        let mut t = Table::new(Box::new(crate::codec::Rle), pages, usize::MAX);
+        t.cas = Some(Cas { store, refs: vec![Ref::Zero; pages], ghost: vec![None; pages], ghost_fifo: VecDeque::new(), ghost_live: 0, ghost_max: ghost_pages });
+        t
+    }
+
+    pub fn cas_stats(&self) -> Option<em_cas::CasStats> {
+        self.cas.as_ref().map(|c| c.store.stats())
+    }
+
+    /// Обслуживание хранилища: перенос payload'ов и возврат пустых сегментов ОС.
+    pub fn maintain(&mut self, max_moves: usize) -> usize {
+        self.cas.as_mut().map_or(0, |c| c.store.compact(max_moves))
+    }
+
     pub fn pages(&self) -> usize {
         self.state.len()
     }
@@ -151,10 +185,16 @@ impl Table {
         self.state[p]
     }
     pub fn store_bytes(&self) -> u64 {
-        self.store.slots_bytes
+        match &self.cas {
+            Some(c) => c.store.stats().total_bytes(),
+            None => self.store.slots_bytes,
+        }
     }
     pub fn payload_bytes(&self) -> u64 {
-        self.store.used_payload
+        match &self.cas {
+            Some(c) => c.store.stats().payload_bytes,
+            None => self.store.used_payload,
+        }
     }
 
     /// Обработать отказ доступа к странице `p`: заполнить `dst` (ровно 4096) её содержимым.
@@ -182,6 +222,43 @@ impl Table {
                 Fault::Filled {
                     decompressed: false,
                 }
+            }
+            State::Compressed if self.cas.is_some() => {
+                let c = self.cas.as_mut().unwrap();
+                let r = c.refs[p];
+                if c.store.get(r, &mut dst[..PAGE]).is_err() {
+                    return Fault::Corrupt;
+                }
+                c.refs[p] = Ref::Zero;
+                if c.ghost_max > 0 {
+                    match c.ghost[p].replace(r) {
+                        Some(old) => c.store.release(old),
+                        None => c.ghost_live += 1,
+                    }
+                    c.ghost_fifo.push_back(p);
+                    while c.ghost_live > c.ghost_max {
+                        let Some(q) = c.ghost_fifo.pop_front() else { break };
+                        if let Some(g) = c.ghost[q].take() {
+                            c.store.release(g);
+                            c.ghost_live -= 1;
+                        }
+                    }
+                    if c.ghost_fifo.len() > 4 * c.ghost_max + 1024 {
+                        let g = &c.ghost;
+                        c.ghost_fifo.retain(|&q| g[q].is_some());
+                    }
+                } else {
+                    c.store.release(r);
+                }
+                self.state[p] = State::Resident;
+                self.compressed -= 1;
+                self.resident += 1;
+                self.stamp[p] = self.tick();
+                self.faults += 1;
+                self.decompressed += 1;
+                self.backoff[p] = grow(self.backoff[p]);
+                self.next_probe[p] = now + self.backoff[p] as u64;
+                Fault::Filled { decompressed: true }
             }
             State::Compressed => {
                 let s = &self.slot[p];
@@ -224,6 +301,41 @@ impl Table {
                 self.state[p] = State::Resident;
             }
             _ => return false,
+        }
+        if let Some(c) = self.cas.as_mut() {
+            let hint = c.ghost[p];
+            let res = c.store.put_compressible(&src[..PAGE], hint);
+            if let Some(g) = c.ghost[p].take() {
+                c.store.release(g); // база (если понадобилась) удержана дельтой; лишняя версия не нужна
+                c.ghost_live -= 1;
+            }
+            self.resident -= 1;
+            return match res {
+                Ok(Some((_, Kind::Zero))) => {
+                    self.state[p] = State::Zero;
+                    self.zero += 1;
+                    self.evictions += 1;
+                    true
+                }
+                // несжимаемая и без дубликата: хранить смысла нет
+                Ok(None) => {
+                    self.state[p] = State::Pinned;
+                    self.pinned += 1;
+                    false
+                }
+                Ok(Some((r, _))) => {
+                    c.refs[p] = r;
+                    self.state[p] = State::Compressed;
+                    self.compressed += 1;
+                    self.evictions += 1;
+                    true
+                }
+                Err(_) => {
+                    self.state[p] = State::Pinned;
+                    self.pinned += 1;
+                    false
+                }
+            };
         }
         match self.codec.compress(&src[..PAGE], scratch) {
             Packed::Zero => {

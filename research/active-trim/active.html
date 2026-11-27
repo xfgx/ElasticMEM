@@ -1,0 +1,34 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>active</title></head>
+<body><canvas id="c" width="640" height="360"></canvas>
+<script>
+// «Активное приложение» в настоящем браузере: ~320 МиБ данных, из которых в каждом кадре трогается ~10 %,
+// раз в 5 с — ещё ~10 % («тёплое»), остальное лежит (как загруженные, но не открытые сейчас данные).
+// Время каждого кадра (работа + интервал rAF) пишем в корзины по 1 с; читаем через CDP: window.__stats().
+const MiB = 1 << 20;
+const chunks = [];
+for (let i = 0; i < 64; i++) { const a = new Float64Array(4 * MiB / 8); for (let j = 0; j < a.length; j += 7) a[j] = (j * 31 + i) % 1000; chunks.push(a); }
+const objs = [];
+for (let i = 0; i < 400000; i++) objs.push({ id: i, name: 'item-' + i, tags: [i % 7, i % 13], v: i * 0.5 }); // ~64 МиБ объектов V8
+const hot = chunks.slice(0, 6), warm = chunks.slice(6, 12);
+const ctx = document.getElementById('c').getContext('2d');
+const buckets = {}; let last = performance.now(), lastWarm = 0, k = 0;
+function frame(now) {
+  const t0 = performance.now();
+  for (const a of hot) for (let j = (k * 64) % 512; j < a.length; j += 512) a[j] += 1;
+  for (let i = 0; i < 2000; i++) objs[(k * 2003 + i * 97) % 40000].v += 1; // горячая часть объектов
+  if (now - lastWarm > 5000) { for (const a of warm) for (let j = 0; j < a.length; j += 512) a[j] += 1; lastWarm = now; }
+  ctx.fillStyle = `hsl(${k % 360},60%,50%)`; ctx.fillRect((k * 7) % 600, (k * 3) % 320, 40, 40);
+  const work = performance.now() - t0, gap = now - last; last = now; k++;
+  const b = Math.floor(Date.now() / 1000); const s = buckets[b] || (buckets[b] = { n: 0, work: [], gap: [] });
+  s.n++; s.work.push(work); s.gap.push(gap);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+window.__stats = (fromMs, toMs) => {
+  const w = [], g = [];
+  for (const [b, s] of Object.entries(buckets)) { const ms = +b * 1000; if (ms >= fromMs && ms < toMs) { w.push(...s.work); g.push(...s.gap); } }
+  const q = (a, p) => { if (!a.length) return null; const x = [...a].sort((m, n) => m - n); return +x[Math.min(x.length - 1, Math.floor(x.length * p))].toFixed(2); };
+  return JSON.stringify({ frames: w.length, fps: +(w.length / Math.max(1, (toMs - fromMs) / 1000)).toFixed(1), work_p50: q(w, .5), work_p99: q(w, .99), work_max: q(w, 1), gap_p50: q(g, .5), gap_p99: q(g, .99), gap_max: q(g, 1), jank_gt_50ms: g.filter(x => x > 50).length });
+};
+</script></body></html>

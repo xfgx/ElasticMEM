@@ -1,10 +1,10 @@
 
 Caption                : Microsoft Windows Server 2025 Datacenter
 Version                : 10.0.26100
-TotalVisibleMemorySize : 8383228
+TotalVisibleMemorySize : 16771836
 
 
-nproc=2
+nproc=4
 
 MemoryCompression : False
 

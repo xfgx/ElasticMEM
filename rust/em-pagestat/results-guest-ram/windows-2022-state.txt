@@ -1,0 +1,20 @@
+
+Caption                : Microsoft Windows Server 2022 Datacenter
+Version                : 10.0.20348
+TotalVisibleMemorySize : 16771836
+FreePhysicalMemory     : 13112856
+
+
+\Memory\Free & Zero Page List Bytes = 9,786 MiB
+\Memory\Standby Cache Normal Priority Bytes = 707 MiB
+\Memory\Standby Cache Reserve Bytes = 2,276 MiB
+\Memory\Standby Cache Core Bytes = 0 MiB
+\Memory\Modified Page List Bytes = 163 MiB
+\Memory\Pool Nonpaged Bytes = 182 MiB
+\Memory\Pool Paged Resident Bytes = 164 MiB
+\Memory\System Driver Resident Bytes = 80 MiB
+\Memory\System Code Resident Bytes = 16 MiB
+\Memory\Committed Bytes = 3,681 MiB
+processes=177 ws_sum_mib=5028 private_sum_mib=2536
+msedge processes=42 private_mib=1036
+processes_not_readable=13

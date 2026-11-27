@@ -5,11 +5,31 @@
 //! Проверяем три вещи:
 //!   1. Корректность: теневая копия в обычной памяти; после прогона арена == тень байт в байт.
 //!   2. Реальное время: время каждого «кадра» (60 Гц) — p50/p99/max, число кадров дольше 16.6 мс.
-//!   3. Экономия: резидентные страницы против сжатого хранилища.
+//!   3. Экономия: резидентные страницы против сжатого хранилища + приватная память процесса по счётчикам ОС.
+//!
+//! Переменные: EM_CODEC=xpress|rle|lz4, EM_STORE=classic|cas, EM_DUP_PCT / EM_NEAR_PCT — доля страниц-копий и
+//! почти-копий (несколько изменённых слов), EM_GHOST=1 — временна́я дельта (база — прошлая версия страницы),
+//! EM_MUTATE=1 — тёплые страницы при каждом обращении получают небольшую запись (повторное вытеснение после правки).
+//! EM_THREADS=N — ещё N потоков постоянно читают и пишут случайные (в том числе холодные) страницы, каждый своё
+//! слово: проверка, что параллельные потоки не видят страницу посреди восстановления.
 
 #[cfg(not(windows))]
 fn main() {
     eprintln!("arena-bench рассчитан на Windows (VEH + VirtualAlloc).");
+}
+
+#[cfg(windows)]
+fn private_mib() -> (f64, f64) {
+    #[repr(C)]
+    #[derive(Default)]
+    struct Pmc { cb: u32, faults: u32, peak_ws: usize, ws: usize, a: usize, b: usize, c: usize, d: usize, pf: usize, peak_pf: usize, private: usize }
+    extern "system" {
+        fn GetCurrentProcess() -> isize;
+        fn K32GetProcessMemoryInfo(h: isize, p: *mut Pmc, cb: u32) -> i32;
+    }
+    let mut p = Pmc { cb: std::mem::size_of::<Pmc>() as u32, ..Default::default() };
+    unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut p, p.cb) };
+    (p.private as f64 / 1048576.0, p.ws as f64 / 1048576.0)
 }
 
 #[cfg(windows)]
@@ -33,16 +53,23 @@ fn main() {
     let quota = total_mib * 1024 * 1024; // хранилище не больше логического размера
 
     let codec_name = std::env::var("EM_CODEC").unwrap_or_else(|_| "xpress".into());
+    let env_n = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+    let store_kind = std::env::var("EM_STORE").unwrap_or_else(|_| "classic".into());
+    let (dup_pct, near_pct, ghost, mutate) = (env_n("EM_DUP_PCT"), env_n("EM_NEAR_PCT"), env_n("EM_GHOST") == 1, env_n("EM_MUTATE") == 1);
     println!(
-        "OS windows arena total_mib={total_mib} hot_mib={hot_mib} warm_mib={warm_mib} secs={secs} codec={codec_name} pages={pages}"
+        "OS windows arena total_mib={total_mib} hot_mib={hot_mib} warm_mib={warm_mib} secs={secs} codec={codec_name} store={store_kind} dup_pct={dup_pct} near_pct={near_pct} ghost={ghost} mutate={mutate} pages={pages}"
     );
+    let (priv0, ws0) = private_mib();
+    let nthreads = env_n("EM_THREADS") as usize;
 
-    let codec: Box<dyn PageCodec> = if codec_name == "rle" {
-        Box::new(Rle)
+    let arena = if store_kind == "cas" {
+        let store = em_cas::CasStore::new(em_cas::by_name(&codec_name), em_cas::Config::default());
+        let ghost_pages = if ghost { warm_pages.max(1024) } else { 0 };
+        Arc::new(Arena::new_cas(store, pages, ghost_pages).expect("arena"))
     } else {
-        Box::new(Xpress)
+        let codec: Box<dyn PageCodec> = if codec_name == "rle" { Box::new(Rle) } else { Box::new(Xpress) };
+        Arc::new(Arena::new(codec, pages, quota).expect("arena"))
     };
-    let arena = Arc::new(Arena::new(codec, pages, quota).expect("arena"));
     let base = arena.base() as usize;
 
     // Теневая копия: эталон содержимого для проверки без потерь.
@@ -86,6 +113,20 @@ fn main() {
             page[i * 8..i * 8 + 8].copy_from_slice(&b);
             sh[i * 8..i * 8 + 8].copy_from_slice(&b);
         }
+        // Копии и почти-копии более ранних страниц (как одинаковые структуры / буферы в настоящей куче).
+        let roll = rng() % 100;
+        if p > 16 && roll < dup_pct + near_pct {
+            let src = (rng() as usize) % p;
+            let (a, b) = shadow.split_at_mut(p * PAGE);
+            b[..PAGE].copy_from_slice(&a[src * PAGE..src * PAGE + PAGE]);
+            if roll >= dup_pct {
+                for _ in 0..4 {
+                    let o = (rng() as usize % (PAGE / 8)) * 8;
+                    b[o] ^= 0x5A;
+                }
+            }
+            page.copy_from_slice(&b[..PAGE]);
+        }
     }
 
     // Горячие и тёплые страницы разбросаны по арене.
@@ -102,6 +143,35 @@ fn main() {
 
     // Фоновый компактор: вытесняет холодные страницы небольшими порциями, как реальный агент.
     let stop = Arc::new(AtomicBool::new(false));
+    // Параллельные потоки (EM_THREADS): каждый — своё слово 3072 + 8t на странице и своя тень.
+    let wrong_reads = Arc::new(AtomicU64::new(0));
+    let tshadow: Vec<Arc<Vec<AtomicU64>>> = (0..nthreads)
+        .map(|t| Arc::new((0..pages).map(|p| AtomicU64::new(u64::from_le_bytes(shadow[p * PAGE + 3072 + 8 * t..p * PAGE + 3080 + 8 * t].try_into().unwrap()))).collect()))
+        .collect();
+    let workers: Vec<_> = (0..nthreads)
+        .map(|t| {
+            let (stop, wr, sh) = (stop.clone(), wrong_reads.clone(), tshadow[t].clone());
+            std::thread::spawn(move || {
+                let mut r = 0xABCD_EF01u64 + t as u64 * 7919;
+                while !stop.load(Ordering::Relaxed) {
+                    for _ in 0..1 {
+                        r ^= r << 13;
+                        r ^= r >> 7;
+                        r ^= r << 17;
+                        let p = r as usize % pages;
+                        let va = (base + p * PAGE + 3072 + 8 * t) as *mut u64;
+                        let v = unsafe { std::ptr::read_volatile(va) };
+                        if v != sh[p].load(Ordering::Relaxed) {
+                            wr.fetch_add(1, Ordering::Relaxed);
+                        }
+                        unsafe { std::ptr::write_volatile(va, v.wrapping_add(1)) };
+                        sh[p].store(v.wrapping_add(1), Ordering::Relaxed);
+                    }
+                    std::thread::sleep(Duration::from_millis(2)); // редкие обращения: в основном к холодным страницам
+                }
+            })
+        })
+        .collect();
     let evicted = Arc::new(AtomicU64::new(0));
     let compactor = {
         let arena = arena.clone();
@@ -127,7 +197,7 @@ fn main() {
     while start.elapsed() < Duration::from_secs(secs) {
         let t0 = Instant::now();
         for (idx, &p) in hot.iter().enumerate() {
-            let off = ((k as usize + idx) * 8) & (PAGE - 8);
+            let off = ((k as usize + idx) * 8) & (2048 - 8); // слова 3072.. отданы потокам EM_THREADS
             let va = (base + p * PAGE + off) as *mut u64;
             unsafe {
                 sink = sink.wrapping_add(*va); // чтение (может вызвать распаковку)
@@ -144,6 +214,14 @@ fn main() {
                 let va = (base + p * PAGE + 64) as *mut u64;
                 unsafe {
                     sink = sink.wrapping_add(*va);
+                    if mutate {
+                        *va = (*va).wrapping_add(1);
+                    }
+                }
+                if mutate {
+                    let s = &mut shadow[p * PAGE + 64..p * PAGE + 72];
+                    let cur = u64::from_le_bytes(s.try_into().unwrap()).wrapping_add(1);
+                    s.copy_from_slice(&cur.to_le_bytes());
                 }
             }
             last_warm = Instant::now();
@@ -162,10 +240,20 @@ fn main() {
 
     stop.store(true, Ordering::Relaxed);
     compactor.join().ok();
+    for w in workers {
+        w.join().ok();
+    }
+    for (t, sh) in tshadow.iter().enumerate() {
+        for p in 0..pages {
+            shadow[p * PAGE + 3072 + 8 * t..p * PAGE + 3080 + 8 * t].copy_from_slice(&sh[p].load(Ordering::Relaxed).to_le_bytes());
+        }
+    }
     std::hint::black_box(sink);
 
     // Снимок состояния ДО проверки: сама проверка читает все страницы и распакует их обратно в резидент.
     let st = arena.stats();
+    let (priv1, ws1) = private_mib();
+    let _ = priv0;
 
     // --- проверка без потерь: вся арена против тени ---
     let mut mism = 0u64;
@@ -220,6 +308,26 @@ fn main() {
         st.evictions,
         evicted.load(Ordering::Relaxed)
     );
+    if let Some(c) = st.cas {
+        println!(
+            "CAS zero={} dedup={} delta={} temporal={} full={} incompressible={} live_entries={} payload_mib={:.1} segments_mib={:.1} meta_mib={:.1} total_mib={:.1} compact_moves={} segments_released={} crc_failures={}",
+            c.put_zero, c.put_dedup, c.put_delta, c.put_temporal, c.put_full, c.put_incompressible, c.live_entries,
+            c.payload_bytes as f64 / 1048576.0, c.segment_bytes as f64 / 1048576.0, c.meta_bytes as f64 / 1048576.0,
+            c.total_bytes() as f64 / 1048576.0, c.compact_moves, c.segments_released, c.crc_failures
+        );
+    }
+    // Рабочий набор процесса = тень + резидентные страницы арены + хранилище + служебное. Память арены — раздел
+    // ОС, а не приватная память, поэтому считаем по рабочему набору. Тень (= логический размер) — константа.
+    let shadow_mib = (pages * PAGE) as f64 / 1048576.0;
+    println!(
+        "OSMEM ws_start_mib={:.1} ws_end_mib={:.1} private_end_mib={:.1} shadow_mib={:.1} arena_plus_store_mib={:.1} logical_mib={:.1} saved_mib={:.1} threads={nthreads}",
+        ws0, ws1, priv1, shadow_mib, ws1 - ws0 - shadow_mib, shadow_mib, 2.0 * shadow_mib - (ws1 - ws0)
+    );
+    let wr = wrong_reads.load(Ordering::Relaxed);
+    if wr != 0 {
+        mism += wr; // поток прочитал неверное значение — тоже потеря
+    }
+    println!("THREADS n={nthreads} wrong_reads={wr}");
     println!(
         "LOSSLESS mismatched_pages={} first_bad_page={} verdict={}",
         mism,

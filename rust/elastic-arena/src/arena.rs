@@ -3,21 +3,26 @@
 //! векторный обработчик (VEH) коммитит страницу, распаковывает ровно 4 КиБ и возобновляет инструкцию.
 //! Фоновый компактор возвращает холодные страницы в сжатое состояние и освобождает физическую память.
 //!
+//! Память арены — раздел ОС (pagefile-backed section) с двумя видами: «вид приложения» (его адреса видит
+//! приложение) и «вид заполнения» (только для арены). Холодная страница в виде приложения стоит PAGE_NOACCESS,
+//! её физическая память отдана ОС (MEM_RESET через вид заполнения). Восстановление пишет байты через вид
+//! заполнения и лишь затем возвращает доступ виду приложения — поэтому нет окна, в котором чужой поток видит
+//! пустую или недописанную страницу: до последнего шага он получает access violation и ждёт замок в VEH.
+//! (Раньше арена коммитила страницу через VirtualAlloc, и свежезакоммиченная страница была доступна всем до
+//! заполнения — та же гонка, что поймал pager-sim в em-pager.) Способ освобождения проверен view-probe на
+//! Windows Server 2022/2025: MEM_RESET через второй вид возвращает ОС всю физическую память страниц.
+//!
 //! Инварианты без потерь (глобальный замок на арену держится на всём отказе и всём вытеснении):
 //!  * вытеснение сперва ставит PAGE_READONLY, затем читает байты — поэтому запись приложения не теряется:
 //!    она отказывает, встаёт на тот же замок, а после распаковки инструкция записи выполняется заново;
 //!  * слот хранилища освобождается только после успешной распаковки в страницу.
 
 use crate::codec::PageCodec;
-use crate::core::{State, Table};
+use crate::core::{Fault, State, Table};
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 const PAGE: usize = 4096;
-const MEM_COMMIT: u32 = 0x1000;
-const MEM_RESERVE: u32 = 0x2000;
-const MEM_DECOMMIT: u32 = 0x4000;
-const MEM_RELEASE: u32 = 0x8000;
 const PAGE_NOACCESS: u32 = 0x01;
 const PAGE_READONLY: u32 = 0x02;
 const PAGE_READWRITE: u32 = 0x04;
@@ -33,6 +38,26 @@ extern "system" {
     fn GetTickCount64() -> u64;
     fn AddVectoredExceptionHandler(first: u32, handler: usize) -> *mut core::ffi::c_void;
     fn RemoveVectoredExceptionHandler(handle: *mut core::ffi::c_void) -> u32;
+    fn CreateFileMappingW(file: isize, sa: *const u8, prot: u32, hi: u32, lo: u32, name: *const u16) -> isize;
+    fn MapViewOfFile(h: isize, access: u32, hi: u32, lo: u32, n: usize) -> *mut u8;
+    fn UnmapViewOfFile(a: *const u8) -> i32;
+    fn CloseHandle(h: isize) -> i32;
+    fn VirtualUnlock(a: *mut u8, n: usize) -> i32;
+}
+
+const MEM_RESET: u32 = 0x80000;
+const FILE_MAP_ALL: u32 = 0x0002 | 0x0004;
+
+/// Физическую память страницы — ОС (содержимое больше не нужно, вид приложения уже PAGE_NOACCESS).
+unsafe fn release_phys(fill: *mut u8) {
+    VirtualAlloc(fill, PAGE, MEM_RESET, PAGE_READWRITE);
+}
+
+/// Записать страницу через вид заполнения и убрать её из рабочего набора по этому виду (иначе одна физическая
+/// страница считалась бы в рабочем наборе дважды). VirtualUnlock на незаблокированной странице так и делает.
+unsafe fn fill_page(fill: *mut u8, src: &[u8]) {
+    std::ptr::copy_nonoverlapping(src.as_ptr(), fill, PAGE);
+    VirtualUnlock(fill, PAGE);
 }
 
 #[repr(C)]
@@ -55,6 +80,7 @@ struct ExceptionPointers {
 struct Inner {
     table: Table,
     base: *mut u8,
+    fill: *mut u8,
     pages: usize,
 }
 unsafe impl Send for Inner {}
@@ -71,6 +97,8 @@ static VEH_HANDLE: AtomicPtr<core::ffi::c_void> = AtomicPtr::new(std::ptr::null_
 pub struct Arena {
     inner: *mut Mutex<Inner>,
     base: *mut u8,
+    fill: *mut u8,
+    section: isize,
     bytes: usize,
     slot: usize,
 }
@@ -91,6 +119,7 @@ pub struct Stats {
     pub faults: u64,
     pub decompressed: u64,
     pub evictions: u64,
+    pub cas: Option<em_cas::CasStats>,
 }
 
 impl Arena {
@@ -100,14 +129,39 @@ impl Arena {
         pages: usize,
         quota_bytes: usize,
     ) -> std::io::Result<Arena> {
+        Self::with_table(Table::new(codec, pages, quota_bytes), pages)
+    }
+
+    /// Арена поверх content-addressed хранилища em-cas (zero / dedup / XOR-delta / временна́я дельта).
+    /// `ghost_pages` — сколько прошлых версий страниц держать базами временно́й дельты (0 — выкл).
+    pub fn new_cas(store: em_cas::CasStore, pages: usize, ghost_pages: usize) -> std::io::Result<Arena> {
+        Self::with_table(Table::new_cas(store, pages, ghost_pages), pages)
+    }
+
+    fn with_table(table: Table, pages: usize) -> std::io::Result<Arena> {
         let bytes = pages * PAGE;
-        let base = unsafe { VirtualAlloc(std::ptr::null_mut(), bytes, MEM_RESERVE, PAGE_NOACCESS) };
-        if base.is_null() {
+        let section = unsafe { CreateFileMappingW(-1, std::ptr::null(), PAGE_READWRITE, (bytes as u64 >> 32) as u32, bytes as u32, std::ptr::null()) };
+        if section == 0 {
             return Err(std::io::Error::last_os_error());
         }
+        let base = unsafe { MapViewOfFile(section, FILE_MAP_ALL, 0, 0, bytes) };
+        let fill = unsafe { MapViewOfFile(section, FILE_MAP_ALL, 0, 0, bytes) };
+        if base.is_null() || fill.is_null() {
+            let e = std::io::Error::last_os_error();
+            unsafe {
+                if !base.is_null() { UnmapViewOfFile(base); }
+                if !fill.is_null() { UnmapViewOfFile(fill); }
+                CloseHandle(section);
+            }
+            return Err(e);
+        }
+        // все страницы стартуют в состоянии Zero: вид приложения недоступен, первое обращение заполнит страницу
+        let mut old = 0u32;
+        unsafe { VirtualProtect(base, bytes, PAGE_NOACCESS, &mut old) };
         let inner = Box::into_raw(Box::new(Mutex::new(Inner {
-            table: Table::new(codec, pages, quota_bytes),
+            table,
             base,
+            fill,
             pages,
         })));
         let slot = match register(base as usize, base as usize + bytes, inner) {
@@ -115,7 +169,9 @@ impl Arena {
             None => {
                 unsafe {
                     drop(Box::from_raw(inner));
-                    VirtualFree(base, 0, MEM_RELEASE);
+                    UnmapViewOfFile(base);
+                    UnmapViewOfFile(fill);
+                    CloseHandle(section);
                 }
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::Other,
@@ -127,6 +183,8 @@ impl Arena {
         Ok(Arena {
             inner,
             base,
+            fill,
+            section,
             bytes,
             slot,
         })
@@ -176,7 +234,10 @@ impl Arena {
             unsafe { VirtualProtect(va, PAGE, PAGE_READONLY, &mut old) };
             let src = unsafe { std::slice::from_raw_parts(va, PAGE) };
             if inner.table.evict(p, src, &mut scratch) {
-                unsafe { VirtualFree(va, PAGE, MEM_DECOMMIT) };
+                unsafe {
+                    VirtualProtect(va, PAGE, PAGE_NOACCESS, &mut old);
+                    release_phys(inner.fill.add(p * PAGE));
+                }
                 compressed += 1;
             } else {
                 unsafe { VirtualProtect(va, PAGE, PAGE_READWRITE, &mut old) };
@@ -191,6 +252,8 @@ impl Arena {
                 probed += 1;
             }
         }
+        // хранилище: перенести payload'ы из полупустых сегментов, пустые вернуть ОС
+        self.inner().lock().unwrap().table.maintain(2048);
         (probed, compressed)
     }
 
@@ -210,6 +273,7 @@ impl Arena {
             faults: t.faults,
             decompressed: t.decompressed,
             evictions: t.evictions,
+            cas: t.cas_stats(),
         }
     }
 }
@@ -220,7 +284,9 @@ impl Drop for Arena {
         REG_BASE[self.slot].store(0, Ordering::SeqCst);
         REG_END[self.slot].store(0, Ordering::SeqCst);
         unsafe {
-            VirtualFree(self.base, 0, MEM_RELEASE);
+            UnmapViewOfFile(self.base);
+            UnmapViewOfFile(self.fill);
+            CloseHandle(self.section);
             drop(Box::from_raw(self.inner));
         }
     }
@@ -304,11 +370,18 @@ unsafe extern "system" fn veh_handler(info: *mut ExceptionPointers) -> i32 {
         }
         _ => {}
     }
-    // Сжата/нулевая: закоммитить физическую страницу под запись, затем заполнить.
-    if VirtualAlloc(va, PAGE, MEM_COMMIT, PAGE_READWRITE).is_null() {
+    // Сжата/нулевая: распаковать в буфер, записать через вид заполнения (вид приложения всё ещё PAGE_NOACCESS —
+    // другие потоки ждут в VEH), и только потом открыть доступ виду приложения. Окна с пустой страницей нет.
+    let mut tmp = [0u8; PAGE];
+    if let Fault::Corrupt = inner.table.on_fault(p, &mut tmp, now) {
+        // Fail-closed: страницу нельзя восстановить без потерь — исключение уходит дальше, процесс падает,
+        // а не продолжает работу с неверными байтами.
         return EXCEPTION_CONTINUE_SEARCH;
     }
-    let dst = std::slice::from_raw_parts_mut(va, PAGE);
-    inner.table.on_fault(p, dst, now);
+    fill_page(inner.fill.add(p * PAGE), &tmp);
+    let mut old = 0u32;
+    if VirtualProtect(va, PAGE, PAGE_READWRITE, &mut old) == 0 {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
     EXCEPTION_CONTINUE_EXECUTION
 }

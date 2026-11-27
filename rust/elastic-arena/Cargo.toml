@@ -7,7 +7,14 @@ description = "Transparent compressed memory arena for Windows: fault-driven per
 [lib]
 crate-type = ["rlib", "cdylib"]
 
+[dependencies]
+em-cas = { path = "../em-cas" }
+
 [[example]]
 name = "arena-bench"
 path = "examples/arena_bench.rs"
 
+
+[[example]]
+name = "view-probe"
+path = "examples/view_probe.rs"

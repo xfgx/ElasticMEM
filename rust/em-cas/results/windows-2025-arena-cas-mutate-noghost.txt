@@ -1,0 +1,8 @@
+OS windows arena total_mib=512 hot_mib=48 warm_mib=32 secs=40 codec=xpress store=cas dup_pct=0 near_pct=0 ghost=false mutate=true pages=131072
+FRAMES n=2386 p50_ms=0.211 p99_ms=2.757 p999_ms=61.734 max_ms=74.033 over16ms=8 over50ms=4
+MEM resident_mib=70.4 compressed_mib=325.5 zero_mib=0.0 pinned_mib=116.1 store_mib=16.6 payload_mib=11.2 ratio=0.051
+ENGINE faults=147709 probe_hits=64563 probing_mib=0.0 decompressed=16637 evictions=99967 evicted_by_compactor=99967
+CAS zero=0 dedup=64377 delta=1974 temporal=0 full=33616 incompressible=29719 live_entries=28182 payload_mib=11.2 segments_mib=12.6 meta_mib=3.9 total_mib=16.6 compact_moves=502 segments_released=60 crc_failures=0
+OSMEM ws_start_mib=3.7 ws_end_mib=727.0 private_end_mib=541.5 shadow_mib=512.0 arena_plus_store_mib=211.4 logical_mib=512.0 saved_mib=300.6 threads=0
+THREADS n=0 wrong_reads=0
+LOSSLESS mismatched_pages=0 first_bad_page=-1 verdict=PASS
