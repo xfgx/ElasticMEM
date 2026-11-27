@@ -20,6 +20,10 @@ param(
   [string]$Cpu = 'host',
   [ValidateSet('on', 'off')][string]$Irqchip = 'on',
   [switch]$Headless,
+  # virtio — как синтетические устройства Hyper-V (нужны драйверы virtio-win в госте: Prepare-Disk их ставит)
+  [ValidateSet('e1000e', 'virtio')][string]$Net = 'e1000e',
+  [ValidateSet('ahci', 'virtio')][string]$Disk = 'ahci',
+  [switch]$Balloon,
   [switch]$ResetOverlay
 )
 . (Join-Path $PSScriptRoot 'scripts\Common.ps1')
@@ -66,14 +70,17 @@ if ($Mode -eq 'pager') { Copy-Item $Proxy $proxyInQemu -Force } elseif (Test-Pat
 $fwd = "user,id=n0,hostfwd=tcp:127.0.0.1:" + $RdpPort + "-:3389"
 $qa = @('-name', 'ElasticMem-guest', '-accel', "whpx,kernel-irqchip=$Irqchip", '-cpu', $Cpu, '-smp', "$Cpus", '-m', "$MemoryMiB",
   '-rtc', 'base=localtime', '-usb', '-device', 'usb-tablet',
-  '-drive', "file=$overlay,if=none,id=d0,cache=writeback", '-device', 'ahci,id=ahci', '-device', 'ide-hd,drive=d0,bus=ahci.0',
-  '-netdev', $fwd, '-device', 'e1000e,netdev=n0', '-qmp', "tcp:127.0.0.1:$QmpPort,server=on,wait=off")
+  '-drive', "file=$overlay,if=none,id=d0,cache=writeback,discard=unmap",
+  '-netdev', $fwd, '-qmp', "tcp:127.0.0.1:$QmpPort,server=on,wait=off")
+$qa += if ($Disk -eq 'virtio') { @('-device', 'virtio-blk-pci,drive=d0') } else { @('-device', 'ahci,id=ahci', '-device', 'ide-hd,drive=d0,bus=ahci.0') }
+$qa += if ($Net -eq 'virtio') { @('-device', 'virtio-net-pci,netdev=n0,romfile=') } else { @('-device', 'e1000e,netdev=n0') }
+if ($Balloon) { $qa += @('-device', 'virtio-balloon-pci,id=balloon0,deflate-on-oom=on') }
 if ($Firmware -eq 'uefi') {
   $code = Join-Path $Kit 'qemu\share\edk2-x86_64-code.fd'
   if (-not (Test-Path $vars)) { Copy-Item (Join-Path $Kit 'qemu\share\edk2-i386-vars.fd') $vars }
-  $qa = @('-machine', 'q35') + $qa + @('-drive', "if=pflash,format=raw,readonly=on,file=$code", '-drive', "if=pflash,format=raw,file=$vars")
+  $qa = @('-machine', 'q35,hpet=off') + $qa + @('-drive', "if=pflash,format=raw,readonly=on,file=$code", '-drive', "if=pflash,format=raw,file=$vars")
 } else {
-  $qa = @('-machine', 'q35') + $qa
+  $qa = @('-machine', 'q35,hpet=off') + $qa
 }
 if ($Headless) { $qa += @('-display', 'none') } else { $qa += @('-display', 'sdl', '-vga', 'std') }
 $qa = $qa | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
@@ -93,7 +100,7 @@ if ($Mode -eq 'pager') {
 } else {
   Remove-Item Env:EM_PAGER -ErrorAction SilentlyContinue
 }
-"$(Get-Date -Format s) start mode=$Mode mem=$MemoryMiB cpus=$Cpus fw=$Firmware codec=$Codec cluster=$Cluster ghost=$Ghost idle_ms=$IdleMs target_hits=$TargetHits headless=$Headless" | Add-Content (Join-Path $Work 'runs.txt')
+"$(Get-Date -Format s) start mode=$Mode mem=$MemoryMiB cpus=$Cpus fw=$Firmware codec=$Codec cluster=$Cluster ghost=$Ghost idle_ms=$IdleMs target_hits=$TargetHits headless=$Headless net=$Net disk=$Disk balloon=$Balloon" | Add-Content (Join-Path $Work 'runs.txt')
 $sp = @{ FilePath = $Qemu; ArgumentList = $qa; WorkingDirectory = $Work; PassThru = $true;
   RedirectStandardOutput = (Join-Path $Work 'qemu-out.txt'); RedirectStandardError = (Join-Path $Work 'qemu-err.txt') }
 $p = Start-Process @sp

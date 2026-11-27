@@ -1,7 +1,10 @@
 ﻿# Подготовка диска гостя С ХОСТА, без загрузки гостя в Hyper-V (вместо Prepare-Guest.ps1). Нужны права администратора,
 # ВМ должна быть выключена. Делает то же, что Prepare-Guest.ps1, но офлайн, в реестре SYSTEM внутри .vhdx:
 #  * загрузочные драйверы AHCI/NVMe (storahci, stornvme: Start=0) — иначе в QEMU INACCESSIBLE_BOOT_DEVICE;
-#  * разрешает RDP (fDenyTSConnections=0) и включает входящие правила брандмауэра для порта 3389.
+#  * разрешает RDP (fDenyTSConnections=0) и включает входящие правила брандмауэра для порта 3389;
+#  * драйверы virtio (сеть NetKVM, диск viostor, balloon) из virtio-win — офлайн через DISM, как у Hyper-V свои
+#    синтетические устройства: с ними QEMU не эмулирует e1000e/AHCI по регистрам; служба balloon (blnsvr) для
+#    статистики памяти гостя. Печатает VIRTIO=ok|fail|absent.
 # Перед изменением копирует куст SYSTEM рядом (SYSTEM.elasticmem.bak). Диск после работы отключается.
 param([Parameter(Mandatory = $true)][string]$Vhdx, [switch]$DisableAutoLogon)
 $ErrorActionPreference = 'Stop'
@@ -28,11 +31,49 @@ try {
   $sysFile = Join-Path $win 'Windows\System32\config\SYSTEM'
   $bak = "$sysFile.elasticmem.bak"
   if (-not (Test-Path $bak)) { Copy-Item $sysFile $bak; Write-Host "Резервная копия куста: $bak" }
+  # ---------- драйверы virtio (DISM работает, пока кусты не загружены) ----------
+  $virtio = Join-Path $PSScriptRoot 'virtio'
+  $virtioOk = $false
+  $swFile0 = Join-Path $win 'Windows\System32\config\SOFTWARE'
+  if ((Test-Path $virtio) -and (Test-Path $swFile0)) {
+    & reg.exe load HKLM\EMGUESTV $swFile0 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+      $cv0 = Get-ItemProperty 'Registry::HKLM\EMGUESTV\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue
+      $build = [int]"0$($cv0.CurrentBuild)"; $itype = "$($cv0.InstallationType)"
+      [gc]::Collect(); [gc]::WaitForPendingFinalizers(); & reg.exe unload HKLM\EMGUESTV | Out-Null
+      $os = if ($itype -eq 'Client') { if ($build -ge 22000) { 'w11' } else { 'w10' } } else { if ($build -ge 26100) { '2k25' } elseif ($build -ge 20348) { '2k22' } else { '2k19' } }
+      $fails = 0
+      foreach ($drv in 'NetKVM', 'viostor', 'Balloon') {
+        $dir = Join-Path $virtio "$drv\$os"
+        $o = & dism.exe /English /Image:$win /Add-Driver /Driver:$dir /Recurse 2>&1
+        if ($LASTEXITCODE -ne 0) { $fails++; Write-Host "virtio $drv ($os): DISM код $LASTEXITCODE — $((@($o) | Select-Object -Last 3) -join ' ')" } else { Write-Host "virtio $drv ($os): установлен" }
+      }
+      # служба balloon: статистика памяти гостя для автоматического размера balloon (как Dynamic Memory Hyper-V)
+      $bdir = Join-Path $win 'Program Files\ElasticMem'
+      New-Item -ItemType Directory -Force $bdir | Out-Null
+      Copy-Item (Join-Path $virtio "Balloon\$os\blnsvr.exe") $bdir -Force
+      $virtioOk = $fails -eq 0
+    }
+  }
+  if (-not (Test-Path $virtio)) { Write-Host 'VIRTIO=absent' } elseif ($virtioOk) { Write-Host 'VIRTIO=ok' } else { Write-Host 'VIRTIO=fail' }
   & reg.exe load $hive $sysFile | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'reg load не удался (диск используется?)' }
   $loaded = $true
   $cur = (Get-ItemProperty "Registry::$hive\Select").Current
   $cs = "Registry::$hive\ControlSet{0:D3}" -f $cur
+  if ($virtioOk) {
+    # viostor — загрузочный (диск virtio-blk), служба BalloonService (blnsvr.exe) — автозапуск от LocalSystem
+    if (Test-Path "$cs\Services\viostor") { Set-ItemProperty "$cs\Services\viostor" -Name Start -Value 0 }
+    $bs = "$cs\Services\BalloonService"
+    if (-not (Test-Path $bs)) { New-Item $bs -Force | Out-Null }
+    Set-ItemProperty $bs -Name Type -Value 0x10 -Type DWord
+    Set-ItemProperty $bs -Name Start -Value 2 -Type DWord
+    Set-ItemProperty $bs -Name ErrorControl -Value 1 -Type DWord
+    Set-ItemProperty $bs -Name ImagePath -Value '"C:\Program Files\ElasticMem\blnsvr.exe"' -Type ExpandString
+    Set-ItemProperty $bs -Name ObjectName -Value 'LocalSystem' -Type String
+    Set-ItemProperty $bs -Name DisplayName -Value 'Balloon Service (ElasticMem)' -Type String
+    Write-Host 'virtio: viostor загрузочный, служба BalloonService включена'
+  }
   foreach ($svc in 'storahci', 'stornvme') {
     $k = "$cs\Services\$svc"
     if (Test-Path $k) {

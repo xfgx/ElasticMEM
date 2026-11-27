@@ -62,6 +62,12 @@ function Finish([string]$why) {
   }
   Say "ИТОГ: $why"
   foreach ($f in @(if ($guestRun) { 'em-pager.log', 'qemu-err.txt', 'qemu-out.txt' }) + 'runs.txt') { $p = Join-Path $Work $f; if (Test-Path $p) { Copy-Item $p $rep } }
+  # QEMU на Windows печатает «MADVISE not available» на каждую страницу balloon (освобождает их пейджер): в отчёт — без них
+  $qerr = Join-Path $rep 'qemu-err.txt'
+  if ((Test-Path $qerr) -and (Get-Item $qerr).Length -gt 1MB) {
+    $n = 0; $keep = Get-Content $qerr | Where-Object { if ($_ -match 'ram_block_discard') { $n++; $false } else { $true } }
+    @($keep) + "($n строк ram_block_discard_range от balloon пропущено)" | Set-Content $qerr -Encoding UTF8
+  }
   $desk = [Environment]::GetFolderPath('Desktop')
   if (-not $desk) { $desk = $env:USERPROFILE }
   New-Item -ItemType Directory -Force $desk | Out-Null
@@ -220,16 +226,27 @@ Say $(if ($View -eq 'app') { "Вид: только окно Edge (RemoteApp), QE
 $irq = 'on'
 $started = $false
 $guestRun = $true
-for ($try = 1; $try -le 2 -and -not $started; $try++) {
-  try {
-    & (Join-Path $PSScriptRoot 'Start-Guest.ps1') -Vhdx $Vhdx -ResetOverlay -Mode $Mode -Firmware $fw -MemoryMiB $MemoryMiB -Irqchip $irq -Headless:($View -eq 'app') 2>&1 | ForEach-Object { Say "$_" }
-    $started = [bool](Get-GuestProcess)
-  } catch { Say "Start-Guest: $($_.Exception.Message)" }
-  if (-not $started) {
-    $err = Get-Content (Join-Path $Work 'qemu-err.txt') -Raw -ErrorAction SilentlyContinue
-    if ($irq -eq 'on' -and "$err" -match 'nested virtualization|kernel-irqchip|irqchip') { Say 'Повтор с -Irqchip off'; $irq = 'off' } else { break }
+# virtio (как синтетические устройства Hyper-V), если Prepare-Disk поставил драйверы в этом запуске; balloon — только
+# с пейджером: QEMU на Windows не умеет отдавать страницы balloon ОС, это делает пейджер (гость их не трогает).
+$virtio = $pd -contains 'VIRTIO=ok'
+$net = if ($virtio) { 'virtio' } else { 'e1000e' }
+$disk = if ($virtio) { 'virtio' } else { 'ahci' }
+$useBalloon = $virtio -and $Mode -eq 'pager'
+Say "Устройства гостя: сеть $net, диск $disk, balloon $(if ($useBalloon) { 'да' } else { 'нет' })$(if (-not $virtio) { ' (драйверы virtio не ставились: ответьте Y на подготовку диска)' })"
+function Start-GuestOnce {
+  $script:started = $false
+  for ($try = 1; $try -le 2 -and -not $script:started; $try++) {
+    try {
+      & (Join-Path $PSScriptRoot 'Start-Guest.ps1') -Vhdx $Vhdx -ResetOverlay -Mode $Mode -Firmware $fw -MemoryMiB $MemoryMiB -Irqchip $script:irq -Headless:($View -eq 'app') -Net $net -Disk $script:disk -Balloon:$useBalloon 2>&1 | ForEach-Object { Say "$_" }
+      $script:started = [bool](Get-GuestProcess)
+    } catch { Say "Start-Guest: $($_.Exception.Message)" }
+    if (-not $script:started) {
+      $err = Get-Content (Join-Path $Work 'qemu-err.txt') -Raw -ErrorAction SilentlyContinue
+      if ($script:irq -eq 'on' -and "$err" -match 'nested virtualization|kernel-irqchip|irqchip') { Say 'Повтор с -Irqchip off'; $script:irq = 'off' } else { break }
+    }
   }
 }
+Start-GuestOnce
 if (-not $started) { Finish 'QEMU не запустился (см. qemu-err.txt в отчёте)' }
 
 # QEMU не завершается, когда останавливает ВМ (в заголовке окна [Stopped]): статус берём по QMP. При остановке —
@@ -253,6 +270,17 @@ Say "Жду загрузки гостя (RDP на 127.0.0.1:13389, до $BootTim
 $t0 = Get-Date
 $booted = $false
 while (((Get-Date) - $t0).TotalMinutes -lt $BootTimeoutMin) {
+  # диск virtio-blk не загрузился за 6 мин (или QEMU завершился) — тот же гость с диском AHCI, сеть остаётся virtio
+  if ($disk -eq 'virtio' -and (((Get-Date) - $t0).TotalMinutes -gt 6 -or -not (Get-GuestProcess))) {
+    Say 'Гость с диском virtio не загрузился — перезапускаю с диском AHCI (сеть virtio остаётся)'
+    [void](Invoke-Qmp 'quit'); Start-Sleep -Seconds 3
+    $q = Get-GuestProcess; if ($q) { Stop-Process -Id $q.Id -Force; Start-Sleep -Seconds 2 }
+    $disk = 'ahci'
+    Start-GuestOnce
+    if (-not $started) { Finish 'QEMU не запустился (см. qemu-err.txt в отчёте)' }
+    $t0 = Get-Date
+    continue
+  }
   if (-not (Get-GuestProcess)) { break }
   Test-GuestStopped 'во время загрузки'
   if (Test-Rdp) { $booted = $true; break }
@@ -287,6 +315,7 @@ $what = if ($Mode -eq 'pager') { 'пейджера' } else { 'гостя без 
 Say "Замер $what $Minutes мин. Пользуйтесь приложениями в госте как обычно."
 $mm = if ($Mode -eq 'pager') { 'track2' } else { 'idle' }
 if ($mm -eq 'track2') {
+  if ($useBalloon) { $env:EM_BALLOON = '1'; $env:EM_BALLOON_MAX_MIB = "$(if ($MemoryMiB) { $MemoryMiB } else { 4096 })"; Say 'Balloon: размер памяти гостя подстраивается под то, что он реально использует (как Dynamic Memory Hyper-V)' }
   & (Join-Path $PSScriptRoot 'Measure.ps1') -Mode track2 -Seconds ($Minutes * 60) 2>&1 | ForEach-Object { Add-Content -Path $log -Value "$_" -Encoding UTF8 }
 } else {
   for ($t = 0; $t -lt $Minutes * 60; $t += 30) {

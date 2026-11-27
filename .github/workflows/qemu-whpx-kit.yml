@@ -13,6 +13,8 @@ permissions:
 env:
   QEMU_SETUP: qemu-w64-setup-20260811.exe
   QEMU_SHA512: 5bcf9eed634e8575a37b74f445af41a2fe4106da512d0c30c368301d4c105037fdfab40a5287367a28a957624cddebbc8c07e16c88ab6634f554cdf3d16bf543
+  VIRTIO_WIN_URL: https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.285-1/virtio-win-0.1.285.iso
+  VIRTIO_WIN_SHA256: e14cf2b94492c3e925f0070ba7fdfedeb2048c91eea9c5a5afb30232a3976331
 jobs:
   kit:
     runs-on: windows-2022
@@ -60,11 +62,35 @@ jobs:
           Get-ChildItem kit/qemu | Measure-Object Length -Sum | ForEach-Object { "kit_qemu_mib=$([int]($_.Sum/1MB))" } | Tee-Object -Append out/qemu-download.txt
           & kit/qemu/qemu-system-x86_64.exe --version | Tee-Object out/qemu-version.txt
           & kit/qemu/qemu-system-x86_64.exe -accel help | Tee-Object -Append out/qemu-version.txt
+      - name: Fetch virtio-win guest drivers (pinned SHA-256) — network, disk, balloon for Windows 10/11 and Server 2019/2022/2025
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri $env:VIRTIO_WIN_URL -OutFile vw.iso
+          $h = (Get-FileHash vw.iso -Algorithm SHA256).Hash.ToLower()
+          "sha256=$h" | Tee-Object out/virtio-download.txt
+          if ($h -ne $env:VIRTIO_WIN_SHA256) { throw "virtio-win ISO hash mismatch" }
+          & "C:\Program Files\7-Zip\7z.exe" x -y -ovw vw.iso NetKVM viostor Balloon virtio-win_license.txt | Out-Null
+          foreach ($d in 'NetKVM', 'viostor', 'Balloon') {
+            foreach ($o in 'w10', 'w11', '2k19', '2k22', '2k25') {
+              $src = "vw\$d\$o\amd64"
+              if (-not (Test-Path $src)) { throw "missing $src" }
+              New-Item -ItemType Directory -Force "kit\virtio\$d\$o" | Out-Null
+              Get-ChildItem $src -File | Where-Object Extension -ne '.pdb' | Copy-Item -Destination "kit\virtio\$d\$o\"
+            }
+          }
+          Copy-Item vw\virtio-win_license.txt kit\virtio\
+          @("virtio-win 0.1.285 (Red Hat / Fedora virtio-win project): $env:VIRTIO_WIN_URL", "SHA-256 $env:VIRTIO_WIN_SHA256",
+            'Unmodified signed drivers NetKVM, viostor, Balloon (amd64). License: virtio-win_license.txt') | Set-Content kit\virtio\SOURCE.txt
+          Get-ChildItem kit\virtio -Recurse -File | Measure-Object Length -Sum | ForEach-Object { "kit_virtio_mib=$([math]::Round($_.Sum/1MB,1)) files=$($_.Count)" } | Tee-Object -Append out/virtio-download.txt
       - name: QEMU starts with the trimmed DLL set (TCG) and loads the proxy from its folder (WHPX)
         shell: pwsh
         run: |
           $q = (Resolve-Path kit/qemu/qemu-system-x86_64.exe).Path
-          $p = Start-Process -FilePath $q -ArgumentList @('-machine', 'q35', '-accel', 'tcg', '-m', '256', '-display', 'none', '-nodefaults', '-serial', 'none') -PassThru -RedirectStandardError out/qemu-tcg-err.txt
+          # те же устройства, что у гостя набора: virtio-net (без ROM), virtio-blk, virtio-balloon
+          fsutil file createnew d.img 1048576 | Out-Null
+          $p = Start-Process -FilePath $q -ArgumentList @('-machine', 'q35,hpet=off', '-accel', 'tcg', '-m', '256', '-display', 'none', '-nodefaults', '-serial', 'none',
+            '-netdev', 'user,id=n0', '-device', 'virtio-net-pci,netdev=n0,romfile=', '-drive', 'if=none,id=d0,format=raw,file=d.img', '-device', 'virtio-blk-pci,drive=d0',
+            '-device', 'virtio-balloon-pci,id=balloon0,deflate-on-oom=on') -PassThru -RedirectStandardError out/qemu-tcg-err.txt
           Start-Sleep -Seconds 10
           $alive = -not $p.HasExited
           if ($alive) { Stop-Process -Id $p.Id -Force }

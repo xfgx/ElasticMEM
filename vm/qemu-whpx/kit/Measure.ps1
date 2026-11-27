@@ -24,12 +24,15 @@ switch ($Mode) {
     Write-Host "Наблюдаю $Seconds с. Пользуйтесь приложением как обычно."
     $t = 0
     # каждые 5 с: жив ли QEMU и работает ли ВМ (QMP) — при падении замер прерывается сразу, а не через $Seconds с
+    $bal = @{ init = $false; minBytes = 1536MB; maxBytes = [int64]"0$env:EM_BALLOON_MAX_MIB" * 1MB }
+    $lastBal = ''
     while ($t -lt $Seconds) {
       Start-Sleep 5; $t += 5
+      if ($env:EM_BALLOON -eq '1' -and $bal.maxBytes -gt 0) { $lastBal = Update-Balloon $bal }
       if (-not (Get-GuestProcess)) { Write-Host "QEMU завершился на $t-й секунде замера"; $out.Add("QEMU exited t=$t"); break }
       $q = Invoke-Qmp 'query-status'
       if ($q -and $q.PSObject.Properties['return'] -and "$($q.return.status)" -notin 'running', 'prelaunch') { Write-Host "ВМ остановлена на $t-й секунде замера (статус $($q.return.status))"; $out.Add("VM stopped t=$t status=$($q.return.status)"); break }
-      if ($t % 30 -eq 0) { $l = Get-Content $log -Tail 1 -ErrorAction SilentlyContinue; Write-Host $l; $out.Add("$l"); $out.Add("SNAP " + ((Get-MemSnapshot "t$t") | ConvertTo-Json -Compress)) }
+      if ($t % 30 -eq 0) { $l = Get-Content $log -Tail 1 -ErrorAction SilentlyContinue; Write-Host $l; $out.Add("$l"); if ($lastBal) { Write-Host $lastBal; $out.Add($lastBal) }; $out.Add("SNAP " + ((Get-MemSnapshot "t$t") | ConvertTo-Json -Compress)) }
     }
     $out.Add('--- журнал пейджера (конец) ---'); Get-Content $log -Tail 5 -ErrorAction SilentlyContinue | ForEach-Object { $out.Add($_) }
     $out.Add('--- журнал пейджера (начало) ---'); Get-Content $log -TotalCount 12 -ErrorAction SilentlyContinue | ForEach-Object { $out.Add($_) }
