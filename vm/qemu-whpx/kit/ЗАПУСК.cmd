@@ -35,7 +35,7 @@ goto end
 :s3
 set /p r=Путь к вашему .rdp (Enter - указать программу): 
 if not "%r%"=="" powershell -NoProfile -ExecutionPolicy Bypass -File Open-App.ps1 -Rdp "%r%" & goto end
-set g=||ElasticMem-Edge
+set "g=||ElasticMem-Edge"
 set /p g=Программа в госте (Enter - Microsoft Edge): 
 powershell -NoProfile -ExecutionPolicy Bypass -File Open-App.ps1 -Program "%g%"
 :end
