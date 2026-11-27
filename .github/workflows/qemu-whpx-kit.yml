@@ -106,6 +106,9 @@ jobs:
           $letter = (Get-Disk -Number $img.Number | Get-Partition | Where-Object DriveLetter | Select-Object -First 1).DriveLetter
           New-Item -ItemType Directory -Force "${letter}:\Windows\System32\config" | Out-Null
           reg.exe save HKLM\SYSTEM "${letter}:\Windows\System32\config\SYSTEM" /y | Out-Null
+          reg.exe save HKLM\SOFTWARE "${letter}:\Windows\System32\config\SOFTWARE" /y | Out-Null
+          New-Item -ItemType Directory -Force "${letter}:\Program Files (x86)\Microsoft\Edge\Application" | Out-Null
+          Set-Content "${letter}:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" 'stub' -Encoding ascii
           Dismount-DiskImage -ImagePath $v | Out-Null
           # «как в чужом госте»: выключить драйвер и RDP в копии куста, затем Prepare-Disk должен всё вернуть
           $img = Mount-DiskImage -ImagePath $v -StorageType VHDX -PassThru | Get-DiskImage
@@ -125,6 +128,13 @@ jobs:
           $deny = (Get-ItemProperty "$cs\Control\Terminal Server").fDenyTSConnections
           $bak = Test-Path "${letter}:\Windows\System32\config\SYSTEM.elasticmem.bak"
           [gc]::Collect(); reg.exe unload HKLM\EMT | Out-Null
+          reg.exe load HKLM\EMTS "${letter}:\Windows\System32\config\SOFTWARE" | Out-Null
+          $al = Get-ItemProperty 'HKLM:\EMTS\Microsoft\Windows NT\CurrentVersion\Terminal Server\TSAppAllowList' -ErrorAction SilentlyContinue
+          $app = Get-ItemProperty 'HKLM:\EMTS\Microsoft\Windows NT\CurrentVersion\Terminal Server\TSAppAllowList\Applications\ElasticMem-Edge' -ErrorAction SilentlyContinue
+          $disabledAllow = $al.fDisabledAllowList; $edgePath = $app.Path
+          [gc]::Collect(); reg.exe unload HKLM\EMTS | Out-Null
+          "verify fDisabledAllowList=$disabledAllow ElasticMem-Edge.Path=$edgePath" | Tee-Object -Append out/prepare-disk.txt
+          if ($disabledAllow -ne 1 -or $edgePath -ne 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe') { throw "Prepare-Disk did not publish Edge for RemoteApp" }
           Dismount-DiskImage -ImagePath $v | Out-Null
           "verify storahci_start=$start fDenyTSConnections=$deny backup=$bak" | Tee-Object -Append out/prepare-disk.txt
           if ($start -ne 0 -or $deny -ne 0 -or -not $bak) { throw "Prepare-Disk did not apply the changes" }

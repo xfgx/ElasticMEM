@@ -69,6 +69,25 @@ try {
     if (-not (Test-Path $pol)) { New-Item $pol -Force | Out-Null }
     Set-ItemProperty $pol -Name fAllowUnlistedRemotePrograms -Value 1 -Type DWord
     Write-Host 'RemoteApp: разрешено окно отдельной программы (fDisabledAllowList=1, fAllowUnlistedRemotePrograms=1)'
+    # Edge как опубликованная программа RemoteApp с псевдонимом ElasticMem-Edge (как в бэкенде Hyper-V 0.27:
+    # remoteapplicationprogram:s:||ElasticMem-Edge). Путь ищется на диске гостя — у разных гостей Edge в разных папках.
+    $edgeRel = @('Program Files (x86)\Microsoft\Edge\Application\msedge.exe', 'Program Files\Microsoft\Edge\Application\msedge.exe') |
+      Where-Object { Test-Path -LiteralPath (Join-Path $win $_) -PathType Leaf } | Select-Object -First 1
+    if ($edgeRel) {
+      $edgeGuest = 'C:\' + $edgeRel
+      $ak = "$k\Applications\ElasticMem-Edge"
+      if (-not (Test-Path $ak)) { New-Item $ak -Force | Out-Null }
+      foreach ($p in @(@('Name', 'Microsoft Edge', 'String'), @('Path', $edgeGuest, 'String'), @('VPath', $edgeGuest, 'String'),
+          @('IconPath', $edgeGuest, 'String'), @('IconIndex', 0, 'DWord'), @('CommandLineSetting', 1, 'DWord'),
+          @('RequiredCommandLine', '', 'String'), @('ShowInTSWA', 0, 'DWord'))) {
+        Set-ItemProperty $ak -Name $p[0] -Value $p[1] -Type $p[2]
+      }
+      Write-Host "EDGE_GUEST_PATH=$edgeGuest"
+      Write-Host 'RemoteApp: Edge опубликован как ElasticMem-Edge'
+    } else {
+      Write-Host 'EDGE_GUEST_PATH='
+      Write-Host 'RemoteApp: Edge на диске гостя не найден (Server Core или Edge не установлен) — окно только Edge недоступно'
+    }
     # Автовход: Windows сам входит в рабочий стол при загрузке. В клиентской Windows один сеанс на пользователя,
     # и RemoteApp подключается к этому уже открытому рабочему столу — окно программы не появляется.
     $wl = "Registry::$swHive\Microsoft\Windows NT\CurrentVersion\Winlogon"

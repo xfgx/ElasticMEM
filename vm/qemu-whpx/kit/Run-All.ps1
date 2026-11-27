@@ -201,6 +201,12 @@ if ($Mode -eq 'pager' -and (Test-Path $st)) {
 }
 
 # ---------- как показывать гостя ----------
+# Edge открывается как опубликованная программа RemoteApp (псевдоним ElasticMem-Edge, путь в госте ищет Prepare-Disk)
+$edgeLine = @($pd | Where-Object { "$_" -like 'EDGE_GUEST_PATH=*' }) | Select-Object -Last 1
+if ($edgeLine -eq 'EDGE_GUEST_PATH=' -and $View -ne 'desktop') {
+  Say 'Edge на диске гостя не найден — окно только Edge недоступно, будет весь рабочий стол.'
+  $View = 'desktop'
+}
 if (-not $View) {
   if ($Rdp) { $View = 'desktop' }
   else {
@@ -208,7 +214,6 @@ if (-not $View) {
     $View = if ($a -match '^\s*2') { 'desktop' } else { 'app' }
   }
 }
-$edge = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
 Say $(if ($View -eq 'app') { "Вид: только окно Edge (RemoteApp), QEMU без своего окна" } else { 'Вид: весь рабочий стол гостя' })
 
 # ---------- запуск ----------
@@ -260,7 +265,8 @@ if (-not $booted) { Say 'RDP не ответил: замеряю всё равн
 # ---------- окно гостя ----------
 if ($Rdp) { & (Join-Path $PSScriptRoot 'Open-App.ps1') -Rdp $Rdp }
 elseif ($booted -and $View -eq 'app') {
-  & (Join-Path $PSScriptRoot 'Open-App.ps1') -Program $edge 2>&1 | ForEach-Object { Say "$_" }
+  if (-not $edgeLine) { Say 'Подготовка диска в этом запуске пропущена: Edge откроется, только если диск уже готовили этим набором.' }
+  & (Join-Path $PSScriptRoot 'Open-App.ps1') -Program '||ElasticMem-Edge' *>&1 | ForEach-Object { Say "$_" }
   Say 'Открываю только окно Edge из гостя. Введите логин и пароль учётной записи гостя; предупреждение о неизвестном издателе подключения — нормально, нажмите «Подключить».'
   $q = Read-Host 'Окно Edge открылось? Если нет, введите n — откроется весь рабочий стол гостя [Y/n]'
   if ($q -match '^[nNнН]') {
