@@ -10,6 +10,7 @@ param([switch]$PreflightOnly, [string]$Vhdx, [string]$Rdp, [int]$Minutes = 10, [
 . (Join-Path $PSScriptRoot 'scripts\Common.ps1')
 $ErrorActionPreference = 'Continue'
 $runStart = Get-Date
+$guestRun = $false
 $stamp = '{0:yyyyMMdd-HHmm}' -f (Get-Date)
 $rep = Join-Path $Work "report-$stamp"
 New-Item -ItemType Directory -Force $rep | Out-Null
@@ -33,10 +34,12 @@ function Test-Rdp([int]$port = 13389) {
   } catch { return $false }
 }
 function Finish([string]$why) {
-  $qe = (Get-Content (Join-Path $Work 'qemu-err.txt') -Raw -ErrorAction SilentlyContinue) + (Get-Content (Join-Path $Work 'qemu-out.txt') -Raw -ErrorAction SilentlyContinue)
+  $qe = if (-not $guestRun) { '' } else { (Get-Content (Join-Path $Work 'qemu-err.txt') -Raw -ErrorAction SilentlyContinue) + (Get-Content (Join-Path $Work 'qemu-out.txt') -Raw -ErrorAction SilentlyContinue) }
+  if ("$qe" -match 'failed to decode instruction|decoder failed') { Say 'ДИАГНОЗ: QEMU получил exit по памяти гостя как MMIO и не смог эмулировать инструкцию (failed to decode instruction) — признак ошибки пейджера' }
   if ("$qe" -match 'Unexpected VP exit code 4') { Say 'ДИАГНОЗ: гость аварийно остановился (тройной сбой после синего экрана). Сравните с запуском без пейджера: Run-All.ps1 -Mode plain' }
   if ("$qe" -match 'Unimplemented handler') { Say 'ДИАГНОЗ: QEMU получил обращение гостя к памяти как к устройству (Unimplemented handler) — признак ошибки пейджера' }
-  $pl = Get-Content (Join-Path $Work 'em-pager.log') -Raw -ErrorAction SilentlyContinue
+  # журнал пейджера и вывод QEMU — только если гость запускался в этом прогоне (иначе это прошлый запуск)
+  $pl = if ($guestRun) { Get-Content (Join-Path $Work 'em-pager.log') -Raw -ErrorAction SilentlyContinue } else { '' }
   if ("$pl" -match 'FATAL') { Say 'ДИАГНОЗ: пейджер остановил QEMU (FATAL в em-pager.log), чтобы не испортить память гостя' }
   foreach ($ln in @(("$pl" -split "`n") | Where-Object { $_ -match '^EM_PAGER (CRASH|PANIC)' } | Select-Object -First 3)) { Say "ДИАГНОЗ: $($ln.Trim())" }
   # Падение процесса QEMU по журналу Windows (событие 1000 «Application Error»): код исключения, модуль, смещение
@@ -52,11 +55,11 @@ function Finish([string]$why) {
   $tl = @(([regex]'EM_PAGER t_s=(\d+) .*? evicted_mib=([\d.]+) .*? evictions=(\d+)').Matches("$pl"))
   if ($tl.Count) {
     $lt = $tl[$tl.Count - 1]
-    if ([int]$lt.Groups[3].Value -eq 0) { Say "ДИАГНОЗ: к $($lt.Groups[1].Value)-й секунде пейджер ещё ничего не вытеснил — сбой не из-за вытеснения памяти" }
+    if ([int]$lt.Groups[3].Value -eq 0) { Say "ДИАГНОЗ: к $($lt.Groups[1].Value)-й секунде пейджер ещё ничего не вытеснил (только снимал отображение холодных кластеров у гостя)" }
     else { Say "Пейджер к $($lt.Groups[1].Value)-й секунде: вытеснено $($lt.Groups[2].Value) МиБ, вытеснений $($lt.Groups[3].Value)" }
   }
   Say "ИТОГ: $why"
-  foreach ($f in 'em-pager.log', 'qemu-err.txt', 'qemu-out.txt', 'runs.txt') { $p = Join-Path $Work $f; if (Test-Path $p) { Copy-Item $p $rep } }
+  foreach ($f in @(if ($guestRun) { 'em-pager.log', 'qemu-err.txt', 'qemu-out.txt' }) + 'runs.txt') { $p = Join-Path $Work $f; if (Test-Path $p) { Copy-Item $p $rep } }
   $desk = [Environment]::GetFolderPath('Desktop')
   if (-not $desk) { $desk = $env:USERPROFILE }
   New-Item -ItemType Directory -Force $desk | Out-Null
@@ -193,6 +196,7 @@ if ($Mode -eq 'pager' -and (Test-Path $st)) {
 # ---------- запуск ----------
 $irq = 'on'
 $started = $false
+$guestRun = $true
 for ($try = 1; $try -le 2 -and -not $started; $try++) {
   try {
     & (Join-Path $PSScriptRoot 'Start-Guest.ps1') -Vhdx $Vhdx -ResetOverlay -Mode $Mode -Firmware $fw -MemoryMiB $MemoryMiB -Irqchip $irq 2>&1 | ForEach-Object { Say "$_" }

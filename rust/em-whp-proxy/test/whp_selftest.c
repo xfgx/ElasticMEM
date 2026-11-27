@@ -58,6 +58,7 @@ static uint32_t seg_win[MAXV][MAXSEG];
 static uint32_t nseg[MAXV];
 static uint64_t other_exits[MAXV], bad_hr[MAXV];
 static uint32_t last_other_reason[MAXV];
+static uint64_t first_mem_gpa = ~0ULL; static uint32_t first_mem_ai; static volatile LONG first_mem_taken;
 static DWORD t_start;
 
 static HRESULT set_loop_regs(UINT32 vp, uint32_t win) {
@@ -92,6 +93,9 @@ static DWORD WINAPI vcpu(void *arg) {
     }
     if (ctx.ExitReason == WHvRunVpExitReasonCanceled) continue;
     other_exits[vp]++; last_other_reason[vp] = ctx.ExitReason;
+    if (ctx.ExitReason == WHvRunVpExitReasonMemoryAccess && InterlockedExchange(&first_mem_taken, 1) == 0) {
+      first_mem_gpa = ctx.MemoryAccess.Gpa; first_mem_ai = ctx.MemoryAccess.AccessInfo.AsUINT32;
+    }
     if (other_exits[vp] > 100) break;
   }
   // последний сегмент мог не завершиться: он не засчитан, ниже это учитывается
@@ -173,5 +177,6 @@ int main(int argc, char **argv) {
   int ok = mism == 0 && other == 0 && badhr == 0 && code_ok && segs_total > 0;
   printf("SELFTEST segments=%llu other_exits=%llu last_other_reason=%u run_failures=%llu mismatched_counters=%llu lost_increments=%llu code_intact=%d verdict=%s\n",
          (unsigned long long)segs_total, (unsigned long long)other, last_other_reason[0], (unsigned long long)badhr, (unsigned long long)mism, (unsigned long long)under, code_ok, ok ? "PASS" : "FAIL");
+  if (first_mem_taken) printf("SELFTEST leaked_memory_exit gpa=0x%llx access_info=0x%x\n", (unsigned long long)first_mem_gpa, first_mem_ai);
   return ok ? 0 : 1;
 }

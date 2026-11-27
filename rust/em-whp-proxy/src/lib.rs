@@ -262,12 +262,12 @@ pub unsafe extern "system" fn WHvRunVirtualProcessor(part: usize, vp: u32, ctx: 
             return r;
         }
         if *(ctx as *const u32) == EXIT_MEMORY_ACCESS {
+            // Любой memory-access exit по RAM пейджера обрабатывается здесь (в том числе без GpaUnmapped):
+            // QEMU принял бы его за MMIO и стал бы эмулировать инструкцию над обычной памятью гостя.
             let ai = *(ctx.add(68) as *const u32);
-            if ai & 4 != 0 {
-                let gpa = *(ctx.add(72) as *const u64);
-                if em_pager_mem_exit(gpa, ai & 3) == 1 {
-                    continue; // наш кластер восстановлен — повторить ту же инструкцию гостя
-                }
+            let gpa = *(ctx.add(72) as *const u64);
+            if em_pager_mem_exit(gpa, ai) == 1 {
+                continue; // наш кластер восстановлен — повторить ту же инструкцию гостя
             }
         }
         return r;

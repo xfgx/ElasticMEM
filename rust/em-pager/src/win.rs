@@ -149,7 +149,12 @@ impl Ops for WinOps {
         match &self.hv {
             Hv::Whp { part, map, .. } => {
                 let fl = WHV_READ | WHV_EXEC | if write { WHV_WRITE } else { 0 };
-                unsafe { map(*part, hva, gpa, len as u64, fl) >= 0 }
+                let hr = unsafe { map(*part, hva, gpa, len as u64, fl) };
+                if hr < 0 {
+                    MAP_FAILS.fetch_add(1, Ordering::Relaxed);
+                    LAST_MAP_HR.store(hr as u32, Ordering::Relaxed);
+                }
+                hr >= 0
             }
             Hv::Sim { mapped, .. } => {
                 // как настоящий WHP: отображение уже отображённого диапазона — ошибка
@@ -167,7 +172,14 @@ impl Ops for WinOps {
     }
     fn unmap(&self, gpa: u64, len: usize) -> bool {
         match &self.hv {
-            Hv::Whp { part, unmap, .. } => unsafe { unmap(*part, gpa, len as u64) >= 0 },
+            Hv::Whp { part, unmap, .. } => {
+                let hr = unsafe { unmap(*part, gpa, len as u64) };
+                if hr < 0 {
+                    UNMAP_FAILS.fetch_add(1, Ordering::Relaxed);
+                    LAST_UNMAP_HR.store(hr as u32, Ordering::Relaxed);
+                }
+                hr >= 0
+            }
             Hv::Sim { .. } => {
                 self.sim_set(gpa, len, false);
                 true
@@ -209,6 +221,13 @@ pub struct Pager {
 }
 
 static PAGER: OnceLock<Pager> = OnceLock::new();
+
+/// Ошибки WHvMapGpaRange/WHvUnmapGpaRange пейджера (в строку журнала) и сколько подробных записей уже сделано.
+static MAP_FAILS: AtomicU64 = AtomicU64::new(0);
+static LAST_MAP_HR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static UNMAP_FAILS: AtomicU64 = AtomicU64::new(0);
+static LAST_UNMAP_HR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static EXIT_NOTES: AtomicU64 = AtomicU64::new(0);
 
 /// Сколько vCPU/VEH-потоков ждут замок пейджера. Замок не честный: компактор, который берёт его тысячи раз
 /// подряд на короткие операции, иначе «перехватывает» его у ждущего vCPU на десятки миллисекунд.
@@ -396,12 +415,25 @@ pub extern "C" fn em_pager_prepare_io(addr: usize, len: usize) {
 thread_local! { static LAST_EXIT: std::cell::Cell<(u64, u32)> = const { std::cell::Cell::new((u64::MAX, 0)) }; }
 
 /// Memory-access exit vCPU. 1 — наш кластер обработан (повторить инструкцию), 0 — не наш (MMIO для VMM).
-pub extern "C" fn em_pager_mem_exit(gpa: u64, _access: u32) -> i32 {
+/// `access_info` — WHV_MEMORY_ACCESS_INFO целиком (биты 0-1 — тип доступа, бит 2 — GpaUnmapped).
+pub extern "C" fn em_pager_mem_exit(gpa: u64, access_info: u32) -> i32 {
     let Some(p) = PAGER.get() else { return 0 };
     let mut t0 = 0i64;
     unsafe { QueryPerformanceCounter(&mut t0) };
     let mut c = lock_urgent(p);
     let Some((ri, cl)) = c.find_gpa(gpa) else { return 0 };
+    if access_info & 4 == 0 {
+        // exit по RAM пейджера, хотя отображение есть (GpaUnmapped=0): обновить отображение кластера и повторить
+        let st = c.ranges[ri].st[cl];
+        if EXIT_NOTES.fetch_add(1, Ordering::Relaxed) < 64 {
+            p.logln(&format!("EM_PAGER exit_mapped gpa={gpa:#x} access_info={access_info:#x} state={st:?}"));
+        }
+        if st == Cl::Resident {
+            let remapped = c.remap_cl(ri, cl, &p.ops);
+            drop(c);
+            return if remapped { exit_retry(p, gpa) } else { p.fail_closed("remap after mapped-gpa exit") };
+        }
+    }
     let was_evicted = c.ranges[ri].st[cl] == Cl::Evicted;
     if was_evicted {
         let wait = p.us_since(t0);
@@ -420,21 +452,41 @@ pub extern "C" fn em_pager_mem_exit(gpa: u64, _access: u32) -> i32 {
                 c.record_restore_us(us);
             }
             drop(c);
-            // страховка от бесконечного цикла exit'ов по одному адресу
-            let looping = LAST_EXIT.with(|l| {
-                let (g, n) = l.get();
-                let n = if g == gpa >> 12 { n + 1 } else { 0 };
-                l.set((gpa >> 12, n));
-                n > 100_000
-            });
-            if looping {
-                p.fail_closed("exit loop on one gpa");
-            }
-            1
+            exit_retry(p, gpa)
         }
-        Ok(false) => 0,
+        Ok(false) => {
+            // отобразить не удалось даже после повторов: в VMM этот exit отдавать нельзя (принял бы за MMIO).
+            // Повторяем инструкцию гостя — следующий exit попробует снова; бесконечный цикл ловит exit_retry.
+            let st = c.ranges[ri].st[cl];
+            drop(c);
+            if EXIT_NOTES.fetch_add(1, Ordering::Relaxed) < 64 {
+                p.logln(&format!(
+                    "EM_PAGER map_failed gpa={gpa:#x} state={st:?} map_fails={} last_map_hr={:#010x} unmap_fails={} last_unmap_hr={:#010x}",
+                    MAP_FAILS.load(Ordering::Relaxed), LAST_MAP_HR.load(Ordering::Relaxed), UNMAP_FAILS.load(Ordering::Relaxed), LAST_UNMAP_HR.load(Ordering::Relaxed)
+                ));
+            }
+            exit_retry(p, gpa)
+        }
         Err(_) => p.fail_closed("exit restore"),
     }
+}
+
+/// Повторить инструкцию гостя (1). Страховка от бесконечного цикла exit'ов по одному адресу.
+fn exit_retry(p: &Pager, gpa: u64) -> i32 {
+    let looping = LAST_EXIT.with(|l| {
+        let (g, n) = l.get();
+        let n = if g == gpa >> 12 { n + 1 } else { 0 };
+        l.set((gpa >> 12, n));
+        n > 100_000
+    });
+    if looping {
+        p.logln(&format!(
+            "EM_PAGER loop gpa={gpa:#x} map_fails={} last_map_hr={:#010x} unmap_fails={} last_unmap_hr={:#010x}",
+            MAP_FAILS.load(Ordering::Relaxed), LAST_MAP_HR.load(Ordering::Relaxed), UNMAP_FAILS.load(Ordering::Relaxed), LAST_UNMAP_HR.load(Ordering::Relaxed)
+        ));
+        p.fail_closed("exit loop on one gpa");
+    }
+    1
 }
 
 // ------------------------------ стенд без WHP ------------------------------
@@ -487,7 +539,7 @@ fn line(p: &Pager) -> String {
         s.zero_pages_evicted, cs.put_dedup, cs.put_delta, cs.put_temporal, cs.put_full, cs.put_incompressible, s.ghost_pages,
         s.probes, s.probe_hits, s.evictions, s.evict_rollbacks, s.exit_restores, s.host_restores, s.io_restores, s.prefetched, s.prefetch_used, s.pf_checks, s.pf_check_hits, s.pf_active, s.pf_vcpu_acc_pct, q(0.5), q(0.99), qw(0.5), qw(0.99),
         cs.crc_failures, cs.segments_released, pv, ws, hold_s.join(",")
-    )
+    ) + &format!(" map_fails={} unmap_fails={}", MAP_FAILS.load(Ordering::Relaxed), UNMAP_FAILS.load(Ordering::Relaxed))
 }
 
 fn compactor() {

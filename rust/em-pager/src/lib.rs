@@ -277,9 +277,31 @@ impl Core {
         (r.gpa + off, (r.hva + off as usize) as *mut u8)
     }
 
+    #[cfg(test)]
+    pub(crate) fn find_gpa_addr(&self, ri: usize, cl: usize) -> u64 {
+        self.cl_addr(ri, cl).0
+    }
+
     fn map_cl(&self, ri: usize, cl: usize, ops: &dyn Ops) -> bool {
         let (g, h) = self.cl_addr(ri, cl);
         ops.map(g, h, self.clb() as usize, true)
+    }
+
+    /// Отобразить кластер гостю, когда гость ждёт его на exit'е. Если WHvMapGpaRange не прошёл (часть диапазона
+    /// осталась отображённой, временная ошибка гипервизора), снять отображение и повторить: exit по RAM пейджера,
+    /// отданный VMM, тот принял бы за MMIO (QEMU эмулирует инструкцию над памятью гостя и падает).
+    pub fn remap_cl(&self, ri: usize, cl: usize, ops: &dyn Ops) -> bool {
+        if self.map_cl(ri, cl, ops) {
+            return true;
+        }
+        let (g, _) = self.cl_addr(ri, cl);
+        for _ in 0..3 {
+            let _ = ops.unmap(g, self.clb() as usize);
+            if self.map_cl(ri, cl, ops) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Вернуть байты Evicted-кластера в память хоста (без отображения гостю). Сначала распаковка с проверкой
@@ -465,7 +487,7 @@ impl Core {
                 Ok(true)
             }
             Cl::Probing => {
-                if !self.map_cl(ri, cl, ops) {
+                if !self.remap_cl(ri, cl, ops) {
                     return Ok(false);
                 }
                 self.ranges[ri].st[cl] = Cl::Resident;
@@ -478,7 +500,7 @@ impl Core {
             }
             Cl::Evicted => {
                 self.restore_with_prefetch(ri, cl, now, stream, ops)?;
-                let ok = self.map_cl(ri, cl, ops);
+                let ok = self.remap_cl(ri, cl, ops);
                 self.st.exit_restores += 1;
                 self.mark_hot(ri, cl, now);
                 Ok(ok)

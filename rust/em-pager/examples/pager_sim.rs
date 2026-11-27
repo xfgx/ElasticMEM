@@ -135,7 +135,7 @@ fn main() {
                     let gpa = gpa0 + (p * PAGE + off) as u64;
                     if !win::sim_is_mapped(gpa) {
                         exits.fetch_add(1, Ordering::Relaxed);
-                        assert_eq!(win::em_pager_mem_exit(gpa, 1), 1, "exit по RAM пейджера должен обрабатываться");
+                        assert_eq!(win::em_pager_mem_exit(gpa, 4 | 1), 1, "exit по RAM пейджера должен обрабатываться");
                     }
                 }
                 let va = (base + p * PAGE + off) as *mut u64;

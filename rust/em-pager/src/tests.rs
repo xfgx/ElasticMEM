@@ -353,3 +353,20 @@ fn io_buffer_is_restored_and_pinned() {
     assert!(!core.begin_probe(0, c0, 6000 + 3_000_000.min(IO_PIN_MS - 1), &sim));
     assert!(core.begin_probe(0, c0, 6000 + IO_PIN_MS + 1, &sim) || core.ranges[0].st[c0] != Cl::Resident);
 }
+
+/// Probing-кластер, у которого WHvMapGpaRange не проходит (часть страниц осталась отображённой): exit всё равно
+/// обрабатывается (снять отображение и отобразить заново), а не уходит в QEMU как MMIO — на настоящем госте
+/// Windows 11 QEMU падал на «failed to decode instruction» сразу после начала проб.
+#[test]
+fn exit_on_probing_cluster_with_failing_map_is_handled() {
+    let (_mem, sim, mut core) = setup(2, false);
+    let (mut probe, mut idle) = (Vec::new(), Vec::new());
+    core.candidates(0, 1000, 1000, &mut probe, &mut idle);
+    let (ri, cl) = probe[0];
+    assert!(core.begin_probe(ri, cl, 0, &sim));
+    let p = sim.pg(core.find_gpa_addr(ri, cl));
+    sim.mapped.borrow_mut()[p + 3] = true; // одна страница кластера «осталась» отображённой
+    assert!(core.on_exit(ri, cl, 10, 0, &sim).unwrap(), "exit должен быть обработан");
+    assert_eq!(core.ranges[ri].st[cl], Cl::Resident);
+    assert!(sim.mapped.borrow()[p..p + core.cfg.cluster_pages].iter().all(|&m| m), "кластер отображён целиком");
+}
