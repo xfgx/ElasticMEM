@@ -62,6 +62,8 @@ try {
   if (Test-Path $swFile) { & reg.exe load $swHive $swFile 2>$null | Out-Null }
   if ((Test-Path $swFile) -and $LASTEXITCODE -eq 0) {
     $swLoaded = $true
+    $cv = Get-ItemProperty "Registry::$swHive\Microsoft\Windows NT\CurrentVersion" -ErrorAction SilentlyContinue
+    Write-Host "Гость: $($cv.ProductName) $($cv.DisplayVersion) (сборка $($cv.CurrentBuild)), тип установки: $($cv.InstallationType)"
     $k = "Registry::$swHive\Microsoft\Windows NT\CurrentVersion\Terminal Server\TSAppAllowList"
     if (-not (Test-Path $k)) { New-Item $k -Force | Out-Null }
     Set-ItemProperty $k -Name fDisabledAllowList -Value 1 -Type DWord

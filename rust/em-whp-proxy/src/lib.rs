@@ -14,7 +14,7 @@
 #![allow(non_snake_case)]
 #![cfg(windows)]
 
-use em_pager::win::{em_pager_add_ram, em_pager_del_ram, em_pager_init, em_pager_mem_exit, em_pager_prepare_io};
+use em_pager::win::{em_pager_add_ram, em_pager_del_ram, em_pager_init, em_pager_mem_exit, em_pager_prepare_io, em_pager_vcpu_enter, em_pager_vcpu_leave};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 extern "system" {
@@ -257,7 +257,14 @@ pub unsafe extern "system" fn WHvRunVirtualProcessor(part: usize, vp: u32, ctx: 
     }
     let run: RunFn = std::mem::transmute(p);
     loop {
+        let inited = INITED.load(Ordering::Acquire);
+        if inited {
+            em_pager_vcpu_enter();
+        }
         let r = run(part, vp, ctx, size);
+        if inited {
+            em_pager_vcpu_leave(); // до любого кода VMM: дождаться конца идущего восстановления
+        }
         if r < 0 || !INITED.load(Ordering::Acquire) || ctx.is_null() || size < 80 {
             return r;
         }

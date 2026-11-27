@@ -11,7 +11,7 @@ param(
   [ValidateSet('uefi', 'bios')][string]$Firmware = 'uefi',
   [ValidateSet('xpress', 'lz4', 'auto')][string]$Codec = 'xpress',
   [int]$Cluster = 16,
-  [int]$IdleMs = 10000,
+  [int]$IdleMs = 30000,
   [int]$TargetHits = 5,
   [int]$StartDelayS = 90,
   [switch]$Ghost,

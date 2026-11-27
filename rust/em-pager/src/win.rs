@@ -55,8 +55,61 @@ struct Frozen {
     handles: Vec<isize>,
 }
 
+// ---------- vCPU в госте не останавливаются при восстановлении ----------
+// Раньше freeze() останавливал ВСЕ потоки, включая vCPU внутри WHvRunVirtualProcessor: каждая остановка выбивала
+// их из гостя, и при ~100 восстановлениях в секунду гость целиком стоял ~20 % времени (Edge «зависал»).
+// vCPU, который сейчас исполняет гостя, к памяти хоста не обращается: кластер, который восстанавливается, у гостя
+// не отображён. Опасен только его выход в код VMM — поэтому на выходе из WHvRunVirtualProcessor поток ждёт, пока
+// идёт восстановление (протокол Деккера: восстановитель пишет RESTORING и читает in_guest, vCPU пишет in_guest и
+// читает RESTORING; при SeqCst хотя бы один видит запись другого).
+const VCPU_SLOTS: usize = 64;
+static VCPU_TID: [AtomicU64; VCPU_SLOTS] = [const { AtomicU64::new(0) }; VCPU_SLOTS];
+static VCPU_IN_GUEST: [AtomicBool; VCPU_SLOTS] = [const { AtomicBool::new(false) }; VCPU_SLOTS];
+static RESTORING: AtomicBool = AtomicBool::new(false);
+thread_local! { static VCPU_SLOT: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) }; }
+
+fn vcpu_slot() -> Option<usize> {
+    let s = VCPU_SLOT.with(|s| s.get());
+    if s != usize::MAX {
+        return (s < VCPU_SLOTS).then_some(s);
+    }
+    let tid = unsafe { GetCurrentThreadId() } as u64;
+    for i in 0..VCPU_SLOTS {
+        if VCPU_TID[i].compare_exchange(0, tid, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+            VCPU_SLOT.with(|s| s.set(i));
+            return Some(i);
+        }
+    }
+    VCPU_SLOT.with(|s| s.set(VCPU_SLOTS)); // мест нет: этот поток останавливается как обычный
+    None
+}
+
+/// Перед WHvRunVirtualProcessor: поток исполняет гостя, останавливать его при восстановлении не нужно.
+pub extern "C" fn em_pager_vcpu_enter() {
+    if let Some(i) = vcpu_slot() {
+        VCPU_IN_GUEST[i].store(true, Ordering::SeqCst);
+    }
+}
+
+/// После WHvRunVirtualProcessor, до любого кода VMM: дождаться конца идущего восстановления.
+pub extern "C" fn em_pager_vcpu_leave() {
+    if let Some(i) = vcpu_slot() {
+        VCPU_IN_GUEST[i].store(false, Ordering::SeqCst);
+        let mut n = 0u32;
+        while RESTORING.load(Ordering::SeqCst) {
+            n += 1;
+            if n < 256 { std::hint::spin_loop() } else { std::thread::yield_now() }
+        }
+    }
+}
+
+fn in_guest(tid: u32) -> bool {
+    (0..VCPU_SLOTS).any(|i| VCPU_TID[i].load(Ordering::SeqCst) == tid as u64 && VCPU_IN_GUEST[i].load(Ordering::SeqCst))
+}
+
 impl Frozen {
     fn freeze(&mut self) {
+        RESTORING.store(true, Ordering::SeqCst);
         const ACCESS: u32 = 0x0002 | 0x0008 | 0x0800; // SUSPEND_RESUME | GET_CONTEXT | QUERY_LIMITED_INFORMATION
         let me = unsafe { GetCurrentThreadId() };
         let mut cur: isize = 0;
@@ -70,7 +123,8 @@ impl Frozen {
                 break;
             }
             cur = next;
-            if unsafe { GetThreadId(next) } == me || self.handles.len() == self.handles.capacity() {
+            let tid = unsafe { GetThreadId(next) };
+            if tid == me || self.handles.len() == self.handles.capacity() || in_guest(tid) {
                 continue;
             }
             if unsafe { SuspendThread(next) } != u32::MAX {
@@ -90,6 +144,7 @@ impl Frozen {
             }
         }
         self.handles.clear();
+        RESTORING.store(false, Ordering::SeqCst);
     }
 }
 
@@ -632,7 +687,8 @@ fn compactor() {
         hits_prev = hits;
         if probed_prev > 0 {
             let ratio = (dh / probed_prev as f64).max(0.005);
-            budget = (0.5 * budget + 0.5 * (target / ratio)).clamp(64.0, 65536.0);
+            // нижняя граница 8 проб за проход: при 64 горячий гость (Edge) получал сотни лишних exit'ов в секунду
+            budget = (0.5 * budget + 0.5 * (target / ratio)).clamp(8.0, 65536.0);
         }
         probed_prev = n;
         if now >= last_maint + 1000 {
