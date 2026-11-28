@@ -32,6 +32,7 @@ jobs:
           mkdir -p out
           SRC=$PWD/qemu-src OUT=$PWD/elasticvm bash vm/elasticvm/build.sh 2>&1 | tee out/build.txt | grep -v '^\[' || true
           test -f elasticvm/qemu-system-x86_64.exe
+          objdump -p elasticvm/qemu-system-x86_64.exe | grep -E 'Subsystem|DLL Name' > out/imports.txt || true
           ls -la elasticvm | tee out/files.txt
           cp elasticvm/SOURCE.txt out/
       - name: Build proxy (WinHvPlatform.dll with em-pager)
@@ -58,8 +59,9 @@ jobs:
             "$tag exited=$done" | Tee-Object -Append out/smoke.txt | Out-Host
             (Get-Content "out/$tag-out.txt", "out/$tag-err.txt" -Raw -ErrorAction SilentlyContinue) -join ''
           }
-          & "$env:MSYS2_LOCATION\ucrt64\bin\objdump.exe" -p $q | Select-String 'Subsystem|DLL Name' | ForEach-Object { "$_".Trim() } | Tee-Object out/imports.txt | Out-Null
-          & elasticvm/qemu-img.exe --version 2>&1 | Tee-Object out/qemu-img-version.txt
+          $qq = $q; $q = (Resolve-Path elasticvm/qemu-img.exe).Path
+          Invoke-Timed @('--version') 'qemu-img-version' | Tee-Object out/qemu-img-version.txt
+          $q = $qq
           $v = Invoke-Timed @('--version') 'version'
           $v | Tee-Object out/version.txt
           if ($v -notmatch 'ElasticVM') { throw "not an ElasticVM build" }
