@@ -40,14 +40,24 @@ jobs:
           cargo build --release --manifest-path rust/Cargo.toml -p em-whp-proxy; if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
       - name: Smoke tests
         shell: pwsh
+        timeout-minutes: 10
         run: |
           $q = (Resolve-Path elasticvm/qemu-system-x86_64.exe).Path
-          & $q --version | Tee-Object out/version.txt
-          if (-not (Select-String -Path out/version.txt -Pattern 'ElasticVM' -Quiet)) { throw "not an ElasticVM build" }
-          & $q -accel help | Tee-Object -Append out/version.txt
-          # свойство doorbell принимается (WHPX на раннере не стартует — ошибка должна быть про гипервизор, не про свойство)
-          $e = & $q -machine none -accel whpx,doorbell=off -display none 2>&1 | Out-String
-          "doorbell_probe: $e" | Tee-Object out/doorbell-prop.txt
+          # любой запуск QEMU — с ограничением времени: на раннере WHPX может и проинициализироваться, и тогда QEMU не выходит
+          function Invoke-Timed([string[]]$a, [string]$tag, [int]$sec = 30) {
+            $p = Start-Process -FilePath $q -ArgumentList $a -PassThru -NoNewWindow -RedirectStandardOutput "out/$tag-out.txt" -RedirectStandardError "out/$tag-err.txt"
+            $done = $p.WaitForExit($sec * 1000)
+            if (-not $done) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+            "$tag exited=$done" | Tee-Object -Append out/smoke.txt | Out-Host
+            (Get-Content "out/$tag-out.txt", "out/$tag-err.txt" -Raw -ErrorAction SilentlyContinue) -join ''
+          }
+          $v = Invoke-Timed @('--version') 'version'
+          $v | Tee-Object out/version.txt
+          if ($v -notmatch 'ElasticVM') { throw "not an ElasticVM build" }
+          Invoke-Timed @('-accel', 'help') 'accel-help' | Tee-Object -Append out/version.txt
+          # свойство doorbell принимается: ошибка, если есть, — про гипервизор раннера, а не про свойство
+          $e = Invoke-Timed @('-machine', 'q35', '-accel', 'whpx,doorbell=off', '-m', '256', '-display', 'none', '-nodefaults') 'doorbell-prop'
+          "doorbell_probe: $e" | Tee-Object -Append out/smoke.txt
           if ($e -match "doorbell") { throw "accel property doorbell rejected" }
           fsutil file createnew d.img 1048576 | Out-Null
           $p = Start-Process -FilePath $q -PassThru -RedirectStandardError out/tcg-err.txt -ArgumentList @('-machine', 'q35,hpet=off', '-accel', 'tcg',
@@ -59,13 +69,13 @@ jobs:
           Start-Sleep -Seconds 15
           $alive = -not $p.HasExited
           if ($alive) { Stop-Process -Id $p.Id -Force }
-          "tcg_alive_after_15s=$alive" | Tee-Object out/smoke.txt
+          "tcg_alive_after_15s=$alive" | Tee-Object -Append out/smoke.txt
           if (-not $alive) { Get-Content out/tcg-err.txt; throw "ElasticVM QEMU did not start under TCG" }
           & elasticvm/qemu-img.exe --version | Tee-Object -Append out/smoke.txt
           Copy-Item rust/target/release/WinHvPlatform.dll elasticvm/
           $env:EM_WHP_PROXY_LOG = "$PWD\out\proxy-load.txt"; $env:EM_PAGER = "1"
-          & $q -machine q35 -accel whpx -m 256 -display none -nodefaults 2>&1 | Tee-Object -Append out/smoke.txt
-          Remove-Item elasticvm/WinHvPlatform.dll
+          Invoke-Timed @('-machine', 'q35', '-accel', 'whpx', '-m', '256', '-display', 'none', '-nodefaults') 'whpx-proxy' | Tee-Object -Append out/smoke.txt
+          Remove-Item elasticvm/WinHvPlatform.dll -ErrorAction SilentlyContinue
           if (-not (Select-String -Path out/proxy-load.txt -Pattern 'EM_WHP_PROXY loaded' -Quiet)) { throw "ElasticVM did not load the proxy from its folder" }
           $global:LASTEXITCODE = 0
       - name: Package and publish
