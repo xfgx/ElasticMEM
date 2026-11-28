@@ -1,0 +1,117 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ElasticVM <noreply@anthropic.com>
+Date: Sat, 28 Nov 2026 08:56:02 +0000
+Subject: [PATCH] whpx: VM exit statistics by reason (ELASTICVM_STATS_LOG)
+
+Count every WHvRunVirtualProcessor exit by reason and, when
+ELASTICVM_STATS_LOG names a file, append one line every 5 s:
+ELASTICVM t_s=.. exits=.. mmio=.. pio=.. irqwin=.. eoi=.. halt=..
+canceled=.. msr=.. cpuid=.. exception=.. other=.. doorbells=N
+hyperv=0|1 irqchip=0|1
+
+This is the measurement for the ElasticVM goal of Hyper-V-like exit
+rates: it shows directly whether virtio kicks left the mmio column
+once doorbells are registered.
+---
+ target/i386/whpx/whpx-all.c | 78 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 78 insertions(+)
+
+diff --git a/target/i386/whpx/whpx-all.c b/target/i386/whpx/whpx-all.c
+index 113f79a..682ee4a 100644
+--- a/target/i386/whpx/whpx-all.c
++++ b/target/i386/whpx/whpx-all.c
+@@ -2198,6 +2198,83 @@ static void whpx_inject_exceptions(CPUState* cpu)
+     }
+ }
+ 
++/*
++ * ElasticVM: VM exit statistics. Every exit is a trip out of the guest; the
++ * point of ElasticVM is to make them rare (doorbells, virtio, in-kernel APIC)
++ * the way Hyper-V's own worker does. ELASTICVM_STATS_LOG=<file> appends one
++ * line every 5 s with counters by exit reason since start.
++ */
++enum {
++    EVM_EXIT_MMIO, EVM_EXIT_PIO, EVM_EXIT_IRQWIN, EVM_EXIT_EOI, EVM_EXIT_HALT,
++    EVM_EXIT_CANCELED, EVM_EXIT_MSR, EVM_EXIT_CPUID, EVM_EXIT_EXCEPTION,
++    EVM_EXIT_OTHER, EVM_EXIT_N
++};
++static const char *const evm_exit_names[EVM_EXIT_N] = {
++    "mmio", "pio", "irqwin", "eoi", "halt", "canceled", "msr", "cpuid",
++    "exception", "other"
++};
++static uint64_t evm_exits[EVM_EXIT_N];
++static int64_t evm_stats_next_ns;
++static int64_t evm_stats_start_ns;
++static const char *evm_stats_path;
++static bool evm_stats_checked;
++
++static void evm_stats_exit(WHV_RUN_VP_EXIT_REASON reason)
++{
++    int k;
++    int64_t now, next;
++
++    if (!evm_stats_checked) {
++        evm_stats_path = getenv("ELASTICVM_STATS_LOG");
++        evm_stats_start_ns = get_clock_realtime();
++        qatomic_set(&evm_stats_next_ns, evm_stats_start_ns + 5 * NANOSECONDS_PER_SECOND);
++        qatomic_set(&evm_stats_checked, true);
++    }
++    if (!evm_stats_path) {
++        return;
++    }
++    switch (reason) {
++    case WHvRunVpExitReasonMemoryAccess: k = EVM_EXIT_MMIO; break;
++    case WHvRunVpExitReasonX64IoPortAccess: k = EVM_EXIT_PIO; break;
++    case WHvRunVpExitReasonX64InterruptWindow: k = EVM_EXIT_IRQWIN; break;
++    case WHvRunVpExitReasonX64ApicEoi: k = EVM_EXIT_EOI; break;
++    case WHvRunVpExitReasonX64Halt: k = EVM_EXIT_HALT; break;
++    case WHvRunVpExitReasonCanceled: k = EVM_EXIT_CANCELED; break;
++    case WHvRunVpExitReasonX64MsrAccess: k = EVM_EXIT_MSR; break;
++    case WHvRunVpExitReasonX64Cpuid: k = EVM_EXIT_CPUID; break;
++    case WHvRunVpExitReasonException: k = EVM_EXIT_EXCEPTION; break;
++    default: k = EVM_EXIT_OTHER; break;
++    }
++    qatomic_inc(&evm_exits[k]);
++
++    now = get_clock_realtime();
++    next = qatomic_read(&evm_stats_next_ns);
++    if (now >= next && qatomic_cmpxchg(&evm_stats_next_ns, next,
++                                       now + 5 * NANOSECONDS_PER_SECOND) == next) {
++        FILE *f = fopen(evm_stats_path, "a");
++        uint64_t total = 0;
++        int i;
++
++        if (!f) {
++            return;
++        }
++        for (i = 0; i < EVM_EXIT_N; i++) {
++            total += qatomic_read(&evm_exits[i]);
++        }
++        fprintf(f, "ELASTICVM t_s=%" PRId64 " exits=%" PRIu64,
++                (now - evm_stats_start_ns) / NANOSECONDS_PER_SECOND, total);
++        for (i = 0; i < EVM_EXIT_N; i++) {
++            fprintf(f, " %s=%" PRIu64, evm_exit_names[i],
++                    qatomic_read(&evm_exits[i]));
++        }
++        fprintf(f, " doorbells=%u hyperv=%d irqchip=%d\n",
++                whpx_global.doorbells_active,
++                whpx_global.hyperv_enlightenments_enabled,
++                whpx_irqchip_in_kernel());
++        fclose(f);
++    }
++}
++
+ int whpx_vcpu_run(CPUState *cpu)
+ {
+     HRESULT hr;
+@@ -2312,6 +2389,7 @@ int whpx_vcpu_run(CPUState *cpu)
+         }
+ 
+         whpx_vcpu_post_run(cpu);
++        evm_stats_exit(vcpu->exit_ctx.ExitReason);
+ 
+         switch (vcpu->exit_ctx.ExitReason) {
+         case WHvRunVpExitReasonMemoryAccess:
+-- 
+2.43.0
+

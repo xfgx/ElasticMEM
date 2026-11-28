@@ -1,0 +1,196 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ElasticVM <noreply@anthropic.com>
+Date: Sat, 28 Nov 2026 08:51:26 +0000
+Subject: [PATCH] whpx: ioeventfd on WHP doorbells (virtio kicks without a VM
+ exit to QEMU)
+
+Register every ioeventfd of address_space_memory as a WHP partition
+doorbell (WHvRegisterPartitionDoorbellEvent). The hypervisor completes
+the guest write and signals the EventNotifier handle itself, the vCPU
+stays in the guest. Without it each virtqueue notify is a memory-access
+exit, instruction decode and emulation on the vCPU thread.
+
+Optional: missing exports or a failed registration keep the existing
+software path (memory_region_dispatch_write_eventfds). -accel
+whpx,doorbell=off disables it.
+---
+ accel/whpx/whpx-common.c       | 98 ++++++++++++++++++++++++++++++++++
+ include/system/whpx-internal.h | 11 ++++
+ 2 files changed, 109 insertions(+)
+
+diff --git a/accel/whpx/whpx-common.c b/accel/whpx/whpx-common.c
+index 247e12d..8818735 100644
+--- a/accel/whpx/whpx-common.c
++++ b/accel/whpx/whpx-common.c
+@@ -17,6 +17,7 @@
+ #include "system/cpus.h"
+ #include "system/runstate.h"
+ #include "qemu/main-loop.h"
++#include "qemu/event_notifier.h"
+ #include "hw/core/boards.h"
+ #include "hw/intc/ioapic.h"
+ #include "qemu/error-report.h"
+@@ -364,6 +365,86 @@ static void whpx_log_sync(MemoryListener *listener,
+     memory_region_set_dirty(mr, 0, int128_get64(section->size));
+ }
+ 
++/*
++ * ElasticVM: ioeventfd on WHP doorbells.
++ *
++ * Without this, every virtqueue kick (a guest write to the virtio-pci notify
++ * BAR) is a memory-access exit: the vCPU thread leaves the guest, QEMU decodes
++ * and emulates the instruction, and only then signals the event notifier.
++ * A registered doorbell makes the hypervisor complete the write and signal the
++ * event itself; the vCPU never leaves the guest, the iothread wakes up.
++ * This is what Hyper-V VMBus channels get from the hypervisor for free.
++ *
++ * If the doorbell cannot be registered, nothing is lost: memory core keeps the
++ * software path (memory_region_dispatch_write_eventfds) for writes that do
++ * reach QEMU.
++ */
++static bool whpx_doorbell_match(MemoryRegionSection *section, bool match_data,
++                                uint64_t data, WHV_DOORBELL_MATCH_DATA *md)
++{
++    uint64_t size = int128_get64(section->size);
++
++    memset(md, 0, sizeof(*md));
++    md->GuestAddress = section->offset_within_address_space;
++    if (size) {
++        if (size != 1 && size != 2 && size != 4 && size != 8) {
++            return false;
++        }
++        md->Length = size;
++        md->MatchOnLength = 1;
++    }
++    if (match_data) {
++        md->Value = data;
++        md->MatchOnValue = 1;
++    }
++    return true;
++}
++
++static void whpx_eventfd_add(MemoryListener *listener,
++                             MemoryRegionSection *section,
++                             bool match_data, uint64_t data, EventNotifier *e)
++{
++    struct whpx_state *whpx = &whpx_global;
++    WHV_DOORBELL_MATCH_DATA md;
++    HRESULT hr;
++
++    if (!whpx->doorbells_allowed ||
++        !whp_dispatch.WHvRegisterPartitionDoorbellEvent ||
++        !whpx_doorbell_match(section, match_data, data, &md)) {
++        return;
++    }
++    hr = whp_dispatch.WHvRegisterPartitionDoorbellEvent(
++        whpx->partition, &md, event_notifier_get_handle(e));
++    if (FAILED(hr)) {
++        if (!whpx->doorbell_warned) {
++            whpx->doorbell_warned = true;
++            warn_report("WHPX: doorbell at 0x%" PRIx64 " not registered,"
++                        " hr=%08lx; ioeventfd stays in QEMU",
++                        (uint64_t)md.GuestAddress, hr);
++        }
++        return;
++    }
++    whpx->doorbells_active++;
++}
++
++static void whpx_eventfd_del(MemoryListener *listener,
++                             MemoryRegionSection *section,
++                             bool match_data, uint64_t data, EventNotifier *e)
++{
++    struct whpx_state *whpx = &whpx_global;
++    WHV_DOORBELL_MATCH_DATA md;
++
++    if (!whpx->doorbells_allowed ||
++        !whp_dispatch.WHvUnregisterPartitionDoorbellEvent ||
++        !whpx_doorbell_match(section, match_data, data, &md)) {
++        return;
++    }
++    if (SUCCEEDED(whp_dispatch.WHvUnregisterPartitionDoorbellEvent(
++            whpx->partition, &md)) && whpx->doorbells_active) {
++        whpx->doorbells_active--;
++    }
++}
++
+ static MemoryListener whpx_memory_listener = {
+     .name = "whpx",
+     .begin = whpx_transaction_begin,
+@@ -371,6 +452,8 @@ static MemoryListener whpx_memory_listener = {
+     .region_add = whpx_region_add,
+     .region_del = whpx_region_del,
+     .log_sync = whpx_log_sync,
++    .eventfd_add = whpx_eventfd_add,
++    .eventfd_del = whpx_eventfd_del,
+     .priority = MEMORY_LISTENER_PRIORITY_ACCEL,
+ };
+ 
+@@ -505,6 +588,16 @@ static void whpx_set_hyperv(Object *obj, Visitor *v,
+     }
+ }
+ 
++static bool whpx_get_doorbell(Object *obj, Error **errp)
++{
++    return whpx_global.doorbells_allowed;
++}
++
++static void whpx_set_doorbell(Object *obj, bool value, Error **errp)
++{
++    whpx_global.doorbells_allowed = value;
++}
++
+ static void whpx_cpu_accel_class_init(ObjectClass *oc, const void *data)
+ {
+     AccelCPUClass *acc = ACCEL_CPU_CLASS(oc);
+@@ -538,6 +631,10 @@ static void whpx_accel_class_init(ObjectClass *oc, const void *data)
+         NULL, NULL);
+     object_class_property_set_description(oc, "hyperv",
+         "Configure Hyper-V enlightenments");
++    object_class_property_add_bool(oc, "doorbell",
++        whpx_get_doorbell, whpx_set_doorbell);
++    object_class_property_set_description(oc, "doorbell",
++        "ElasticVM: handle ioeventfd (virtio kicks) as WHP doorbells");
+ 
+     whpx_arch_accel_class_init(oc);
+ }
+@@ -557,6 +654,7 @@ static void whpx_accel_instance_init(Object *obj)
+     whpx->ignore_unknown_msr = true;
+     whpx->intercept_msr_gp = false;
+     whpx->separate_security_domain = true;
++    whpx->doorbells_allowed = true;
+ }
+ 
+ static const TypeInfo whpx_accel_type = {
+diff --git a/include/system/whpx-internal.h b/include/system/whpx-internal.h
+index c295c5a..74c642b 100644
+--- a/include/system/whpx-internal.h
++++ b/include/system/whpx-internal.h
+@@ -51,6 +51,11 @@ struct whpx_state {
+ 
+     bool ignore_unknown_msr;
+     bool intercept_msr_gp;
++
++    /* ElasticVM: ioeventfd as WHP doorbells (guest write -> event, no VM exit to QEMU) */
++    bool doorbells_allowed;
++    bool doorbell_warned;
++    uint32_t doorbells_active;
+ };
+ 
+ extern struct whpx_state whpx_global;
+@@ -102,6 +107,12 @@ void whpx_apic_get(APICCommonState *s);
+          UINT32 StateSize)) \
+   X(HRESULT, WHvResetPartition, \
+         (WHV_PARTITION_HANDLE Partition)) \
++  X(HRESULT, WHvRegisterPartitionDoorbellEvent, \
++        (WHV_PARTITION_HANDLE Partition, \
++         const WHV_DOORBELL_MATCH_DATA *MatchData, HANDLE EventHandle)) \
++  X(HRESULT, WHvUnregisterPartitionDoorbellEvent, \
++        (WHV_PARTITION_HANDLE Partition, \
++         const WHV_DOORBELL_MATCH_DATA *MatchData)) \
+   X(HRESULT, WHvGetVirtualProcessorXsaveState, \
+         (WHV_PARTITION_HANDLE Partition, UINT32 VpIndex, \
+         PVOID Buffer, \
+-- 
+2.43.0
+

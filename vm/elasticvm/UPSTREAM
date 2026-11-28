@@ -1,0 +1,4 @@
+# Закреплённый upstream QEMU, на который накладывается очередь patches/*.patch
+QEMU_URL=https://gitlab.com/qemu-project/qemu.git
+QEMU_TAG=v11.1.3
+QEMU_COMMIT=005c61c0ef6f6ae615283440b4bb7be51b2c6ddd

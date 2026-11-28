@@ -1,8 +1,14 @@
 ﻿# Общие функции набора ElasticMem QEMU/WHPX.
 $ErrorActionPreference = 'Stop'
 $Kit = Split-Path -Parent $PSScriptRoot
-$Qemu = Join-Path $Kit 'qemu\qemu-system-x86_64.exe'
-$QemuImg = Join-Path $Kit 'qemu\qemu-img.exe'
+# Движок: ElasticVM (наша сборка QEMU из исходников + патчи vm/elasticvm, папка elasticvm\ набора), если она есть,
+# иначе немодифицированный QEMU (папка qemu\). EM_ENGINE=stock — принудительно немодифицированный.
+$Engine = if ($env:EM_ENGINE -ne 'stock' -and (Test-Path (Join-Path $Kit 'elasticvm\qemu-system-x86_64.exe'))) { 'elasticvm' } else { 'stock' }
+$QemuDir = Join-Path $Kit $(if ($Engine -eq 'elasticvm') { 'elasticvm' } else { 'qemu' })
+$Qemu = Join-Path $QemuDir 'qemu-system-x86_64.exe'
+$QemuImg = Join-Path $QemuDir 'qemu-img.exe'
+# прошивки и ROM: share\ рядом с выбранным QEMU, иначе из немодифицированного комплекта
+$QemuShare = if (Test-Path (Join-Path $QemuDir 'share\edk2-x86_64-code.fd')) { Join-Path $QemuDir 'share' } else { Join-Path $Kit 'qemu\share' }
 $Proxy = Join-Path $Kit 'WinHvPlatform.dll'
 $Work = Join-Path $env:LOCALAPPDATA 'ElasticMem\qemu-guest'
 New-Item -ItemType Directory -Force $Work | Out-Null

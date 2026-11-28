@@ -1,0 +1,14 @@
+qemu-img-version exited=True
+version exited=True
+accel-help exited=True
+doorbell-prop exited=True
+doorbell_probe: D:\a\ElasticMEM\ElasticMEM\elasticvm\qemu-system-x86_64.exe: -accel whpx,doorbell=off: WHPX: Failed to enable nested virtualization, hr=80370302
+D:\a\ElasticMEM\ElasticMEM\elasticvm\qemu-system-x86_64.exe: -accel whpx,doorbell=off: failed to initialize whpx: Invalid argument
+
+tcg_alive_after_15s=True
+qemu-img version 11.1.3 (ElasticVM-864a886)
+Copyright (c) 2003-2026 Fabrice Bellard and the QEMU Project developers
+whpx-proxy exited=True
+D:\a\ElasticMEM\ElasticMEM\elasticvm\qemu-system-x86_64.exe: -accel whpx: WHPX: Failed to enable nested virtualization, hr=80370302
+D:\a\ElasticMEM\ElasticMEM\elasticvm\qemu-system-x86_64.exe: -accel whpx: failed to initialize whpx: Invalid argument
+

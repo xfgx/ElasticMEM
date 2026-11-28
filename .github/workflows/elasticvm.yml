@@ -1,0 +1,125 @@
+name: elasticvm
+# ElasticVM: своя сборка QEMU для Windows из исходников upstream (vm/elasticvm/UPSTREAM) + очередь патчей
+# vm/elasticvm/patches. Сборка в MSYS2 UCRT64, затем дымовые проверки: версия, свойство -accel whpx,doorbell,
+# старт TCG с устройствами набора (virtio-net/blk/balloon), прокси WinHvPlatform.dll грузится из папки сборки.
+# На раннерах нет вложенной виртуализации — гость с WHPX здесь не запускается (это делает набор на ПК).
+# Результат публикуется как prerelease elasticvm-<run>; workflow qemu-whpx-kit кладёт его в набор как elasticvm\.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['claude/elasticvm']
+    paths: ['vm/elasticvm/**', '!vm/elasticvm/results/**', '.github/workflows/elasticvm.yml']
+permissions:
+  contents: write
+  actions: write
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git bzip2 diffutils
+            mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-glib2 mingw-w64-ucrt-x86_64-pixman
+            mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-SDL2 mingw-w64-ucrt-x86_64-libslirp mingw-w64-ucrt-x86_64-zstd mingw-w64-ucrt-x86_64-zlib
+      - name: Build QEMU + ElasticVM patches
+        shell: msys2 {0}
+        run: |
+          mkdir -p out
+          SRC=$PWD/qemu-src OUT=$PWD/elasticvm bash vm/elasticvm/build.sh 2>&1 | tee out/build.txt | grep -v '^\[' || true
+          test -f elasticvm/qemu-system-x86_64.exe
+          objdump -p elasticvm/qemu-system-x86_64.exe | grep -E 'Subsystem|DLL Name' > out/imports.txt || true
+          ls -la elasticvm | tee out/files.txt
+          cp elasticvm/SOURCE.txt out/
+      - name: Build proxy (WinHvPlatform.dll with em-pager)
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path rust/Cargo.toml -p em-whp-proxy; if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+      - name: Smoke tests
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $q = (Resolve-Path elasticvm/qemu-system-x86_64.exe).Path
+          # любой запуск QEMU — с ограничением времени: на раннере WHPX может и проинициализироваться, и тогда QEMU не выходит
+          function Invoke-Timed([string[]]$a, [string]$tag, [int]$sec = 30) {
+            $p = Start-Process -FilePath $q -ArgumentList $a -PassThru -NoNewWindow -RedirectStandardOutput "out/$tag-out.txt" -RedirectStandardError "out/$tag-err.txt"
+            $done = $p.WaitForExit($sec * 1000)
+            if (-not $done) {
+              # висит: заголовок окна (окно ошибки загрузчика Windows видно здесь) и загруженные модули — докуда дошёл
+              $p.Refresh()
+              "$tag hung: window='$($p.MainWindowTitle)' threads=$($p.Threads.Count)" | Tee-Object -Append out/smoke.txt | Out-Host
+              try { $p.Modules | ForEach-Object { "  module $($_.ModuleName)" } | Tee-Object -Append out/smoke.txt | Out-Null } catch { "  modules: $($_.Exception.Message)" | Tee-Object -Append out/smoke.txt }
+              Get-Process | Where-Object { $_.MainWindowTitle } | ForEach-Object { "  window: $($_.ProcessName): $($_.MainWindowTitle)" } | Tee-Object -Append out/smoke.txt | Out-Null
+              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            }
+            "$tag exited=$done" | Tee-Object -Append out/smoke.txt | Out-Host
+            (Get-Content "out/$tag-out.txt", "out/$tag-err.txt" -Raw -ErrorAction SilentlyContinue) -join ''
+          }
+          $qq = $q; $q = (Resolve-Path elasticvm/qemu-img.exe).Path
+          Invoke-Timed @('--version') 'qemu-img-version' | Tee-Object out/qemu-img-version.txt
+          $q = $qq
+          $v = Invoke-Timed @('--version') 'version'
+          $v | Tee-Object out/version.txt
+          if ($v -notmatch 'ElasticVM') { throw "not an ElasticVM build" }
+          Invoke-Timed @('-accel', 'help') 'accel-help' | Tee-Object -Append out/version.txt
+          # свойство doorbell принимается: ошибка, если есть, — про гипервизор раннера, а не про свойство
+          $e = Invoke-Timed @('-machine', 'q35', '-accel', 'whpx,doorbell=off', '-m', '256', '-display', 'none', '-nodefaults') 'doorbell-prop'
+          "doorbell_probe: $e" | Tee-Object -Append out/smoke.txt
+          # разбор параметров прошёл, если дошло до инициализации WHPX (строки «WHPX: …»); ошибка свойства — «Property … not found»
+          if ($e -match "Property|not found|Invalid parameter" -or ($e -and $e -notmatch "WHPX: ")) { throw "accel property doorbell rejected" }
+          fsutil file createnew d.img 1048576 | Out-Null
+          $p = Start-Process -FilePath $q -PassThru -RedirectStandardError out/tcg-err.txt -ArgumentList @('-machine', 'q35,hpet=off', '-accel', 'tcg',
+            '-m', '256', '-display', 'none', '-nodefaults', '-serial', 'none', '-L', (Resolve-Path elasticvm/share).Path,
+            '-netdev', 'user,id=n0,hostfwd=tcp:127.0.0.1:13389-:3389', '-device', 'virtio-net-pci,netdev=n0,romfile=',
+            '-drive', 'if=none,id=d0,format=raw,file=d.img', '-device', 'virtio-blk-pci,drive=d0',
+            '-device', 'virtio-balloon-pci,id=balloon0,deflate-on-oom=on',
+            '-drive', "if=pflash,format=raw,readonly=on,file=$((Resolve-Path elasticvm/share/edk2-x86_64-code.fd).Path)")
+          Start-Sleep -Seconds 15
+          $alive = -not $p.HasExited
+          if ($alive) { Stop-Process -Id $p.Id -Force }
+          "tcg_alive_after_15s=$alive" | Tee-Object -Append out/smoke.txt
+          if (-not $alive) { Get-Content out/tcg-err.txt; throw "ElasticVM QEMU did not start under TCG" }
+          & elasticvm/qemu-img.exe --version | Tee-Object -Append out/smoke.txt
+          Copy-Item rust/target/release/WinHvPlatform.dll elasticvm/
+          $env:EM_WHP_PROXY_LOG = "$PWD\out\proxy-load.txt"; $env:EM_PAGER = "1"
+          Invoke-Timed @('-machine', 'q35', '-accel', 'whpx', '-m', '256', '-display', 'none', '-nodefaults') 'whpx-proxy' | Tee-Object -Append out/smoke.txt
+          Remove-Item elasticvm/WinHvPlatform.dll -ErrorAction SilentlyContinue
+          if (-not (Select-String -Path out/proxy-load.txt -Pattern 'EM_WHP_PROXY loaded' -Quiet)) { throw "ElasticVM did not load the proxy from its folder" }
+          $global:LASTEXITCODE = 0
+      - name: Package and publish
+        shell: pwsh
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          Compress-Archive -Path elasticvm/* -DestinationPath ElasticVM-qemu.zip -CompressionLevel Optimal
+          (Get-FileHash ElasticVM-qemu.zip -Algorithm SHA256).Hash + "  " + (Get-Item ElasticVM-qemu.zip).Length | Tee-Object out/zip-sha256.txt
+          gh release create "elasticvm-${{ github.run_id }}" ElasticVM-qemu.zip --prerelease --target ${{ github.sha }} --title "ElasticVM QEMU (run ${{ github.run_id }})" --notes-file elasticvm/SOURCE.txt 2>&1 | Tee-Object out/release.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: elasticvm-logs, path: out/ }
+      - name: Rebuild the kit with this ElasticVM (workflow qemu-whpx-kit takes the newest elasticvm-* prerelease)
+        shell: pwsh
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: gh workflow run qemu-whpx-kit.yml --ref ${{ github.ref_name }} 2>&1 | Tee-Object -Append out/release.txt
+  commit:
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: elasticvm-logs, path: dl }
+        continue-on-error: true
+      - name: Commit ElasticVM build logs back
+        run: |
+          mkdir -p vm/elasticvm/results; rm -f vm/elasticvm/results/*.txt
+          for f in dl/*.txt; do [ -f "$f" ] && tail -c 60000 "$f" > "vm/elasticvm/results/$(basename "$f")"; done
+          echo "run: ${{ github.run_id }} sha: ${{ github.sha }} result: ${{ needs.build.result }}" > vm/elasticvm/results/RUN.txt
+          git config user.name "elasticvm"; git config user.email "actions@users.noreply.github.com"
+          git add vm/elasticvm/results
+          git commit -m "elasticvm: logs of run ${{ github.run_id }}" || exit 0
+          for i in 1 2 3; do git pull --rebase origin ${{ github.ref_name }} && git push origin HEAD:${{ github.ref_name }} && break; sleep 5; done
