@@ -69,7 +69,8 @@ jobs:
           # свойство doorbell принимается: ошибка, если есть, — про гипервизор раннера, а не про свойство
           $e = Invoke-Timed @('-machine', 'q35', '-accel', 'whpx,doorbell=off', '-m', '256', '-display', 'none', '-nodefaults') 'doorbell-prop'
           "doorbell_probe: $e" | Tee-Object -Append out/smoke.txt
-          if ($e -match "doorbell") { throw "accel property doorbell rejected" }
+          # разбор параметров прошёл, если дошло до инициализации WHPX (строки «WHPX: …»); ошибка свойства — «Property … not found»
+          if ($e -match "Property|not found|Invalid parameter" -or ($e -and $e -notmatch "WHPX: ")) { throw "accel property doorbell rejected" }
           fsutil file createnew d.img 1048576 | Out-Null
           $p = Start-Process -FilePath $q -PassThru -RedirectStandardError out/tcg-err.txt -ArgumentList @('-machine', 'q35,hpet=off', '-accel', 'tcg',
             '-m', '256', '-display', 'none', '-nodefaults', '-serial', 'none', '-L', (Resolve-Path elasticvm/share).Path,
