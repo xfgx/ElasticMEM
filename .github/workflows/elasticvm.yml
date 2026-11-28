@@ -11,6 +11,7 @@ on:
     paths: ['vm/elasticvm/**', '!vm/elasticvm/results/**', '.github/workflows/elasticvm.yml']
 permissions:
   contents: write
+  actions: write
 jobs:
   build:
     runs-on: windows-2022
@@ -100,6 +101,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: elasticvm-logs, path: out/ }
+      - name: Rebuild the kit with this ElasticVM (workflow qemu-whpx-kit takes the newest elasticvm-* prerelease)
+        shell: pwsh
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: gh workflow run qemu-whpx-kit.yml --ref ${{ github.ref_name }} 2>&1 | Tee-Object -Append out/release.txt
   commit:
     needs: build
     if: always()
