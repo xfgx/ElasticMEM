@@ -65,10 +65,18 @@ jobs:
       - name: Fetch virtio-win guest drivers (pinned SHA-256) — network, disk, balloon for Windows 10/11 and Server 2019/2022/2025
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri $env:VIRTIO_WIN_URL -OutFile vw.iso
-          $h = (Get-FileHash vw.iso -Algorithm SHA256).Hash.ToLower()
-          "sha256=$h" | Tee-Object out/virtio-download.txt
-          if ($h -ne $env:VIRTIO_WIN_SHA256) { throw "virtio-win ISO hash mismatch" }
+          # fedorapeople.org иногда отдаёт раннеру обрезанный/чужой ответ (прогоны 46079427341, 46128318427: другой хеш,
+          # тот же URL вне GitHub даёт закреплённый) — несколько попыток, в журнал размер каждой
+          $h = ''
+          for ($i = 1; $i -le 4 -and $h -ne $env:VIRTIO_WIN_SHA256; $i++) {
+            Remove-Item vw.iso -ErrorAction SilentlyContinue
+            curl.exe -sSL --fail --retry 3 --retry-delay 5 -o vw.iso $env:VIRTIO_WIN_URL
+            $len = if (Test-Path vw.iso) { (Get-Item vw.iso).Length } else { 0 }
+            $h = if ($len) { (Get-FileHash vw.iso -Algorithm SHA256).Hash.ToLower() } else { '' }
+            "try=$i bytes=$len sha256=$h" | Tee-Object -Append out/virtio-download.txt
+            if ($h -ne $env:VIRTIO_WIN_SHA256) { Start-Sleep -Seconds (10 * $i) }
+          }
+          if ($h -ne $env:VIRTIO_WIN_SHA256) { throw "virtio-win ISO hash mismatch (expected 789645312 bytes)" }
           & "C:\Program Files\7-Zip\7z.exe" x -y -ovw vw.iso NetKVM viostor Balloon virtio-win_license.txt | Out-Null
           foreach ($d in 'NetKVM', 'viostor', 'Balloon') {
             foreach ($o in 'w10', 'w11', '2k19', '2k22', '2k25') {
