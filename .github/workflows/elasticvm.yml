@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
   push:
     branches: ['claude/elasticvm']
-    paths: ['vm/elasticvm/**', '.github/workflows/elasticvm.yml']
+    paths: ['vm/elasticvm/**', '!vm/elasticvm/results/**', '.github/workflows/elasticvm.yml']
 permissions:
   contents: write
 jobs:
@@ -78,3 +78,21 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: elasticvm-logs, path: out/ }
+  commit:
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: elasticvm-logs, path: dl }
+        continue-on-error: true
+      - name: Commit ElasticVM build logs back
+        run: |
+          mkdir -p vm/elasticvm/results; rm -f vm/elasticvm/results/*.txt
+          for f in dl/*.txt; do [ -f "$f" ] && tail -c 60000 "$f" > "vm/elasticvm/results/$(basename "$f")"; done
+          echo "run: ${{ github.run_id }} sha: ${{ github.sha }} result: ${{ needs.build.result }}" > vm/elasticvm/results/RUN.txt
+          git config user.name "elasticvm"; git config user.email "actions@users.noreply.github.com"
+          git add vm/elasticvm/results
+          git commit -m "elasticvm: logs of run ${{ github.run_id }}" || exit 0
+          for i in 1 2 3; do git pull --rebase origin ${{ github.ref_name }} && git push origin HEAD:${{ github.ref_name }} && break; sleep 5; done
