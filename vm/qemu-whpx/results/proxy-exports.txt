@@ -12,8 +12,8 @@ File Type: DLL
     FFFFFFFF time date stamp
         0.00 version
            1 ordinal base
-          25 number of functions
-          25 number of names
+          28 number of functions
+          28 number of names
 
     ordinal hint RVA      name
 
@@ -30,18 +30,21 @@ File Type: DLL
          11    A 00001460 WHvGetVirtualProcessorState
          12    B 000014D0 WHvGetVirtualProcessorXsaveState
          13    C 00001540 WHvMapGpaRange
-         14    D 00004100 WHvRequestInterrupt
-         15    E 00004170 WHvResetPartition
-         16    F 000041E0 WHvRunVirtualProcessor
-         17   10 00005200 WHvSetPartitionProperty
-         18   11 00005270 WHvSetVirtualProcessorInterruptControllerState2
-         19   12 000052E0 WHvSetVirtualProcessorRegisters
-         20   13 00005350 WHvSetVirtualProcessorState
-         21   14 000053C0 WHvSetVirtualProcessorXsaveState
-         22   15 00005430 WHvSetupPartition
-         23   16 000054A0 WHvSuspendPartitionTime
-         24   17 00005510 WHvTranslateGva
-         25   18 00005580 WHvUnmapGpaRange
+         14    D 00004100 WHvQueryGpaRangeDirtyBitmap
+         15    E 00004170 WHvRegisterPartitionDoorbellEvent
+         16    F 000041E0 WHvRequestInterrupt
+         17   10 00004250 WHvResetPartition
+         18   11 000042C0 WHvRunVirtualProcessor
+         19   12 000052E0 WHvSetPartitionProperty
+         20   13 00005350 WHvSetVirtualProcessorInterruptControllerState2
+         21   14 000053C0 WHvSetVirtualProcessorRegisters
+         22   15 00005430 WHvSetVirtualProcessorState
+         23   16 000054A0 WHvSetVirtualProcessorXsaveState
+         24   17 00005510 WHvSetupPartition
+         25   18 00005580 WHvSuspendPartitionTime
+         26   19 000055F0 WHvTranslateGva
+         27   1A 00005660 WHvUnmapGpaRange
+         28   1B 00005FF0 WHvUnregisterPartitionDoorbellEvent
 
   Summary
 
