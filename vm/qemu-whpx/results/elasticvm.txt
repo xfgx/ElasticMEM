@@ -1,3 +1,3 @@
-QEMU emulator version 11.1.3 (ElasticVM-a211b43)
+QEMU emulator version 11.1.3 (ElasticVM-864a886)
 Copyright (c) 2003-2026 Fabrice Bellard and the QEMU Project developers
-elasticvm_release=elasticvm-46140406506
+elasticvm_release=elasticvm-46141803530
