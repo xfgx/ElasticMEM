@@ -47,10 +47,19 @@ jobs:
           function Invoke-Timed([string[]]$a, [string]$tag, [int]$sec = 30) {
             $p = Start-Process -FilePath $q -ArgumentList $a -PassThru -NoNewWindow -RedirectStandardOutput "out/$tag-out.txt" -RedirectStandardError "out/$tag-err.txt"
             $done = $p.WaitForExit($sec * 1000)
-            if (-not $done) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+            if (-not $done) {
+              # висит: заголовок окна (окно ошибки загрузчика Windows видно здесь) и загруженные модули — докуда дошёл
+              $p.Refresh()
+              "$tag hung: window='$($p.MainWindowTitle)' threads=$($p.Threads.Count)" | Tee-Object -Append out/smoke.txt | Out-Host
+              try { $p.Modules | ForEach-Object { "  module $($_.ModuleName)" } | Tee-Object -Append out/smoke.txt | Out-Null } catch { "  modules: $($_.Exception.Message)" | Tee-Object -Append out/smoke.txt }
+              Get-Process | Where-Object { $_.MainWindowTitle } | ForEach-Object { "  window: $($_.ProcessName): $($_.MainWindowTitle)" } | Tee-Object -Append out/smoke.txt | Out-Null
+              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            }
             "$tag exited=$done" | Tee-Object -Append out/smoke.txt | Out-Host
             (Get-Content "out/$tag-out.txt", "out/$tag-err.txt" -Raw -ErrorAction SilentlyContinue) -join ''
           }
+          & "$env:MSYS2_LOCATION\ucrt64\bin\objdump.exe" -p $q | Select-String 'Subsystem|DLL Name' | ForEach-Object { "$_".Trim() } | Tee-Object out/imports.txt | Out-Null
+          & elasticvm/qemu-img.exe --version 2>&1 | Tee-Object out/qemu-img-version.txt
           $v = Invoke-Timed @('--version') 'version'
           $v | Tee-Object out/version.txt
           if ($v -notmatch 'ElasticVM') { throw "not an ElasticVM build" }
