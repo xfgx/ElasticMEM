@@ -6,7 +6,7 @@ name: qemu-whpx-kit
 on:
   workflow_dispatch:
   push:
-    branches: ['claude/cas-memory']
+    branches: ['claude/cas-memory', 'claude/elasticvm']
     paths: ['vm/qemu-whpx/**', 'rust/em-whp-proxy/src/**', 'rust/em-pager/src/**', 'rust/em-cas/src/**', 'rust/em-pagestat/src/**', '.github/workflows/qemu-whpx-kit.yml']
 permissions:
   contents: write
@@ -32,7 +32,7 @@ jobs:
           cl /nologo /O2 rust\em-whp-proxy\test\whp_selftest.c /Fe:kit\whp-selftest.exe | Out-Null; if ($LASTEXITCODE -ne 0) { throw "cl whp_selftest.c failed" }
           if (-not (Test-Path kit\whp-selftest.exe)) { throw "whp-selftest build failed" }
           dumpbin /exports kit\WinHvPlatform.dll | Tee-Object out/proxy-exports.txt | Out-Null
-          foreach ($s in 'WHvMapGpaRange', 'WHvUnmapGpaRange', 'WHvRunVirtualProcessor', 'WHvGetCapability', 'WHvGetVirtualProcessorCpuidOutput') { if (-not (Select-String -Path out/proxy-exports.txt -Pattern "\b$s\b" -Quiet)) { throw "missing export $s" } }
+          foreach ($s in 'WHvMapGpaRange', 'WHvUnmapGpaRange', 'WHvRunVirtualProcessor', 'WHvGetCapability', 'WHvGetVirtualProcessorCpuidOutput', 'WHvRegisterPartitionDoorbellEvent', 'WHvUnregisterPartitionDoorbellEvent') { if (-not (Select-String -Path out/proxy-exports.txt -Pattern "\b$s\b" -Quiet)) { throw "missing export $s" } }
       - name: Fetch QEMU for Windows (pinned SHA-512) and keep only what is needed
         shell: pwsh
         run: |
@@ -114,6 +114,18 @@ jobs:
           }
           $res | Tee-Object out/ps-syntax.txt
           if ($bad) { throw "syntax errors" }
+      - name: ElasticVM (our QEMU build, workflow elasticvm) — newest prerelease into kit/elasticvm, if any
+        shell: pwsh
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          $tag = gh release list --limit 50 --json tagName --jq '[.[] | select(.tagName | startswith("elasticvm-"))][0].tagName' 2>$null
+          if ($tag) {
+            gh release download $tag --pattern ElasticVM-qemu.zip --dir ev 2>&1 | Out-Null
+            Expand-Archive ev/ElasticVM-qemu.zip -DestinationPath kit/elasticvm
+            & kit/elasticvm/qemu-system-x86_64.exe --version | Tee-Object out/elasticvm.txt
+            "elasticvm_release=$tag" | Tee-Object -Append out/elasticvm.txt
+          } else { 'elasticvm_release=none (kit uses stock QEMU)' | Tee-Object out/elasticvm.txt }
+          $global:LASTEXITCODE = 0
       - name: Assemble kit
         shell: pwsh
         run: |

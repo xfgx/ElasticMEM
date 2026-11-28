@@ -8,7 +8,8 @@
 //!  * WHvRunVirtualProcessor — memory-access exit с GpaUnmapped по диапазону пейджера обрабатывается здесь же
 //!    (кластер восстанавливается и отображается), и vCPU сразу запускается снова: QEMU этого exit'а не видит.
 //! Пейджер включается только при EM_PAGER=1. Иначе — чистый проброс.
-//! Экспортируются ровно функции, которые ищет QEMU 11.1 (include/system/whpx-internal.h), у всех не больше
+//! Экспортируются функции, которые ищет QEMU 11.1 (include/system/whpx-internal.h), и те, что ищет ElasticVM
+//! (наша сборка QEMU, vm/elasticvm: doorbell'ы для ioeventfd, журнал грязных страниц). У всех не больше
 //! 6 аргументов — поэтому универсальный проброс 6 машинных слов корректен для x64.
 
 #![allow(non_snake_case)]
@@ -107,6 +108,8 @@ forward!(
     WHvSetVirtualProcessorInterruptControllerState2, WHvResetPartition, WHvGetVirtualProcessorXsaveState,
     WHvSetVirtualProcessorXsaveState, WHvGetVirtualProcessorState, WHvSetVirtualProcessorState,
     WHvGetVirtualProcessorCpuidOutput,
+    // ElasticVM (vm/elasticvm/patches): без них doorbell'ы молча выключались бы под прокси
+    WHvRegisterPartitionDoorbellEvent, WHvUnregisterPartitionDoorbellEvent, WHvQueryGpaRangeDirtyBitmap,
 );
 
 type MapFn = unsafe extern "system" fn(usize, usize, u64, u64, u32) -> i32;

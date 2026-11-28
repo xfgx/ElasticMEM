@@ -61,7 +61,7 @@ function Finish([string]$why) {
     else { Say "Пейджер к $($lt.Groups[1].Value)-й секунде: вытеснено $($lt.Groups[2].Value) МиБ, вытеснений $($lt.Groups[3].Value)" }
   }
   Say "ИТОГ: $why"
-  foreach ($f in @(if ($guestRun) { 'em-pager.log', 'qemu-err.txt', 'qemu-out.txt' }) + 'runs.txt') { $p = Join-Path $Work $f; if (Test-Path $p) { Copy-Item $p $rep } }
+  foreach ($f in @(if ($guestRun) { 'em-pager.log', 'qemu-err.txt', 'qemu-out.txt', 'elasticvm-stats.log' }) + 'runs.txt') { $p = Join-Path $Work $f; if (Test-Path $p) { Copy-Item $p $rep } }
   # QEMU на Windows печатает «MADVISE not available» на каждую страницу balloon (освобождает их пейджер): в отчёт — без них
   $qerr = Join-Path $rep 'qemu-err.txt'
   if ((Test-Path $qerr) -and (Get-Item $qerr).Length -gt 1MB) {
@@ -209,9 +209,19 @@ if ($Mode -eq 'pager' -and (Test-Path $st)) {
 # ---------- как показывать гостя ----------
 # Edge открывается как опубликованная программа RemoteApp (псевдоним ElasticMem-Edge, путь в госте ищет Prepare-Disk)
 $edgeLine = @($pd | Where-Object { "$_" -like 'EDGE_GUEST_PATH=*' }) | Select-Object -Last 1
+$edgePath = if ($edgeLine) { $edgeLine.Substring('EDGE_GUEST_PATH='.Length) } else { '' }
 if ($edgeLine -eq 'EDGE_GUEST_PATH=' -and $View -ne 'desktop') {
   Say 'Edge на диске гостя не найден — окно только Edge недоступно, будет весь рабочий стол.'
   $View = 'desktop'
+}
+# RemoteApp есть не у всех гостей: в Server Core нет оболочки RAIL (rdpinit/rdpshell) — подключение проходит, а окна
+# нет. Там Edge запускается программой сеанса (alternate shell): окно mstsc, внутри только Edge, без рабочего стола.
+$raLine = @($pd | Where-Object { "$_" -like 'REMOTEAPP=*' }) | Select-Object -Last 1
+$appMode = 'remoteapp'
+if ("$raLine" -like 'REMOTEAPP=unsupported*' -and $edgePath -and $View -ne 'desktop') {
+  $appMode = 'shell'
+  Say "В этом госте нет RemoteApp ($($raLine.Substring(10))): Edge будет запущен как единственная программа сеанса RDP (окно mstsc, без рабочего стола)."
+  if ("$raLine" -match 'server-core') { Say 'Внимание: Microsoft не поддерживает Edge в Server Core. Если окно сразу закроется — Edge здесь не работает; для приложений нужен гость с рабочим столом (Windows 10/11 или Server с «Возможностями рабочего стола»).' }
 }
 if (-not $View) {
   if ($Rdp) { $View = 'desktop' }
@@ -294,11 +304,12 @@ if (-not $booted) { Say 'RDP не ответил: замеряю всё равн
 if ($Rdp) { & (Join-Path $PSScriptRoot 'Open-App.ps1') -Rdp $Rdp }
 elseif ($booted -and $View -eq 'app') {
   if (-not $edgeLine) { Say 'Подготовка диска в этом запуске пропущена: Edge откроется, только если диск уже готовили этим набором.' }
-  & (Join-Path $PSScriptRoot 'Open-App.ps1') -Program '||ElasticMem-Edge' *>&1 | ForEach-Object { Say "$_" }
+  if ($appMode -eq 'shell') { & (Join-Path $PSScriptRoot 'Open-App.ps1') -Program $edgePath -Shell *>&1 | ForEach-Object { Say "$_" } }
+  else { & (Join-Path $PSScriptRoot 'Open-App.ps1') -Program '||ElasticMem-Edge' *>&1 | ForEach-Object { Say "$_" } }
   Say 'Открываю только окно Edge из гостя. Введите логин и пароль учётной записи гостя; предупреждение о неизвестном издателе подключения — нормально, нажмите «Подключить».'
   $q = Read-Host 'Окно Edge открылось? Если нет, введите n — откроется весь рабочий стол гостя [Y/n]'
   if ($q -match '^[nNнН]') {
-    Say 'Окно Edge не открылось — открываю весь рабочий стол гостя. Частые причины: автовход в госте (уже открыт рабочий стол), диск не подготовлен для RemoteApp, Edge в другой папке.'
+    Say 'Окно Edge не открылось — открываю весь рабочий стол гостя. Частые причины: гость без RemoteApp и без рабочего стола (Server Core — см. строку REMOTEAPP выше), автовход в госте (уже открыт рабочий стол), диск не подготовлен для RemoteApp, Edge в другой папке.'
     # закрыть только наше окно RemoteApp (app.rdp), другие подключения RDP на этом ПК не трогать
     Get-CimInstance Win32_Process -Filter "Name='mstsc.exe'" -ErrorAction SilentlyContinue | Where-Object { "$($_.CommandLine)" -match 'app\.rdp' } |
       ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }

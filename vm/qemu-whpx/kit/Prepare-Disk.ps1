@@ -84,6 +84,10 @@ try {
   }
   Set-ItemProperty "$cs\Control\Terminal Server" -Name fDenyTSConnections -Value 0
   Write-Host 'RDP разрешён'
+  # Программа сеанса из .rdp (alternate shell): Windows Server запускает её вместо рабочего стола. Нужна, где
+  # RemoteApp нет (Server Core). Клиентские Windows этот параметр игнорируют — там работает RemoteApp.
+  $ws = "$cs\Control\Terminal Server\WinStations\RDP-Tcp"
+  if (Test-Path $ws) { Set-ItemProperty $ws -Name fInheritInitialProgram -Value 1 -Type DWord; Write-Host 'RDP: разрешена программа сеанса из .rdp (fInheritInitialProgram=1)' }
   $fw = "$cs\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules"
   $n = 0
   if (Test-Path $fw) {
@@ -105,6 +109,12 @@ try {
     $swLoaded = $true
     $cv = Get-ItemProperty "Registry::$swHive\Microsoft\Windows NT\CurrentVersion" -ErrorAction SilentlyContinue
     Write-Host "Гость: $($cv.ProductName) $($cv.DisplayVersion) (сборка $($cv.CurrentBuild)), тип установки: $($cv.InstallationType)"
+    # RemoteApp — это оболочка RAIL гостя: rdpinit.exe запускает программу, rdpshell.exe отдаёт её окно клиенту.
+    # В Server Core их нет (нет и Explorer): mstsc подключается, сеанс RemoteApp тут же закрывается — окна нет.
+    $railMissing = @('rdpinit.exe', 'rdpshell.exe' | Where-Object { -not (Test-Path -LiteralPath (Join-Path $win "Windows\System32\$_") -PathType Leaf) })
+    if ("$($cv.InstallationType)" -eq 'Server Core') { Write-Host 'REMOTEAPP=unsupported reason=server-core' }
+    elseif ($railMissing.Count) { Write-Host "REMOTEAPP=unsupported reason=missing:$($railMissing -join ',')" }
+    else { Write-Host 'REMOTEAPP=ok' }
     $k = "Registry::$swHive\Microsoft\Windows NT\CurrentVersion\Terminal Server\TSAppAllowList"
     if (-not (Test-Path $k)) { New-Item $k -Force | Out-Null }
     Set-ItemProperty $k -Name fDisabledAllowList -Value 1 -Type DWord

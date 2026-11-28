@@ -76,18 +76,23 @@ $qa += if ($Disk -eq 'virtio') { @('-device', 'virtio-blk-pci,drive=d0') } else 
 $qa += if ($Net -eq 'virtio') { @('-device', 'virtio-net-pci,netdev=n0,romfile=') } else { @('-device', 'e1000e,netdev=n0') }
 if ($Balloon) { $qa += @('-device', 'virtio-balloon-pci,id=balloon0,deflate-on-oom=on') }
 if ($Firmware -eq 'uefi') {
-  $code = Join-Path $Kit 'qemu\share\edk2-x86_64-code.fd'
-  if (-not (Test-Path $vars)) { Copy-Item (Join-Path $Kit 'qemu\share\edk2-i386-vars.fd') $vars }
+  $code = Join-Path $QemuShare 'edk2-x86_64-code.fd'
+  if (-not (Test-Path $vars)) { Copy-Item (Join-Path $QemuShare 'edk2-i386-vars.fd') $vars }
   $qa = @('-machine', 'q35,hpet=off') + $qa + @('-drive', "if=pflash,format=raw,readonly=on,file=$code", '-drive', "if=pflash,format=raw,file=$vars")
 } else {
   $qa = @('-machine', 'q35,hpet=off') + $qa
 }
+$qa += @('-L', $QemuShare)
 if ($Headless) { $qa += @('-display', 'none') } else { $qa += @('-display', 'sdl', '-vga', 'std') }
 $qa = $qa | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
 
 $log = Join-Path $Work 'em-pager.log'
 # журнал пейджера — свой на каждый запуск (прошлый -> em-pager.prev.log): иначе диагноз читал бы чужие FATAL
 if (Test-Path $log) { Move-Item $log (Join-Path $Work 'em-pager.prev.log') -Force }
+# ElasticVM пишет счётчики выходов vCPU по причинам (раз в 5 с): видно, ушли ли толчки virtio из колонки mmio
+$evStats = Join-Path $Work 'elasticvm-stats.log'
+Remove-Item $evStats -ErrorAction SilentlyContinue
+if ($Engine -eq 'elasticvm') { $env:ELASTICVM_STATS_LOG = $evStats } else { Remove-Item Env:ELASTICVM_STATS_LOG -ErrorAction SilentlyContinue }
 if ($Mode -eq 'pager') {
   $env:EM_PAGER = '1'
   $env:EM_PAGER_LOG = $log
@@ -100,7 +105,7 @@ if ($Mode -eq 'pager') {
 } else {
   Remove-Item Env:EM_PAGER -ErrorAction SilentlyContinue
 }
-"$(Get-Date -Format s) start mode=$Mode mem=$MemoryMiB cpus=$Cpus fw=$Firmware codec=$Codec cluster=$Cluster ghost=$Ghost idle_ms=$IdleMs target_hits=$TargetHits headless=$Headless net=$Net disk=$Disk balloon=$Balloon" | Add-Content (Join-Path $Work 'runs.txt')
+"$(Get-Date -Format s) start engine=$Engine mode=$Mode mem=$MemoryMiB cpus=$Cpus fw=$Firmware codec=$Codec cluster=$Cluster ghost=$Ghost idle_ms=$IdleMs target_hits=$TargetHits headless=$Headless net=$Net disk=$Disk balloon=$Balloon" | Add-Content (Join-Path $Work 'runs.txt')
 $sp = @{ FilePath = $Qemu; ArgumentList = $qa; WorkingDirectory = $Work; PassThru = $true;
   RedirectStandardOutput = (Join-Path $Work 'qemu-out.txt'); RedirectStandardError = (Join-Path $Work 'qemu-err.txt') }
 $p = Start-Process @sp
@@ -110,6 +115,7 @@ if ($p.HasExited) {
   Get-Content (Join-Path $Work 'qemu-err.txt') | Out-Host
   throw "QEMU завершился сразу (код $($p.ExitCode)). Частые причины: не включён компонент «Платформа низкоуровневой оболочки Windows» (HypervisorPlatform); попробуйте -Cpu max; при «Failed to enable nested virtualization» — -Irqchip off; для ВМ поколения 1 — -Firmware bios. Если падает только в режиме pager — пришлите em-pager.log и qemu-err.txt."
 }
-Write-Host "QEMU запущен (PID $($p.Id)), режим $Mode. RDP гостя: 127.0.0.1:$RdpPort"
+Write-Host "QEMU запущен (PID $($p.Id)), движок $Engine, режим $Mode. RDP гостя: 127.0.0.1:$RdpPort"
+if ($Engine -eq 'elasticvm') { Write-Host 'ElasticVM: толчки virtio идут через doorbell гипервизора, без выхода vCPU в QEMU (откат: EM_ENGINE=stock)' }
 Write-Host "Первая загрузка на новом «железе» может идти дольше обычного. Окно приложения: Open-App.ps1"
 if ($Mode -eq 'pager') { Write-Host "Журнал пейджера: $log (компактор включится через $StartDelayS с)" }
