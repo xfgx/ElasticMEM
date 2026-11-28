@@ -1,0 +1,1 @@
+elasticvm_release=none (kit uses stock QEMU)
