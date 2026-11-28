@@ -1,0 +1,4 @@
+ElasticVM b390d23: QEMU v11.1.3 (005c61c0ef6f6ae615283440b4bb7be51b2c6ddd, https://gitlab.com/qemu-project/qemu.git) + патчи:
+  0001-whpx-ioeventfd-doorbells.patch sha256=e530b582b60f4a54d2ca3483c7bca23bc1a5aa05d42e831a559c99dbc4830a93
+  0002-whpx-exit-statistics.patch sha256=87d3934ea55faf148ed826506e098334399ea2a17f130002de442fbf70f13a92
+Исходный код: QEMU по тегу выше и патчи из репозитория xfgx/ElasticMEM, vm/elasticvm (GPL-2.0, см. COPYING).
