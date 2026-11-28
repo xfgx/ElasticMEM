@@ -25,9 +25,11 @@ rev=$(git -C "$here" rev-parse --short HEAD 2>/dev/null || echo local)
 mkdir -p "$src/build"
 cd "$src/build"
 if [ ! -f build.ninja ]; then
-  ../configure --target-list=x86_64-softmmu --enable-whpx --enable-slirp --enable-sdl --disable-gtk \
+  ../configure --target-list=x86_64-softmmu --enable-whpx --enable-slirp --disable-sdl --disable-gtk \
     --disable-docs --disable-werror --with-pkgversion="ElasticVM-$rev" ${CROSS:+--cross-prefix=$CROSS}
 fi
+# Без SDL: сборка UCRT64 с SDL2 2.32 на Windows Server 2022 при любом запуске (даже --version) показывала окно
+# «Error» и висела (прогон 46137051632). Окно гостя у ElasticVM — RDP (как Enhanced Session у Hyper-V), не SDL.
 ninja -j"$jobs" qemu-system-x86_64.exe qemu-img.exe
 
 rm -rf "$out"; mkdir -p "$out/share"

@@ -276,7 +276,7 @@ function Test-GuestStopped([string]$when) {
 }
 
 # ---------- ожидание загрузки гостя ----------
-Say "Жду загрузки гостя (RDP на 127.0.0.1:13389, до $BootTimeoutMin мин). В окне QEMU виден ход загрузки."
+Say "Жду загрузки гостя (RDP на 127.0.0.1:13389, до $BootTimeoutMin мин).$(if ($Engine -ne 'elasticvm') { ' В окне QEMU виден ход загрузки.' } else { ' ElasticVM без своего окна: гость появится в окне RDP.' })"
 $t0 = Get-Date
 $booted = $false
 while (((Get-Date) - $t0).TotalMinutes -lt $BootTimeoutMin) {

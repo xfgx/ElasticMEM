@@ -83,7 +83,8 @@ if ($Firmware -eq 'uefi') {
   $qa = @('-machine', 'q35,hpet=off') + $qa
 }
 $qa += @('-L', $QemuShare)
-if ($Headless) { $qa += @('-display', 'none') } else { $qa += @('-display', 'sdl', '-vga', 'std') }
+# ElasticVM собран без SDL: окно гостя — только RDP (как Enhanced Session у Hyper-V)
+if ($Headless -or $Engine -eq 'elasticvm') { $qa += @('-display', 'none') } else { $qa += @('-display', 'sdl', '-vga', 'std') }
 $qa = $qa | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
 
 $log = Join-Path $Work 'em-pager.log'
