@@ -1,0 +1,2 @@
+D:\a\ElasticMEM\ElasticMEM\elasticvm\qemu-system-x86_64.exe: -accel whpx: WHPX: Failed to enable nested virtualization, hr=80370302
+D:\a\ElasticMEM\ElasticMEM\elasticvm\qemu-system-x86_64.exe: -accel whpx: failed to initialize whpx: Invalid argument

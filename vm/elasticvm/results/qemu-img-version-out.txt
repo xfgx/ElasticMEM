@@ -1,2 +1,2 @@
-qemu-img version 11.1.3 (ElasticVM-2d5ea9f)
+qemu-img version 11.1.3 (ElasticVM-99c5bf1)
 Copyright (c) 2003-2026 Fabrice Bellard and the QEMU Project developers
