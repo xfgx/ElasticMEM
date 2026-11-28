@@ -22,7 +22,6 @@ Subsystem		00000003	(Windows CUI)
 	DLL Name: ole32.dll
 	DLL Name: api-ms-win-core-path-l1-1-0.dll
 	DLL Name: libwinpthread-1.dll
-	DLL Name: SHELL32.dll
 	DLL Name: api-ms-win-core-synch-l1-2-0.dll
 	DLL Name: USER32.dll
 	DLL Name: WINMM.dll
@@ -32,7 +31,6 @@ Subsystem		00000003	(Windows CUI)
 	DLL Name: libgmodule-2.0-0.dll
 	DLL Name: libgobject-2.0-0.dll
 	DLL Name: libpixman-1-0.dll
-	DLL Name: SDL2.dll
 	DLL Name: libslirp-0.dll
 	DLL Name: libz-1.dll
 	DLL Name: libzstd.dll

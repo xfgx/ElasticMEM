@@ -1,52 +1,7 @@
 qemu-img-version exited=True
-version hung: window='Error' threads=2
-  module qemu-system-x86_64.exe
-  module ntdll.dll
-  module KERNEL32.DLL
-  module KERNELBASE.dll
-  module ADVAPI32.dll
-  module msvcrt.dll
-  module sechost.dll
-  module bcrypt.dll
-  module RPCRT4.dll
-  module ucrtbase.dll
-  module ole32.dll
-  module libbz2-1.dll
-  module libiconv-2.dll
-  module msvcp_win.dll
-  module GDI32.dll
-  module libncursesw6.dll
-  module USER32.dll
-  module win32u.dll
-  module libwinpthread-1.dll
-  module gdi32full.dll
-  module combase.dll
-  module SHELL32.dll
-  module WS2_32.dll
-  module WINMM.dll
-  module libglib-2.0-0.dll
-  module libgio-2.0-0.dll
-  module libgmodule-2.0-0.dll
-  module libgobject-2.0-0.dll
-  module SHLWAPI.dll
-  module libpixman-1-0.dll
-  module libslirp-0.dll
-  module SDL2.dll
-  module libz-1.dll
-  module libzstd.dll
-  module libintl-8.dll
-  module libpcre2-8-0.dll
-  module DNSAPI.dll
-  module IPHLPAPI.DLL
-  module libffi-8.dll
-  module CRYPTBASE.DLL
-  module bcryptPrimitives.dll
-  module IMM32.DLL
-  module NSI.dll
-  module TextShaping.dll
-  module uxtheme.dll
-  module MSCTF.dll
-  window: hosted-compute-agent: C:\ProgramData\GitHub\HostedComputeAgent\hosted-compute-agent
-  window: qemu-system-x86_64: Error
-  window: TextInputHost: Windows Input Experience
-version exited=False
+version exited=True
+accel-help exited=True
+doorbell-prop exited=True
+doorbell_probe: D:\a\ElasticMEM\ElasticMEM\elasticvm\qemu-system-x86_64.exe: -accel whpx,doorbell=off: WHPX: Failed to enable nested virtualization, hr=80370302
+D:\a\ElasticMEM\ElasticMEM\elasticvm\qemu-system-x86_64.exe: -accel whpx,doorbell=off: failed to initialize whpx: Invalid argument
+

@@ -1,1 +1,7 @@
+QEMU emulator version 11.1.3 (ElasticVM-2d5ea9f)
+Copyright (c) 2003-2026 Fabrice Bellard and the QEMU Project developers
+
+Accelerators supported in QEMU binary:
+tcg
+whpx
 
